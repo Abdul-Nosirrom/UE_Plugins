@@ -458,11 +458,6 @@ void UGenCustomMovementComponent::PerformMovement(float DeltaSeconds)
 
 	const FVector VelocityBeforeMovementUpdate = GetVelocity();
 
-	if (IsGrounded() && !FMath::IsNearlyZero(VelocityBeforeMovementUpdate.Z))
-	{
-		DebugMessage(FColor::Magenta, TEXT("Z Not Zeroes"));
-	}
-	
 	// Preferred entry point for implementing movement logic
 	MovementUpdate(DeltaSeconds);
 
@@ -529,22 +524,17 @@ void UGenCustomMovementComponent::CalculateVelocity(float DeltaSeconds)
 {
 	if (IsGrounded())
 	{
-		UpdateVelocity(FVector{GetVelocity().X, GetVelocity().Y, 0.f}, DeltaSeconds);
+		// Project velocity to ground
+		const FVector PlaneNormal = CurrentFloor.ShapeHit().Normal;
+		FVector ProjectedVelocity = (PlaneNormal ^ (GetVelocity().GetSafeNormal() ^ PlaneNormal)) * GetVelocity().Size();
+		DrawDebugDirectionalArrow(GetWorld(), CurrentFloor.ShapeHit().ImpactPoint, CurrentFloor.ShapeHit().ImpactPoint + ProjectedVelocity.GetSafeNormal()*200.0f, 100.0f, FColor::Purple, false, -1, 0, 10.0f);
+		UpdateVelocity(FVector{GetVelocity().X, GetVelocity().Y, ProjectedVelocity.Z});
 	}
 
 	// TODO: There's some more shit to do here so keep track of it later
 	ApplyRotation(false, DeltaSeconds);
 	
 	//PostProcessPawnVelocity(); Blueprint shit
-}
-
-void UGenCustomMovementComponent::ProjectVelocity(float DeltaSeconds)
-{
-	// Project velocity to ground
-	const FVector PlaneNormal = CurrentFloor.ShapeHit().Normal;
-	FVector ProjectedVelocity = (PlaneNormal ^ (GetVelocity().GetSafeNormal() ^ PlaneNormal)) * GetVelocity().Size();
-	DrawDebugDirectionalArrow(GetWorld(), CurrentFloor.ShapeHit().ImpactPoint, CurrentFloor.ShapeHit().ImpactPoint + ProjectedVelocity.GetSafeNormal()*200.0f, 100.0f, FColor::Purple, false, -1, 0, 10.0f);
-	UpdateVelocity(FVector{GetVelocity().X, GetVelocity().Y, ProjectedVelocity.Z}, DeltaSeconds);
 }
 
 
@@ -558,7 +548,7 @@ FVector UGenCustomMovementComponent::GroundedPhysics(const FVector& LocationDelt
 	// TODO: Double check, might want to keep the dZ if we're gonna project the velocity
 	// Maybe all the things slopes should handle here are just whether it is a valid slope or not, e.g valid grounding stauts
 	// and then within the movement update itself it should read that and handle projecting the velocity.
-	const FVector MoveDelta = FVector(LocationDelta.X, LocationDelta.Y, 0.f);
+	const FVector MoveDelta = FVector(LocationDelta.X, LocationDelta.Y, LocationDelta.Z);
 	// No need to step through solving if we're not moving
 	if (MoveDelta.IsNearlyZero())
 	{
@@ -570,7 +560,7 @@ FVector UGenCustomMovementComponent::GroundedPhysics(const FVector& LocationDelt
 
 	
 	FHitResult MoveHitResult;
-	const float MaxSpeed = FVector(GetVelocity().X, GetVelocity().Y, 0.f).Size();
+	const float MaxSpeed = GetVelocity().Size();
 	const FVector StartLocation = UpdatedComponent->GetComponentLocation();
 
 	// TODO: Study this
@@ -621,7 +611,7 @@ FVector UGenCustomMovementComponent::GroundedPhysics(const FVector& LocationDelt
 				}
 				else
 				{
-					
+					bSteppedUp = true;
 					// The step-up was successful.
 					// @note We can also arrive at this point when hitting a wall (i.e. we didn't actually step up onto anything). This is correct
 					// behaviour since it would be difficult to determine beforehand how high the barrier actually is. Sliding along the surface is
@@ -641,7 +631,7 @@ FVector UGenCustomMovementComponent::GroundedPhysics(const FVector& LocationDelt
 		// TODO: How does keeping Z velocity when on ground affect this? For now I'm just keeping it hence the added term
 		// The new velocity cannot exceed the velocity that was used as the basis for the calculation of the location delta. By clamping we
 		// avoid velocity spikes that can could occur due to minor location adjustments.
-		UpdateVelocity(FVector(GetVelocity().X, GetVelocity().Y, 0.f).GetClampedToMaxSize(MaxSpeed), AppliedDeltaSeconds);
+		UpdateVelocity(FVector(GetVelocity().X, GetVelocity().Y, GetVelocity().Z).GetClampedToMaxSize(MaxSpeed), AppliedDeltaSeconds);
 	}
 
 	FVector AppliedDelta = UpdatedComponent->GetComponentLocation() - StartLocation;
@@ -1432,7 +1422,7 @@ FVector UGenCustomMovementComponent::ComputeRampVector(const FVector& LocationDe
 	)
 	{
 		// Compute a vector that moves parallel to the surface by projecting the horizontal movement onto the ramp.
-		const FVector RampVector = FVector(LocationDelta.X, LocationDelta.Y, -(FloorNormal | LocationDelta) / FloorNormal.Z);
+		const FVector RampVector = FVector(LocationDelta.X, LocationDelta.Y, LocationDelta.Z);
 		return RampVector;
 	}
 	return LocationDelta;

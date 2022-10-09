@@ -612,13 +612,6 @@ protected:
 	UFUNCTION(BlueprintCallable, Category = "General Movement Component")
 	virtual void CalculateVelocity(float DeltaSeconds);
 
-	/// @brief		Projects velocity onto current floor plane
-	///
-	/// @param      DeltaSeconds    The delta time to use.
-	/// @returns    void
-	UFUNCTION(BlueprintCallable, Category = "General Movement Component")
-	virtual void ProjectVelocity(float DeltaSeconds);
-
 	/// @brief		Change the pawn's orientation.
 	///
 	/// @param      bIsDirectBotMove    Whether the pawn is a bot executing direct movement (i.e. the pawn is not using acceleration values
