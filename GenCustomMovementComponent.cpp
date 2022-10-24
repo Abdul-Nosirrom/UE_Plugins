@@ -72,6 +72,10 @@ void UGenCustomMovementComponent::GenReplicatedTick_Implementation(float DeltaTi
 
 	AutoResolvePenetration();
 
+	const FVector PrevNormal = ProcessedGroundNormal;
+	ProcessGroundNormal(CurrentFloor.ShapeHit().ImpactNormal, DeltaTime);
+	bProjectVelocity = FMath::IsNearlyZero((ProcessedGroundNormal - PrevNormal).SizeSquared(), NormalProjectionThreshold) && !FMath::IsNearlyZero(1 - (ProcessedGroundNormal | FVector(0,0,1)), NormalProjectionThreshold);
+	bProjectVelocity = true;
 	PerformMovement(DeltaTime);
 
 	if (bEnablePhysicsInteraction)
@@ -394,7 +398,25 @@ void UGenCustomMovementComponent::ApplyRotation(bool bIsDirectBotMove, float Del
 	}
 
 	if (RotationHandling == ERotationHandling::None) return;
+	
+	if (bOrientToGroundNormal)
+	{
+		FVector Normal = IsGrounded() ? ProcessedGroundNormal : FVector(0,0,1);
+		FQuat RootQuat = UpdatedComponent->GetComponentRotation().Quaternion();
+		FVector UpVector = RootQuat.GetUpVector();
+		FVector RotationAxis = FVector::CrossProduct(UpVector, Normal);
+		RotationAxis.Normalize();
 
+		float DotProduct = FVector::DotProduct(UpVector, Normal);
+		float RotationAngle = acosf(DotProduct);
+
+		FQuat Quat = FQuat(RotationAxis, RotationAngle);
+
+		FQuat NewQuat = Quat * RootQuat;
+
+		UpdatedComponent->SetWorldRotation(NewQuat.Rotator());
+		//return;
+	}
 	// Keeping it like this for now for testing
 	RotateYawTowardsDirectionSafe(GetVelocity(), RotationRate, DeltaSeconds);
 	
@@ -440,7 +462,7 @@ void UGenCustomMovementComponent::PerformMovement(float DeltaSeconds)
 	{
 		// Grounding Status Update
 		EGroundingStatus PreviousGroundingStatus = GetGroundingStatus();
-
+		
 		if (!UpdateMovementModeDynamic(CurrentFloor, DeltaSeconds))
 		{
 			UpdateMovementModeStatic(CurrentFloor, DeltaSeconds);
@@ -491,13 +513,8 @@ void UGenCustomMovementComponent::RunPhysics(float DeltaSeconds)
 void UGenCustomMovementComponent::SolvePhysics(float DeltaSeconds)
 {
 	// Calculate ground angle here to initiate debugger, i can see that the LocationDelta has zero Z.
-	float ImpactNormalAngle = FMath::RadiansToDegrees(FMath::Acos(CurrentFloor.ShapeHit().ImpactNormal | UpdatedComponent->GetUpVector()));
-	if (ImpactNormalAngle > 50.f)
-	{
-		DebugMessage(FColor::Red, TEXT("Debugging"));
-	}
+	DrawDebugDirectionalArrow(GetWorld(), CurrentFloor.ShapeHit().ImpactPoint, CurrentFloor.ShapeHit().ImpactPoint + ProcessedGroundNormal.GetSafeNormal()*200.0f, 100.0f, FColor::Green, false, -1, 0, 10.0f);
 
-	
 	const FVector OldVelocity = GetVelocity();
 	CalculateVelocity(DeltaSeconds);
 	
@@ -525,10 +542,10 @@ void UGenCustomMovementComponent::CalculateVelocity(float DeltaSeconds)
 	if (IsGrounded())
 	{
 		// Project velocity to ground
-		const FVector PlaneNormal = CurrentFloor.ShapeHit().Normal;
-		FVector ProjectedVelocity = (PlaneNormal ^ (GetVelocity().GetSafeNormal() ^ PlaneNormal)) * GetVelocity().Size();
+		const FVector PlaneNormal = ProcessedGroundNormal;
+		const FVector ProjectedVelocity = (PlaneNormal ^ (GetVelocity().GetSafeNormal() ^ PlaneNormal)) * GetVelocity().Size();
 		DrawDebugDirectionalArrow(GetWorld(), CurrentFloor.ShapeHit().ImpactPoint, CurrentFloor.ShapeHit().ImpactPoint + ProjectedVelocity.GetSafeNormal()*200.0f, 100.0f, FColor::Purple, false, -1, 0, 10.0f);
-		UpdateVelocity(FVector{GetVelocity().X, GetVelocity().Y, ProjectedVelocity.Z});
+		UpdateVelocity(FVector{GetVelocity().X, GetVelocity().Y, bProjectVelocity ? ProjectedVelocity.Z : 0.f});
 	}
 
 	// TODO: There's some more shit to do here so keep track of it later
@@ -543,12 +560,10 @@ void UGenCustomMovementComponent::CalculateVelocity(float DeltaSeconds)
 // we're essentially ignoring it going up the slopes though
 FVector UGenCustomMovementComponent::GroundedPhysics(const FVector& LocationDelta, FFloorParams& Floor, float DeltaSeconds)
 {
-	// TODO: Check how to not project velocity on steps to avoid jitter, the point of the bool below
-	bool bSteppedUp = false;
 	// TODO: Double check, might want to keep the dZ if we're gonna project the velocity
 	// Maybe all the things slopes should handle here are just whether it is a valid slope or not, e.g valid grounding stauts
 	// and then within the movement update itself it should read that and handle projecting the velocity.
-	const FVector MoveDelta = FVector(LocationDelta.X, LocationDelta.Y, LocationDelta.Z);
+	const FVector MoveDelta = bProjectVelocity ? LocationDelta : FVector(LocationDelta.X, LocationDelta.Y, 0.f);
 	// No need to step through solving if we're not moving
 	if (MoveDelta.IsNearlyZero())
 	{
@@ -560,7 +575,7 @@ FVector UGenCustomMovementComponent::GroundedPhysics(const FVector& LocationDelt
 
 	
 	FHitResult MoveHitResult;
-	const float MaxSpeed = GetVelocity().Size();
+	const float MaxSpeed = bProjectVelocity ? GetVelocity().Size() : FVector(GetVelocity().X, GetVelocity().Y, 0.f).Size();
 	const FVector StartLocation = UpdatedComponent->GetComponentLocation();
 
 	// TODO: Study this
@@ -574,7 +589,7 @@ FVector UGenCustomMovementComponent::GroundedPhysics(const FVector& LocationDelt
 	const float MoveHitTimeRemaining = 1.0f - MoveHitTime;
 	const FVector MoveDeltaRemaining = MoveDelta * MoveHitTimeRemaining;
 	float RemainingDeltaSeconds = DeltaSeconds * MoveHitTimeRemaining;
-
+	
 	// If collision is inside other collision due to the movement, handle it
 	if (MoveHitResult.bStartPenetrating)
 	{
@@ -587,7 +602,7 @@ FVector UGenCustomMovementComponent::GroundedPhysics(const FVector& LocationDelt
 		// Update the floor
 		UpdateFloor(Floor, FloorTraceLength);
 		// TODO: Check the normal Z check, I think this is also a limitation of arbitrary slopes
-		if (HitWalkableFloor(MoveHitResult) && MoveHitTime > 0.0f && MoveHitResult.Normal.Z > KINDA_SMALL_NUMBER)
+		if (HitWalkableFloor(MoveHitResult) && MoveHitTime > 0.0f)
 		{
 			// We hit another walkable surface
 			RampVector = ComputeRampVector(MoveDeltaRemaining, MoveHitResult);
@@ -611,7 +626,6 @@ FVector UGenCustomMovementComponent::GroundedPhysics(const FVector& LocationDelt
 				}
 				else
 				{
-					bSteppedUp = true;
 					// The step-up was successful.
 					// @note We can also arrive at this point when hitting a wall (i.e. we didn't actually step up onto anything). This is correct
 					// behaviour since it would be difficult to determine beforehand how high the barrier actually is. Sliding along the surface is
@@ -631,7 +645,7 @@ FVector UGenCustomMovementComponent::GroundedPhysics(const FVector& LocationDelt
 		// TODO: How does keeping Z velocity when on ground affect this? For now I'm just keeping it hence the added term
 		// The new velocity cannot exceed the velocity that was used as the basis for the calculation of the location delta. By clamping we
 		// avoid velocity spikes that can could occur due to minor location adjustments.
-		UpdateVelocity(FVector(GetVelocity().X, GetVelocity().Y, GetVelocity().Z).GetClampedToMaxSize(MaxSpeed), AppliedDeltaSeconds);
+		UpdateVelocity(FVector(GetVelocity().X, GetVelocity().Y, bProjectVelocity ? GetVelocity().Z : 0.f).GetClampedToMaxSize(MaxSpeed), AppliedDeltaSeconds);
 	}
 
 	FVector AppliedDelta = UpdatedComponent->GetComponentLocation() - StartLocation;
@@ -735,9 +749,8 @@ bool UGenCustomMovementComponent::AirbornePhysics(const FVector& LocationDelta, 
 
 					// When "bDitch" is true, the pawn is straddling two slopes of which neither are walkable
 					// TODO: Understand this some more, does this affect walkable slopes? I don't think so?
-					bool bDitch = OldHitNormal.Z > 0.0f
-							&&	Hit.ImpactNormal.Z > 0.0f
-							&& FMath::Abs(Delta.Z) <= KINDA_SMALL_NUMBER
+					bool bDitch = 
+							 FMath::Abs(Delta.Z) <= KINDA_SMALL_NUMBER
 							&& (Hit.ImpactNormal | OldHitImpactNormal) < 0.0f;
 
 					if (Hit.Time == 0.0f)
@@ -1104,7 +1117,7 @@ float UGenCustomMovementComponent::SlideAlongSurface(const FVector& Delta, float
 		return 0.f;
 	}
 	FVector NewNormal = Normal;
-	if (IsMovingOnGround())
+	if (IsMovingOnGround() && false)
 	{
 		if (Normal.Z > 0.f)
 		{
@@ -1120,7 +1133,7 @@ float UGenCustomMovementComponent::SlideAlongSurface(const FVector& Delta, float
 			{
 				// Do not push the pawn down further into the floor when the impact point is on the top part of the collision shape.
 				const FVector FloorNormal = CurrentFloor.ShapeHit().Normal;
-				const bool bFloorOpposedToMovement = (Delta | FloorNormal) < 0.f && (FloorNormal.Z < 1.f - DELTA);
+				const bool bFloorOpposedToMovement = (Delta | FloorNormal) < 0.f;
 				if (bFloorOpposedToMovement)
 				{
 					NewNormal = FloorNormal;
@@ -1150,7 +1163,7 @@ void UGenCustomMovementComponent::TwoWallAdjust(FVector& Delta, const FHitResult
 				// Maintain horizontal movement.
 				const float Time = (1.f - Hit.Time);
 				const FVector ScaledDelta = Delta.GetSafeNormal() * InDelta.Size();
-				Delta = FVector(InDelta.X, InDelta.Y, ScaledDelta.Z / Hit.Normal.Z) * Time;
+				Delta = FVector(InDelta.X, InDelta.Y, InDelta.Z) * Time; //ScaledDelta.Z / Hit.Normal.Z) * Time;
 				// The delta Z should never exceed the max allowed step up height so we rescale if necessary. This should be rare (the hit normal Z
 				// divisor would have to be very small) but we'd rather lose horizontal movement than go too high.
 				if (Delta.Z > MaxStepUpHeight)
@@ -1294,7 +1307,6 @@ bool UGenCustomMovementComponent::StepUp(const FVector& LocationDelta, const FHi
 	// sweeping forward by "StepLocationDelta" (horizontally) and sweeping downward by "TravelDownHeight" (along negative Z).
 	FHitResult UpHit;
 	const FQuat PawnRotation = UpdatedComponent->GetComponentQuat();
-	GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Magenta, TEXT("Step Up: " + FString::SanitizeFloat(TravelUpHeight)));
 	MoveUpdatedComponent(FVector(0.f, 0.f, TravelUpHeight), PawnRotation, true, &UpHit);
 
 	if (UpHit.bStartPenetrating)
@@ -1416,13 +1428,10 @@ FVector UGenCustomMovementComponent::ComputeRampVector(const FVector& LocationDe
 	const FVector ContactNormal = RampHit.Normal;
 	if (
 	  HitWalkableFloor(RampHit)
-	  && FloorNormal.Z > KINDA_SMALL_NUMBER
-	  && FloorNormal.Z < (1.f - KINDA_SMALL_NUMBER)
-	  && ContactNormal.Z > KINDA_SMALL_NUMBER
 	)
 	{
 		// Compute a vector that moves parallel to the surface by projecting the horizontal movement onto the ramp.
-		const FVector RampVector = FVector(LocationDelta.X, LocationDelta.Y, LocationDelta.Z);
+		const FVector RampVector = FVector(LocationDelta.X, LocationDelta.Y, bProjectVelocity ? LocationDelta.Z : -(FloorNormal | LocationDelta) / FloorNormal.Z);
 		return RampVector;
 	}
 	return LocationDelta;
@@ -1529,11 +1538,7 @@ bool UGenCustomMovementComponent::HitWalkableFloor(const FHitResult& Hit) const
 	// TODO: There's a built in walkableslopeoverride thats called here from EngineTypes.h, I don't get it
 	float NormalAngle = FMath::RadiansToDegrees(FMath::Acos(Hit.Normal | UpdatedComponent->GetUpVector()));
 	float ImpactNormalAngle = FMath::RadiansToDegrees(FMath::Acos(Hit.ImpactNormal | UpdatedComponent->GetUpVector()));
-
-	if (ImpactNormalAngle > 50.f)
-	{
-		DebugMessage(FColor::Blue, TEXT("Angle: " + FString::SanitizeFloat(ImpactNormalAngle)));
-	}
+	
 	
 	if (ImpactNormalAngle > WalkableFloorAngle)
 	{

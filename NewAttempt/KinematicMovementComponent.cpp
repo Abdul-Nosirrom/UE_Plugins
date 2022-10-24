@@ -3,6 +3,8 @@
 
 #include "KinematicMovementComponent.h"
 
+#include "AbcObject.h"
+
 
 // Sets default values for this component's properties
 UKinematicMovementComponent::UKinematicMovementComponent()
@@ -31,6 +33,9 @@ void UKinematicMovementComponent::BeginPlay()
 	SetTickGroup(ETickingGroup::TG_DuringPhysics);
 	// WANT THIS TICK TO CALL CUSTOM INTERPOLATION
 	SetTickGroup(ETickingGroup::TG_PostPhysics);
+
+	// Initialize it and cache it
+	CachedQueryParams = SetupQueryParams();
 
 }
 
@@ -89,6 +94,7 @@ void UKinematicMovementComponent::CustomInterpolationUpdate(float DeltaTime)
 
 
 #pragma endregion Simulation Updates
+
 
 #pragma region Solver Updates
 /// <summary>
@@ -333,9 +339,52 @@ void UKinematicMovementComponent::UpdatePhase2(float DeltaTime)
 #pragma endregion Solver Updates
 
 
-#pragma region Update Evaluations
+#pragma region Evaluations
 
-void UKinematicMovementComponent::EvaluateHitStability(UPrimitiveComponent HitCollider, FVector HitNormal, FVector HitPoint, FVector atCharPosition, FQuat atCharRotation, FVector withCharVelocity, FHitStabilityReport& StabilityReport)
+void UKinematicMovementComponent::EvaluateCrease(FVector CurCharacterVelocity, FVector PrevCharacterVelocity, FVector CurHitNormal, FVector PrevHitNormal, bool bCurrentHitIsStable, bool bPreviousHitIsStable, bool bCharIsStable, bool& bIsValidCrease, FVector& CreaseDirection)
+{
+	bIsValidCrease = false;
+	CreaseDirection = FVector::ZeroVector;
+
+	if (!bCharIsStable || !bCurrentHitIsStable || !bPreviousHitIsStable)
+	{
+		FVector TmpBlockingCreaseDirection = (CurHitNormal ^ PrevHitNormal).GetSafeNormal();
+		float DotPlanes = CurHitNormal | PrevHitNormal;
+		bool bIsVelocityConstrainedByCrease = false;
+
+		// Avoid calculations if the two planes are the same
+		if (DotPlanes < 0.999f)
+		{
+			const FVector NormalOnCreasePlaneA = FVector::VectorPlaneProject(CurHitNormal, TmpBlockingCreaseDirection).GetSafeNormal();
+			const FVector NormalOnCreasePlaneB = FVector::VectorPlaneProject(PrevHitNormal, TmpBlockingCreaseDirection).GetSafeNormal();
+			const float DotPlanesOnCreasePlane = NormalOnCreasePlaneA | NormalOnCreasePlaneB;
+
+			const FVector EnteringVelocityDirectionOnCreasePlane = FVector::VectorPlaneProject(PrevCharacterVelocity, TmpBlockingCreaseDirection).GetSafeNormal();
+
+			if (DotPlanesOnCreasePlane <= ((-EnteringVelocityDirectionOnCreasePlane | NormalOnCreasePlaneA) + 0.001f) &&
+				DotPlanesOnCreasePlane <= ((-EnteringVelocityDirectionOnCreasePlane | NormalOnCreasePlaneB) + 0.001f))
+			{
+				bIsVelocityConstrainedByCrease = true;
+			}
+		}
+
+		if (bIsVelocityConstrainedByCrease)
+		{
+			// Flip Crease Direction To Make It Representative Of The Real Direction Our Velocity Would Be Projected To
+			if ((TmpBlockingCreaseDirection | CurCharacterVelocity) < 0)
+			{
+				TmpBlockingCreaseDirection *= -1;
+			}
+
+			bIsValidCrease = true;
+			CreaseDirection = TmpBlockingCreaseDirection;
+		}
+	}
+}
+
+
+// TODO: Step Handling Checks If Collider Is Physics Object
+void UKinematicMovementComponent::EvaluateHitStability(UPrimitiveComponent* HitCollider, FVector HitNormal, FVector HitPoint, FVector atCharPosition, FQuat atCharRotation, FVector withCharVelocity, FHitStabilityReport& StabilityReport)
 {
 	if (!bSolveGrounding)
 	{
@@ -355,19 +404,425 @@ void UKinematicMovementComponent::EvaluateHitStability(UPrimitiveComponent HitCo
 
 	if (bLedgeAndDenivelationHandling)
 	{
-		// TODO: This
+		float LedgeCheckHeight = MinDistanceForLedge;
+		if (StepHandling != EStepHandlingMethod::None)
+		{
+			LedgeCheckHeight = MaxStepHeight;
+		}
+
+		bool bIsStableLedgeInner = false;
+		bool bIsStableLedgeOuter = false;
+
+		FHitResult InnerLedgeHit, OuterLedgeHit;
+		if (CollisionLineCasts(
+			HitPoint + (atCharUp * SecondaryProbesVertical) + (InnerHitDirection * SecondaryProbesHorizontal),
+			-atCharUp,
+			LedgeCheckHeight + SecondaryProbesVertical,
+			InnerLedgeHit,
+			InternalCharacterHits) > 0)
+		{
+			FVector InnerLedgeNormal = InnerLedgeHit.ImpactNormal;
+			StabilityReport.InnerNormal = InnerLedgeNormal;
+			StabilityReport.bFoundInnerNormal = true;
+			bIsStableLedgeInner = IsStableOnNormal(InnerLedgeNormal);
+		}
+
+		if (CollisionLineCasts(
+			HitPoint + (atCharUp * SecondaryProbesVertical) + (-InnerHitDirection * SecondaryProbesHorizontal),
+			-atCharUp,
+			LedgeCheckHeight + SecondaryProbesVertical,
+			OuterLedgeHit,
+			InternalCharacterHits) > 0)
+		{
+			FVector OuterLedgeNormal = OuterLedgeHit.ImpactNormal;
+			StabilityReport.OuterNormal = OuterLedgeNormal;
+			StabilityReport.bFoundOuterNormal = true;
+			bIsStableLedgeOuter = IsStableOnNormal(OuterLedgeNormal);
+		}
+
+		// TODO: Good entry point to make an obstruction here to prevent movement off ledges
+		StabilityReport.bLedgeDetected = (bIsStableLedgeInner != bIsStableLedgeOuter);
+
+		if (StabilityReport.bLedgeDetected)
+		{
+			StabilityReport.bIsOnEmptySideOfLedge = bIsStableLedgeOuter && !bIsStableLedgeInner;
+			StabilityReport.LedgeGroundNormal = bIsStableLedgeOuter ? StabilityReport.OuterNormal : StabilityReport.InnerNormal;
+			StabilityReport.LedgeRightDirection = (HitNormal ^ StabilityReport.LedgeGroundNormal).GetSafeNormal();
+			StabilityReport.LedgeFacingDirection = FVector::VectorPlaneProject(StabilityReport.LedgeGroundNormal ^ StabilityReport.LedgeRightDirection, CharacterUp).GetSafeNormal();
+			StabilityReport.DistanceFromLedge = FVector::VectorPlaneProject((HitPoint - (atCharPosition + (atCharRotation * TransformToCapsuleBottom))), atCharUp).Size();
+			StabilityReport.bIsMovingTowardsEmptySideOfLedge = (withCharVelocity.GetSafeNormal() | StabilityReport.LedgeFacingDirection) > 0.f;
+		}
+
+		if (StabilityReport.bIsStable)
+		{
+			StabilityReport.bIsStable = IsStableWithSpecialCases(StabilityReport, withCharVelocity);
+		}
 	}
 
 	if (StepHandling != EStepHandlingMethod::None && !StabilityReport.bIsStable)
 	{
 		// TODO: This
+		// I think we ignore everything except static and dynamic. Pawn,PhysicsBody,Vehicle,Destructible are the equivalent of our rigidbodies?
+		auto Type = HitCollider->GetCollisionObjectType();
+		switch (Type)
+		{
+		case ECC_WorldStatic: break;
+		case ECC_WorldDynamic: break;
+		case ECC_Pawn: break;
+		case ECC_Visibility: break;
+		case ECC_Camera: break;
+		case ECC_PhysicsBody: break;
+		case ECC_Vehicle: break;
+		case ECC_Destructible: break;
+		case ECC_EngineTraceChannel1: break;
+		case ECC_EngineTraceChannel2: break;
+		case ECC_EngineTraceChannel3: break;
+		case ECC_EngineTraceChannel4: break;
+		case ECC_EngineTraceChannel5: break;
+		case ECC_EngineTraceChannel6: break;
+		case ECC_GameTraceChannel1: break;
+		case ECC_GameTraceChannel2: break;
+		case ECC_GameTraceChannel3: break;
+		case ECC_GameTraceChannel4: break;
+		case ECC_GameTraceChannel5: break;
+		case ECC_GameTraceChannel6: break;
+		case ECC_GameTraceChannel7: break;
+		case ECC_GameTraceChannel8: break;
+		case ECC_GameTraceChannel9: break;
+		case ECC_GameTraceChannel10: break;
+		case ECC_GameTraceChannel11: break;
+		case ECC_GameTraceChannel12: break;
+		case ECC_GameTraceChannel13: break;
+		case ECC_GameTraceChannel14: break;
+		case ECC_GameTraceChannel15: break;
+		case ECC_GameTraceChannel16: break;
+		case ECC_GameTraceChannel17: break;
+		case ECC_GameTraceChannel18: break;
+		case ECC_OverlapAll_Deprecated: break;
+		case ECC_MAX: break;
+		default: ;
+		}
+	
 	}
 
 	// Call event on character controller
 }
 
 
-#pragma endregion Update Evaluations
+#pragma endregion Evaluations
+
+
+#pragma region Velocity & Movement Handlers
+
+
+// TODO: Incomplete, physics interactions stuff here. I think it just wants us to store it and handle it later, but
+// i might just leave all the physics interactions stuff to how GMC does it
+bool UKinematicMovementComponent::InternalCharacterMove(FVector& TransientVelocity, float DeltaTime)
+{
+	// TODO: Curious as to when this is the case
+	if (DeltaTime <= 0.f) return false;
+	
+	bool bWasCompleted = true;
+
+	FVector RemainingMovementDirection = TransientVelocity.GetSafeNormal();
+	float RemainingMovementMagnitude = TransientVelocity.Size() * DeltaTime;
+
+	FVector OriginalVelocityDirection = RemainingMovementDirection;
+
+	int SweepsMade = 0;
+	bool bHitSomethingThisSweepIteration = true;
+	
+	FVector TmpMovedPosition = TransientPosition;
+	bool bPreviousHitIsStable = false;
+
+	FVector PreviousVelocity = CachedZeroVector;
+	FVector PreviousObstructionNormal = CachedZeroVector;
+
+	EMovementSweepState SweepState = EMovementSweepState::Initial;
+
+	// Project Movement Against Current Overlaps Before Doing Sweeps
+	for (int i = 0; i < OverlapsCount; i++)
+	{
+		FVector OverlapNormal = Overlaps[i].Normal;
+		if ((RemainingMovementDirection | OverlapNormal) < 0.f)
+		{
+			bool bStableOnHit = IsStableOnNormal(OverlapNormal) && !MustUnground();
+			FVector VelocityBeforeProjection = TransientVelocity;
+			FVector ObstructionNormal = GetObstructionNormal(OverlapNormal, bStableOnHit);
+
+			InternalHandleVelocityProjection(
+				bStableOnHit,
+				OverlapNormal,
+				ObstructionNormal,
+				OriginalVelocityDirection,
+				SweepState,
+				bPreviousHitIsStable,
+				PreviousVelocity,
+				PreviousObstructionNormal,
+				TransientVelocity,
+				RemainingMovementMagnitude,
+				RemainingMovementDirection);
+
+			bPreviousHitIsStable = bStableOnHit;
+			PreviousVelocity = VelocityBeforeProjection;
+			PreviousObstructionNormal = ObstructionNormal;
+		}
+	}
+
+	// Now sweep the desired movement to detect collisions
+	while (RemainingMovementMagnitude > 0.f && (SweepsMade <= MaxMovementIterations) && bHitSomethingThisSweepIteration)
+	{
+		bool bFoundClosestHit = false;
+		FVector ClosestSweepHitPoint, ClosestSweepHitNormal;
+		float ClosestSweepHitDistance = 0.f;
+		UPrimitiveComponent* ClosestSweepHitCollider;
+
+		if (bCheckMovementInitialOverlaps)
+		{
+			int NumOverlaps = CollisionOverlaps(
+				TmpMovedPosition,
+				TransientRotation,
+				InternalProbedColliders);
+
+			if (NumOverlaps > 0)
+			{
+				ClosestSweepHitDistance = 0.f;
+				float MostObstructingOverlapNormalDotProduct = 2.f;
+
+				FVector InitialPositionCache = UpdatedComponent->GetComponentLocation();
+				FQuat InitialRotationCache = UpdatedComponent->GetComponentQuat();
+				
+				// Temporarily move capsule then move it back so we can test penetration at TmpMovedPosition
+				// TODO: A GREAT CHANCE TO USE THE MOVEMENTSCOPE DEFERRED!!!!!!!!!!!!
+				// DOING THE ABOVE MIGHT ALSO MEAN WE DONT EVEN NEED TO GET OVERLAPS OUR SELVES WITH CAPSULE CASTS IT'LL DO IT
+				UpdatedComponent->SetWorldLocationAndRotation(TmpMovedPosition, TransientRotation);
+
+				for (int i = 0; i < NumOverlaps; i++)
+				{
+					FOverlapResult TmpCollider = InternalProbedColliders[i];
+
+					// TODO: Wait think about this some more, the capsule isnt at TmpPosition, we just wanna test at that position after our initial projections
+					// TODO: Can maybe use MoveUpdated Component
+					// TODO: For now just gonna set capsule position then set it back just for safety
+					FMTDResult PenetrationResult;
+					FVector OverlapPosition = TmpCollider.GetComponent()->GetComponentLocation();
+					FQuat OverlapRotation = TmpCollider.GetComponent()->GetComponentQuat();
+					
+					if (Capsule->ComputePenetration(PenetrationResult, TmpCollider.GetComponent()->GetCollisionShape(), OverlapPosition, OverlapRotation))
+					{
+						const float DotProduct = RemainingMovementDirection | PenetrationResult.Direction;
+						if (DotProduct < 0.f && DotProduct < MostObstructingOverlapNormalDotProduct)
+						{
+							MostObstructingOverlapNormalDotProduct = DotProduct;
+
+							ClosestSweepHitNormal = PenetrationResult.Direction;
+							ClosestSweepHitCollider = TmpCollider.GetComponent();
+							ClosestSweepHitPoint = TmpMovedPosition + (TransientRotation * TransformToCapsuleCenter) + PenetrationResult.Distance * PenetrationResult.Direction;
+
+							bFoundClosestHit = true;
+						}
+					}
+				}
+
+				// Move back after penetrations were computed
+				UpdatedComponent->SetWorldLocationAndRotation(InitialPositionCache, InitialRotationCache);
+			}
+		}
+
+		FHitResult ClosestSweepHit;
+		if (!bFoundClosestHit && CollisionSweeps(
+			TmpMovedPosition, // Position
+			TransientRotation, // ROtation
+			RemainingMovementDirection, // Direction
+			RemainingMovementMagnitude + CollisionOffset, // Distance
+			ClosestSweepHit, // Closest Hit
+			InternalCharacterHits) > 0) // All Hits
+		{
+			ClosestSweepHitNormal = ClosestSweepHit.ImpactNormal;
+			ClosestSweepHitDistance = ClosestSweepHit.Distance;
+			ClosestSweepHitCollider = ClosestSweepHit.GetComponent();
+			ClosestSweepHitPoint = ClosestSweepHit.ImpactPoint;
+
+			bFoundClosestHit = true;
+		}
+
+		if (bFoundClosestHit)
+		{
+			// Calculate Movement From This Iteration
+			FVector SweepMovement = (RemainingMovementDirection * (FMath::Max(0.f, ClosestSweepHitDistance - CollisionOffset)));
+			TmpMovedPosition += SweepMovement;
+			RemainingMovementMagnitude -= SweepMovement.Size();
+
+			// Evaluate If Hit Is Stable
+			FHitStabilityReport MoveHitStabilityReport;
+			EvaluateHitStability(ClosestSweepHitCollider, ClosestSweepHitNormal, ClosestSweepHitPoint, TmpMovedPosition, TransientRotation, TransientVelocity, MoveHitStabilityReport);
+
+			// Handle Stepping Up Steps Points Higher Than Bottom Capsule Radius
+			bool bFoundValidStepHit = false;
+			if (bSolveGrounding && StepHandling != EStepHandlingMethod::None && MoveHitStabilityReport.bValidStepDetected)
+			{
+				float ObstructionCorrelation = FMath::Abs(ClosestSweepHitNormal | CharacterUp);
+				if (ObstructionCorrelation <= CorrelationForVerticalObstruction)
+				{
+					FVector StepForwardDirection = FVector::VectorPlaneProject(-ClosestSweepHitNormal, CharacterUp).GetSafeNormal();
+					FVector StepCastStartPoint = (TmpMovedPosition + (StepForwardDirection * SteppingForwardDistance)) + (CharacterUp * MaxStepHeight);
+
+					// Cast Downward From The Top Of The Stepping Height
+					FHitResult ClosestStepHit;
+					int NumStepHits = CollisionSweeps(
+						StepCastStartPoint, // Position
+						TransientRotation, // Rotation
+						-CharacterUp, // Direction
+						MaxStepHeight, // Distance
+						ClosestStepHit, // Closest hit
+						InternalCharacterHits,
+						0.f,
+						true);
+
+					// Check For Hit Corresponding To Stepped Collider
+					for (int i = 0; i < NumStepHits; i++)
+					{
+						// TODO: THIS IS WRONG, NOT CHECKING FOR EQUALITY PROPERLY HERE
+						if (InternalCharacterHits[i].GetComponent() == MoveHitStabilityReport.SteppedCollider)
+						{
+							FVector EndStepPosition = StepCastStartPoint + (-CharacterUp * (InternalCharacterHits[i].Distance - CollisionOffset));
+							TmpMovedPosition = EndStepPosition;
+							bFoundValidStepHit = true;
+
+							// Project Velocity On Ground Normal At Step
+							TransientVelocity = FVector::VectorPlaneProject(TransientVelocity, CharacterUp);
+							RemainingMovementDirection = TransientVelocity.GetSafeNormal();
+
+							break;
+						}
+					}
+				}
+			}
+
+			// Handle Movement Solving If Collision Wasn't Valid Step
+			if (!bFoundValidStepHit)
+			{
+				FVector ObstructionNormal = GetObstructionNormal(ClosestSweepHitNormal, MoveHitStabilityReport.bIsStable);
+
+				// TODO: Movement Hit Callback EVENT
+
+				// Handle remembering physics interaction hits
+				// TODO STORES BUMPED PAWNS/RIGIDBODIES/PHYSICSOBJECTS
+
+				bool bStableOnHit = MoveHitStabilityReport.bIsStable && !MustUnground();
+				FVector VelocityBeforeProjection = TransientVelocity;
+
+				// Project Velocity For Next Iteration
+				InternalHandleVelocityProjection(
+					bStableOnHit,
+					ClosestSweepHitNormal,
+					ObstructionNormal,
+					OriginalVelocityDirection,
+					SweepState,
+					bPreviousHitIsStable,
+					PreviousVelocity,
+					PreviousObstructionNormal,
+					TransientVelocity,
+					RemainingMovementMagnitude,
+					RemainingMovementDirection);
+			}
+		}
+		// Else we hit nothing
+		else
+		{
+			bHitSomethingThisSweepIteration = false;
+		}
+
+		// Safety for exceeding max sweeps allowed
+		SweepsMade++;
+		if (SweepsMade > MaxMovementIterations)
+		{
+			if (bKillRemainingMovementWhenExceedMovementIterations) RemainingMovementMagnitude = 0;
+			if (bKillVelocityWhenExceedMaxMovementIterations) TransientVelocity = FVector::ZeroVector;
+
+			bWasCompleted = false;
+		}
+	}
+
+	// Move Position For the Remainder Of The Movement
+	TmpMovedPosition += (RemainingMovementDirection * RemainingMovementMagnitude);
+	TransientPosition = TmpMovedPosition;
+
+	return bWasCompleted;
+}
+
+void UKinematicMovementComponent::InternalHandleVelocityProjection(bool bStableOnHit, FVector HitNormal, FVector ObstructionNormal, FVector OriginalDistance, EMovementSweepState& SweepState, bool bPreviousHitIsStable,
+									FVector PrevVelocity, FVector PrevObstructionNormal, FVector& TransientVelocity, float& RemainingMovementMagnitude, FVector& RemainingMovementDirection)
+{
+	if (TransientVelocity.SizeSquared() <= 0)
+	{
+		return; // No need to project if zero velocity
+	}
+
+	const FVector VelocityBeforeProjection = TransientVelocity;
+
+	if (bStableOnHit)
+	{
+		bLastMovementIterationFoundAnyGround = true;
+		HandleVelocityProjection(TransientVelocity, ObstructionNormal, bStableOnHit);
+	}
+	else
+	{
+		// Handle Projection
+		if (SweepState == EMovementSweepState::Initial)
+		{
+			HandleVelocityProjection(TransientVelocity, ObstructionNormal, bStableOnHit);
+			SweepState = EMovementSweepState::AfterFirstHit;
+		}
+		// Blocking Crease Handling
+		else if (SweepState == EMovementSweepState::AfterFirstHit)
+		{
+			bool bFoundCrease;
+			FVector CreaseDirection;
+			EvaluateCrease(
+				TransientVelocity,
+				PrevVelocity,
+				ObstructionNormal,
+				PrevObstructionNormal,
+				bStableOnHit,
+				bPreviousHitIsStable,
+				GroundingStatus->bIsStableOnGround && !MustUnground(),
+				bFoundCrease,
+				CreaseDirection);
+
+			if (bFoundCrease)
+			{
+				if (GroundingStatus->bIsStableOnGround && !MustUnground())
+				{
+					TransientVelocity = FVector::ZeroVector;
+					SweepState = EMovementSweepState::FoundBlockingCorner;
+				}
+				else
+				{
+					TransientVelocity = TransientVelocity.ProjectOnTo(CreaseDirection);
+					SweepState = EMovementSweepState::FoundBlockingCrease;
+				}
+			}
+			else
+			{
+				HandleVelocityProjection(TransientVelocity, ObstructionNormal, bStableOnHit);
+			}
+		}
+		// Blocking Corner Handling
+		else if (SweepState == EMovementSweepState::FoundBlockingCrease)
+		{
+			TransientVelocity = FVector::ZeroVector;
+			SweepState = EMovementSweepState::FoundBlockingCorner;
+		}
+	}
+
+	const float NewVelocityFactor = TransientVelocity.Size() / VelocityBeforeProjection.Size();
+	RemainingMovementMagnitude *= NewVelocityFactor;
+	RemainingMovementDirection = TransientVelocity.GetSafeNormal();
+}
+
+
+#pragma endregion Velocity & Movement Handlers
 
 #pragma region Step Handling
 
@@ -462,7 +917,7 @@ bool UKinematicMovementComponent::CheckStepValidity(int NumStepHits, FVector Cha
 				InternalCharacterHits,
 				true) > 0)
 			{
-				if (IsStableOnNormal(OuterSlopeHit.Normal))
+				if (IsStableOnNormal(OuterSlopeHit.ImpactNormal))
 				{
 					FHitResult TmpUpObstructionHit;
 					// Cast Upward To Detect Any Obstructions To Moving There
@@ -490,7 +945,7 @@ bool UKinematicMovementComponent::CheckStepValidity(int NumStepHits, FVector Cha
 								InternalCharacterHits,
 								true) > 0)
 							{
-								if (IsStableOnNormal(InnerStepHit.Normal))
+								if (IsStableOnNormal(InnerStepHit.ImpactNormal))
 								{
 									bInnerStepValid = true;
 								}
@@ -508,7 +963,7 @@ bool UKinematicMovementComponent::CheckStepValidity(int NumStepHits, FVector Cha
 								InternalCharacterHits,
 								true) > 0)
 							{
-								if (IsStableOnNormal(InnerStepHit.Normal))
+								if (IsStableOnNormal(InnerStepHit.ImpactNormal))
 								{
 									bInnerStepValid = true;
 								}
@@ -558,6 +1013,10 @@ bool UKinematicMovementComponent::InternalIsColliderValidForCollisions(UPrimitiv
 {
 	// There's rigidbody stuff here that I'm not quite sure how to deal with, for the most part otherwise these checks dont do much
 	// and might fall into the physics interactions category
+
+	// TODO: There's a way to check the object type of an actor or something, whether it is static, dynamic, movable. I think movable could be what we're looking for,
+	// or maybe not
+	
 	return true;
 }
 
@@ -570,27 +1029,20 @@ bool UKinematicMovementComponent::InternalIsColliderValidForCollisions(UPrimitiv
 
 // TODO: Add Ignore Actor (Self) In FCollisionQueryParams. Then In CheckIfColliderValidForCollisions we can skip the first check
 
-int UKinematicMovementComponent::CollisionOverlaps(FVector Position, FQuat Rotation, TArray<FOverlapResult> OverlappedColliders, float Inflate, bool AcceptOnlyStableGroundLayer)
+int UKinematicMovementComponent::CollisionOverlaps(FVector Position, FQuat Rotation, TArray<FOverlapResult>& OverlappedColliders, float Inflate, bool AcceptOnlyStableGroundLayer)
 {
-	UWorld* World = GetWorld();
-	ECollisionChannel QueryChannels = CollidableLayers;
+	const UWorld* World = GetWorld();
+	const FCollisionObjectQueryParams ObjectQueryParams = SetupObjectQueryParams({CollidableLayers, StableGroundLayers});
 
-	if (AcceptOnlyStableGroundLayer)
-	{
-		QueryChannels = static_cast<ECollisionChannel>(static_cast<int>(CollidableLayers) & static_cast<int>(StableGroundLayers));
-	}
-
-	float HalfHeight = FMath::IsNearlyZero(Inflate) ? CapsuleHeight : CapsuleHeight + Inflate;
-	float Radius = FMath::IsNearlyZero(Inflate) ? CapsuleRadius : CapsuleRadius + Inflate;
-	
-	FCollisionShape SweepShape = FCollisionShape::MakeCapsule(Radius, HalfHeight);
+	const FCollisionShape SweepShape = Capsule->GetCollisionShape(Inflate);
 
 	int NumHits = 0;
-	World->OverlapMultiByChannel(OverlappedColliders,
+	World->OverlapMultiByObjectType(OverlappedColliders,
 		Position,
 		Rotation,
-		QueryChannels,
-		SweepShape);
+		ObjectQueryParams,
+		SweepShape,
+		CachedQueryParams);
 
 	int NumUnfilteredHits = OverlappedColliders.Num();
 	for (int i = NumUnfilteredHits - 1; i >= 0; i--)
@@ -609,14 +1061,13 @@ int UKinematicMovementComponent::CollisionOverlaps(FVector Position, FQuat Rotat
 }
 
 
-int UKinematicMovementComponent::CharacterOverlaps(FVector Position, FQuat Rotation, TArray<FOverlapResult> OverlappedColliders, ECollisionChannel TraceChannel, FCollisionResponseParams ResponseParams, float Inflate)
+// TODO: NOTE this is actually not used [Actually, It us used but not by it here, but rather is a manual query (e.g for when wanting to uncrouch and checking if the area we're in can be uncrounched from
+// I think this is why these also use the QueryTriggerInteraction (unity specific) because it lets us define our own behavior for the overlap somewhat or something
+int UKinematicMovementComponent::CharacterOverlaps(FVector Position, FQuat Rotation, TArray<FOverlapResult>& OverlappedColliders, ECollisionChannel TraceChannel, FCollisionResponseParams ResponseParams, float Inflate)
 {
 	UWorld* World = GetWorld();
 	
-	float HalfHeight = FMath::IsNearlyZero(Inflate) ? CapsuleHeight : CapsuleHeight + Inflate;
-	float Radius = FMath::IsNearlyZero(Inflate) ? CapsuleRadius : CapsuleRadius + Inflate;
-	
-	FCollisionShape SweepShape = FCollisionShape::MakeCapsule(Radius, HalfHeight);
+	FCollisionShape SweepShape = Capsule->GetCollisionShape(Inflate);
 
 	// Filter Out Self
 	FCollisionQueryParams CollisionQueryParams = FCollisionQueryParams::DefaultQueryParam;
@@ -636,31 +1087,22 @@ int UKinematicMovementComponent::CharacterOverlaps(FVector Position, FQuat Rotat
 }
 
 
-int UKinematicMovementComponent::CollisionSweeps(FVector Position, FQuat Rotation, FVector Direction, float Distance, FHitResult& ClosestHit, TArray<FHitResult> Hits, float Inflate, bool AcceptOnlyStableGroundLayer)
+int UKinematicMovementComponent::CollisionSweeps(FVector Position, FQuat Rotation, FVector Direction, float Distance, FHitResult& ClosestHit, TArray<FHitResult>& Hits, float Inflate, bool AcceptOnlyStableGroundLayer)
 {
 	UWorld* World = GetWorld();
-	ECollisionChannel QueryChannels = CollidableLayers;
-
-	if (AcceptOnlyStableGroundLayer)
-	{
-		QueryChannels = static_cast<ECollisionChannel>(static_cast<int>(CollidableLayers) & static_cast<int>(StableGroundLayers));
-	}
-
-	float HalfHeight = FMath::IsNearlyZero(Inflate) ? CapsuleHeight : CapsuleHeight + Inflate;
-	float Radius = FMath::IsNearlyZero(Inflate) ? CapsuleRadius : CapsuleRadius + Inflate;
+	const FCollisionShape SweepShape = Capsule->GetCollisionShape(Inflate);
 	
-	FCollisionShape SweepShape = FCollisionShape::MakeCapsule(Radius, HalfHeight);
-
-	FCollisionQueryParams CollisionQueryParams = FCollisionQueryParams::DefaultQueryParam;
+	FCollisionObjectQueryParams ObjectQueryParams = SetupObjectQueryParams(CollidableLayers);
 	
 	// Capsule Cast
 	int NumHits = 0;
-	World->SweepMultiByChannel(Hits,
-		Position - (Direction * GroundProbingBackstepDistance),
+	World->SweepMultiByObjectType(Hits,
+		Position - Direction * GroundProbingBackstepDistance,
 		Position + Direction * (Distance + SweepProbingBackstepDistance - GroundProbingBackstepDistance),
 		Rotation,
-		QueryChannels,
-		SweepShape);
+		ObjectQueryParams,
+		SweepShape,
+		CachedQueryParams);
 
 	int NumUnfilteredHits = Hits.Num();
 
@@ -672,10 +1114,9 @@ int UKinematicMovementComponent::CollisionSweeps(FVector Position, FQuat Rotatio
 		Hits[i].Distance -= SweepProbingBackstepDistance;
 
 		FHitResult Hit = Hits[i];
-		float HitDistance = Hit.Distance;
 
 		// Filter out invalid hits
-		if (HitDistance <= 0.f || !CheckIfColliderValidForCollisions(Hit.GetComponent()))
+		if (const float HitDistance = Hit.Distance; HitDistance <= 0.f || !CheckIfColliderValidForCollisions(Hit.GetComponent()))
 		{
 			NumHits--;
 			if (i < NumHits)
@@ -697,15 +1138,14 @@ int UKinematicMovementComponent::CollisionSweeps(FVector Position, FQuat Rotatio
 }
 
 
-int UKinematicMovementComponent::CharacterSweeps(FVector Position, FQuat Rotation, FVector Direction, float Distance, FHitResult& ClosestHit, TArray<FHitResult> Hits, ECollisionChannel TraceChannel, FCollisionResponseParams ResponseParams, float Inflate)
+// TODO: NOTE This is actually not used
+int UKinematicMovementComponent::CharacterSweeps(FVector Position, FQuat Rotation, FVector Direction, float Distance, FHitResult& ClosestHit, TArray<FHitResult>& Hits, ECollisionChannel TraceChannel, FCollisionResponseParams ResponseParams, float Inflate)
 {
 	UWorld* World = GetWorld();
 	// Setup Sweep Collision Shape
 
-	float HalfHeight = FMath::IsNearlyZero(Inflate) ? CapsuleHeight : CapsuleHeight + Inflate;
-	float Radius = FMath::IsNearlyZero(Inflate) ? CapsuleRadius : CapsuleRadius + Inflate;
-	
-	FCollisionShape SweepShape = FCollisionShape::MakeCapsule(Radius, HalfHeight);
+	FCollisionShape SweepShape = Capsule->GetCollisionShape(Inflate);
+
 
 	
 	// Capsule Cast
@@ -759,7 +1199,7 @@ bool UKinematicMovementComponent::GroundSweep(FVector Position, FQuat Rotation, 
 	UWorld* World = GetWorld();
 
 	// Setup Sweep Collision Shape
-	FCollisionShape SweepShape = FCollisionShape::MakeCapsule(CapsuleRadius, CapsuleHeight);
+	const FCollisionShape SweepShape = Capsule->GetCollisionShape();
 	
 	FVector CapsuleBot = Position + (Rotation * TransformToCapsuleBottomHemi) - (Direction * GroundProbingBackstepDistance);
 	FVector CapsuleTop = Position + (Rotation * TransformToCapsuleTopHemi) - (Direction * GroundProbingBackstepDistance);
@@ -767,15 +1207,19 @@ bool UKinematicMovementComponent::GroundSweep(FVector Position, FQuat Rotation, 
 	// Other attempt is to sweep by two spheres since we already know their positions given the rotation
 	FCollisionShape TopSphereShape = FCollisionShape::MakeSphere(CapsuleRadius);
 	FCollisionShape BotSphereShape = FCollisionShape::MakeSphere(CapsuleRadius);
-	
-	// Capsule Cast
-	World->SweepMultiByChannel(InternalCharacterHits,
+
+	// This is wrong, collidablelayers and stablegroundlayers are in and of themselves, lists (they should be I mean). Can setup it up better methinks, check this later
+	// and see if you can make an array of channels 
+	FCollisionObjectQueryParams ObjectQueryParams = SetupObjectQueryParams(CollidableLayers);
+
+	World->SweepMultiByObjectType(InternalCharacterHits,
 		Position - (Direction * GroundProbingBackstepDistance),
 		Position + Direction * (Distance - GroundProbingBackstepDistance),
 		Rotation,
-		static_cast<ECollisionChannel>(static_cast<int>(CollidableLayers) & static_cast<int>(StableGroundLayers)),
-		SweepShape);
-
+		ObjectQueryParams,
+		SweepShape,
+		CachedQueryParams);
+	
 	int NumUnfilteredHits = InternalCharacterHits.Num();
 
 	bool bFoundValidHit = false;
@@ -784,10 +1228,9 @@ bool UKinematicMovementComponent::GroundSweep(FVector Position, FQuat Rotation, 
 	for (int i = 0; i < NumUnfilteredHits; i++)
 	{
 		FHitResult Hit = InternalCharacterHits[i];
-		float HitDistance = Hit.Distance;
 
 		// Find closest valid hit
-		if (HitDistance > 0.f && CheckIfColliderValidForCollisions(Hit.GetComponent()))
+		if (const float HitDistance = Hit.Distance; HitDistance > 0.f && CheckIfColliderValidForCollisions(Hit.GetComponent()))
 		{
 			if (HitDistance < ClosestDistance)
 			{
@@ -805,18 +1248,14 @@ bool UKinematicMovementComponent::GroundSweep(FVector Position, FQuat Rotation, 
 
 
 
-int UKinematicMovementComponent::CollisionLineCasts(FVector Position, FVector Direction, float Distance, FHitResult& ClosestHit, TArray<FHitResult> Hits, bool AcceptOnlyStableGroundLayer)
+int UKinematicMovementComponent::CollisionLineCasts(FVector Position, FVector Direction, float Distance, FHitResult& ClosestHit, TArray<FHitResult>& Hits, bool AcceptOnlyStableGroundLayer)
 {
-	UWorld* World = GetWorld();
-	ECollisionChannel queryChannels = CollidableLayers;
+	const UWorld* World = GetWorld();
+	const FCollisionObjectQueryParams ObjectQueryParams = SetupObjectQueryParams(CollidableLayers);
 
-	if (AcceptOnlyStableGroundLayer)
-	{
-		queryChannels = static_cast<ECollisionChannel>(static_cast<int>(CollidableLayers) & static_cast<int>(StableGroundLayers));
-	}
 	
 	int NumHits = 0;
-	bool DidHit = World->LineTraceMultiByChannel(Hits, Position, Position + Direction, queryChannels);
+	bool DidHit = World->LineTraceMultiByObjectType(Hits, Position, Position + Direction * Distance, ObjectQueryParams, CachedQueryParams);
 	const int NumUnfilteredHits = Hits.Num();
 
 	float ClosestDistance = INFINITY;
@@ -825,9 +1264,9 @@ int UKinematicMovementComponent::CollisionLineCasts(FVector Position, FVector Di
 	for (int i = NumUnfilteredHits - 1; i >= 0; i--)
 	{
 		FHitResult Hit = Hits[i];
-		float HitDistance = Hit.Distance;
 
-		if (HitDistance <= 0 || !CheckIfColliderValidForCollisions(Hit.GetComponent()))
+		// This checks for self-collision, though with our QueryParams I don't think it is necessary anymore
+		if (const float HitDistance = Hit.Distance; HitDistance <= 0 || !CheckIfColliderValidForCollisions(Hit.GetComponent()))
 		{
 			NumHits--;
 			if (i < NumHits)
@@ -849,5 +1288,6 @@ int UKinematicMovementComponent::CollisionLineCasts(FVector Position, FVector Di
 }
 
 
-#pragma endregion Collision Checks 
+#pragma endregion Collision Checks
+
 

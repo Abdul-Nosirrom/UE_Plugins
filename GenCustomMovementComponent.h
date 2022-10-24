@@ -841,9 +841,74 @@ public:
 	virtual FVector GetProcessedInputVector() const;
 
 #pragma endregion STEERING_INPUT
+
+
+#pragma region UTILITY
+public:
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Processing")
+	float NormalDampingHalflife;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Processing")
+	float NormalProjectionThreshold;
+	UPROPERTY(BlueprintReadOnly, Category="Movement|Processing")
+	FVector ProcessedGroundNormal;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Processing")
+	bool bProjectVelocity;
+protected:
+	
+	FVector ProcessedGroundNormalVelocity;
+	void ProcessGroundNormal(const FVector TargetNormal, const float DeltaSeconds);
+
+#pragma endregion UTILITY
 };
 
 #pragma region INLINES
+
+FORCEINLINE float HalfLifeToDamping(float halflife, float eps = 1e-5f)
+{
+	return (4.0f * 0.69314718056f) / (halflife + eps);
+}
+
+FORCEINLINE float fast_negexp(float x)
+{
+	return 1.0f / (1.0f + x + 0.48f*x*x + 0.235f*x*x*x);
+}
+
+FORCEINLINE FVector CriticalDampedNormalProcessing(float& Current, float& CurrentVelocity, const float Target, const float NormalDampingHalflife, const float DeltaSeconds)
+{
+	float v = CurrentVelocity;
+	float x = Current;
+	float x_goal = Target;
+	float dt = DeltaSeconds;
+	
+	float y = HalfLifeToDamping(NormalDampingHalflife) / 2.0f;	
+	float j0 = x - x_goal;
+	float j1 = v + j0*y;
+	float eydt = fast_negexp(y*dt);
+
+	x = eydt*(j0 + j1*dt) + x_goal;
+	v = eydt*(v - j1*y*dt);
+
+	return FVector(x, v, 0.f);
+}
+
+FORCEINLINE void UGenCustomMovementComponent::ProcessGroundNormal(const FVector TargetNormal, const float DeltaSeconds)
+{
+	const FVector X = CriticalDampedNormalProcessing(ProcessedGroundNormal.X, ProcessedGroundNormalVelocity.X, TargetNormal.X, NormalDampingHalflife, DeltaSeconds);
+	const FVector Y = CriticalDampedNormalProcessing(ProcessedGroundNormal.Y, ProcessedGroundNormalVelocity.Y, TargetNormal.Y, NormalDampingHalflife, DeltaSeconds);
+	const FVector Z = CriticalDampedNormalProcessing(ProcessedGroundNormal.Z, ProcessedGroundNormalVelocity.Z, TargetNormal.Z, NormalDampingHalflife, DeltaSeconds);
+
+	ProcessedGroundNormal.X = X.X;
+	ProcessedGroundNormalVelocity.X = X.Y;
+
+	ProcessedGroundNormal.Y = Y.X;
+	ProcessedGroundNormalVelocity.Y = Y.Y;
+
+	ProcessedGroundNormal.Z = Z.X;
+	ProcessedGroundNormalVelocity.Z = Z.Y;
+
+	ProcessedGroundNormal = ProcessedGroundNormal.GetSafeNormal();
+}
+
 
 FORCEINLINE bool UGenCustomMovementComponent::IsGrounded() const
 {
