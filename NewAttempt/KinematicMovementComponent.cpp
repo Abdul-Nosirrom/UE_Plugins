@@ -3,8 +3,6 @@
 
 #include "KinematicMovementComponent.h"
 
-#include "AbcObject.h"
-
 
 // Sets default values for this component's properties
 UKinematicMovementComponent::UKinematicMovementComponent()
@@ -97,33 +95,30 @@ void UKinematicMovementComponent::CustomInterpolationUpdate(float DeltaTime)
 
 
 #pragma region Solver Updates
-/// <summary>
-/// Update phase 1 is meant to be called after physics movers have calculated their velocities, but
-/// before they have simulated their goal positions/rotations. It is responsible for:
-/// - Initializing all values for update
-/// - Handling MovePosition calls
-/// - Solving initial collision overlaps
-/// - Ground probing
-/// - Handle detecting potential interactable rigidbodies
-/// </summary>
+
 void UKinematicMovementComponent::UpdatePhase1(float DeltaTime)
 {
-	// NaN Propagation Safety Stop
-	if (FMath::IsNaN(BaseVelocity.X) || FMath::IsNaN(BaseVelocity.Y) || FMath::IsNaN(BaseVelocity.Z))
+	/*  NAN Propagation Safety Stop */
+	if (FMath::IsNaN(Velocity.X) || FMath::IsNaN(Velocity.Y) || FMath::IsNaN(Velocity.Z))
 	{
-		BaseVelocity = FVector::ZeroVector;
+		Velocity = FVector::ZeroVector;
 	}
 	// TODO: Similar NaN check for the moving base if one exists. Might not be needed though since it wouldnt operate under this system
-
+	/* EVENT: Before Update */
+	BeforeCharacterUpdate(DeltaTime);
+	
+	/* Get Current Up-To-Date Information About Our Physics State */
 	TransientPosition = UpdatedComponent->GetComponentLocation();
 	TransientRotation = UpdatedComponent->GetComponentRotation().Quaternion();
+
+	/* Cache our initial physics state before we perform any updates */
 	InitialSimulatedPosition = TransientPosition;
 	InitialSimulatedRotation = TransientRotation;
 
-	OverlapsCount = 0;
-	bLastSolvedOverlapNormalDirty = false;
+	OverlapsCount = 0; 
+	bLastSolvedOverlapNormalDirty = false; 
 
-	// Handle move position calls
+	/* Handle MovePosition Direct Calls */
 	if (bMovePositionDirty)
 	{
 		if (bSolveMovementCollisions)
@@ -131,7 +126,7 @@ void UKinematicMovementComponent::UpdatePhase1(float DeltaTime)
 			FVector TmpVelocity = GetVelocityFromMovement(MovePositionTarget - TransientPosition, DeltaTime);
 			if (InternalCharacterMove(TmpVelocity, DeltaTime))
 			{
-				//TODO: Overlaps will be stored from this move, handle them if physics objects
+				// TODO: Overlaps will be stored from this move, handle them if physics objects
 			}
 		}
 		else
@@ -141,51 +136,66 @@ void UKinematicMovementComponent::UpdatePhase1(float DeltaTime)
 		bMovePositionDirty = false;
 	}
 
+	/* Setup Grounding Status For This Tick */
 	LastGroundingStatus->CopyFrom(*GroundingStatus);
 	//TODO: Might be a better way of initializing this mebe
 	GroundingStatus = new FGroundingReport();
 	GroundingStatus->GroundNormal = CharacterUp;
 
+	/*
+	 * What we're essentially doing here is solving for collisions from our last movement tick.
+	 * Transient Position/Rotation has not been updated with this ticks velocity, we're just iteratively going through
+	 * each possible overlap and moving the transient position/rotation out of any potential penetrations.
+	 * This whole block below is something that could be done with MoveUpdatedComponent perhaps.
+	 * If not, then we can at least use Deferred Movement Scopes so we don't have to actually set positions and rotations
+	 * just to compute depenetration (which we do for NumOverlap times as Transients are updated with each depenetration)
+	 */
 	if (bSolveMovementCollisions)
 	{
-		// Solve Initial Overlaps
+		/* Initiate Overlap Solving Data */
 		FVector ResolutionDirection = CachedWorldUp;
 		float ResolutionDistance = 0.f;
 		int IterationsMade = 0;
 		bool bOverlapSolved = false;
 
+		/* Cache our transform as we're going to be moving the collider to resolve multiple penetrations */
+		const FVector InitialPositionCache = UpdatedComponent->GetComponentLocation();
+		const FQuat InitialRotationCache = UpdatedComponent->GetComponentQuat();
+		/* Respect Decollision Iteration Count, Exit when overlap is solved*/
 		while (IterationsMade < MaxDecollisionIterations && !bOverlapSolved)
 		{
-			int NumOverlaps = CollisionOverlaps(TransientPosition, TransientRotation, InternalProbedColliders);
+			/* Retrieve All Overlaps */
+			const int NumOverlaps = CollisionOverlaps(TransientPosition, TransientRotation, InternalProbedColliders);
 
 			if (NumOverlaps > 0)
 			{
-				// Solver overlaps that have nothing to do with moving platforms or physics bodies
+				/* Solver overlaps that have nothing to do with moving platforms or physics bodies */
 				for (int i = 0; i < NumOverlaps; i++)
 				{
-					bool IsInternalProbedCollidersiAPhysicsBody; // Temp variable for reference
-					if (!IsInternalProbedCollidersiAPhysicsBody)
+					// TODO: Check If InternalProbedColliders[i] IS A PHYSICS BODY AND SET THE BOOL ACCORDINGLY
+					bool IsInternalProbedColliderAPhysicsBody; // Temp variable for reference
+					if (!IsInternalProbedColliderAPhysicsBody)
 					{
-						// Process Overlap
-						FMTDResult PenetrationResult;
-						// TODO: Check if this wants input of the overlapped object, or me
-						// Also oh shit i can pass inflate here. Should use the getcollisionshape method for the collision tests below
-						if (Capsule->ComputePenetration(PenetrationResult, Capsule->GetCollisionShape(0), TransientPosition, TransientRotation))
+						/* Get Information About Potential Overlap */
+						UPrimitiveComponent* OverlappedComponent = InternalProbedColliders[i].GetComponent();
+
+						/* Retrieve Data About Penetration Status */
+						if (HandleDepenetration(OverlappedComponent, ResolutionDirection, ResolutionDistance))
 						{
-							// Resolve along obstruction direction
+							/* Resolve along obstruction direction */
 							FHitStabilityReport* MockReport = new FHitStabilityReport;
-							MockReport->bIsStable = IsStableOnNormal(PenetrationResult.Direction);
+							MockReport->bIsStable = IsStableOnNormal(ResolutionDirection);
 							ResolutionDirection = GetObstructionNormal(ResolutionDirection, MockReport->bIsStable);
 
-							// Solve overlap
+							/* Solve overlap */
 							const FVector ResolutionMovement = ResolutionDirection * (ResolutionDistance + CollisionOffset);
 							TransientPosition += ResolutionMovement;
 
-							// Remember Overlaps
+							/* Remember overlaps */
 							if (OverlapsCount < Overlaps.Num())
 							{
 								// TODO: Data management (Can just not use New Keyword here?)
-								Overlaps[OverlapsCount] = FCustomOverlapResult(ResolutionDirection, InternalProbedColliders[i].GetComponent());
+								Overlaps[OverlapsCount] = FCustomOverlapResult(ResolutionDirection, OverlappedComponent);
 								OverlapsCount++;
 							}
 							break;
@@ -199,11 +209,14 @@ void UKinematicMovementComponent::UpdatePhase1(float DeltaTime)
 			}
 			IterationsMade++;
 		}
+		/* HANDLE DEPENETRATION MOVES US TO THE TRANSIENTS, REMEMBER TO MOVE BACK */
+		UpdatedComponent->SetWorldLocationAndRotation(InitialPositionCache, InitialRotationCache);
 	}
 
-	// Handling Ground Probing And Snapping
+	/* Handle ground probing and snapping */
 	if (bSolveGrounding)
 	{
+		/* If ForceUnground() has been called, then move us up ever so slightly to bypass snapping and leave ground */
 		if (MustUnground())
 		{
 			TransientPosition += CharacterUp * (MinimumGroundProbingDistance * 1.5f);
@@ -229,9 +242,8 @@ void UKinematicMovementComponent::UpdatePhase1(float DeltaTime)
 			if (!LastGroundingStatus->bIsStableOnGround && GroundingStatus->bIsStableOnGround)
 			{
 				// Handle Landing
-				// TODO: Maybe call an OnLanded event here
-				BaseVelocity = FVector::VectorPlaneProject(BaseVelocity, CharacterUp);
-				BaseVelocity = GetDirectionTangentToSurface(BaseVelocity, GroundingStatus->GroundNormal) * BaseVelocity.Size();
+				Velocity = FVector::VectorPlaneProject(Velocity, CharacterUp);
+				Velocity = GetDirectionTangentToSurface(Velocity, GroundingStatus->GroundNormal) * Velocity.Size();
 			}
 		}
 	}
@@ -247,28 +259,23 @@ void UKinematicMovementComponent::UpdatePhase1(float DeltaTime)
 
 	if (bSolveGrounding)
 	{
-		// TODO: Call event
+		// TODO: Call Generic Event That We Have Probed The Ground (Doesn't Mean We Found or Didn't Find Ground)
 	}
 
 	// TODO: HERES WHERE YOUD ADD THE CODE FOR MOVING PLATFORMS
 	
 }
 
-/// <summary>
-/// Update phase 2 is meant to be called after physics movers have simulated their goal positions/rotations. 
-/// At the end of this, the TransientPosition/Rotation values will be up-to-date with where the motor should be at the end of its move. 
-/// It is responsible for:
-/// - Solving Rotation
-/// - Handle MoveRotation calls
-/// - Solving potential attached rigidbody overlaps
-/// - Solving Velocity
-/// - Applying planar constraint
-/// </summary>
+/*
+ * We're gonna handle actual interactions with "physics bodies" or "pawns" through RootCollisionTouched event (See GMC)
+ * In KCC it's handled here.
+ */
 void UKinematicMovementComponent::UpdatePhase2(float DeltaTime)
 {
-	// TODO: Call UpdateRotation Event
+	/* EVENT: Update Rotation */
+	UpdateRotation(TransientRotation, DeltaTime);
 
-	// Handle move rotation
+	/* Handle call to direct setting of rotation */
 	if (bMoveRotationDirty)
 	{
 		TransientRotation = MoveRotationTarget;
@@ -286,37 +293,117 @@ void UKinematicMovementComponent::UpdatePhase2(float DeltaTime)
 			//if (bMoveWithBase) MoveWithBase(BaseVelocity, CurrentFloor, DeltaSeconds);
 
 			// TODO: The shit here
+			/* Solve for potential overlap with moving platform we're on */
+			{
+				
+			}
+
+			/* Solve for overlaps that coudld've been caused by movement of other pawns or actors*/
+			/* We have not moved here since we did overlap checks, but other things might have. The depenetration call in
+			 * Phase1 is for our movement after we are in Transient transform. The check here is for other objects movement that
+			 * we potentially might've overlapped with due to them not us. I think just solving the overlap is enough, and we
+			 * can leave the physics interactions part to the RootCollisionTouched delegate.
+			 */
+			{
+				// Initialize Data
+				FVector ResolutionDirection = CachedWorldUp;
+				float ResolutionDistance = 0.f;
+				int IterationsMade = 0;
+				bool bOverlapSolved = false;
+
+				/* Cache our transform as we're going to be moving the collider to resolve multiple penetrations */
+				const FVector InitialPositionCache = UpdatedComponent->GetComponentLocation();
+				const FQuat InitialRotationCache = UpdatedComponent->GetComponentQuat();
+				// Loop until we've solved overlaps or consumed all iterations
+				while (IterationsMade < MaxDecollisionIterations && !bOverlapSolved)
+				{
+					const int NumOverlaps = CollisionOverlaps(TransientPosition, TransientRotation, InternalProbedColliders);
+
+					if (NumOverlaps > 0)
+					{
+						/* Solve All Overlaps */
+						for (int i = 0; i < NumOverlaps; i++)
+						{
+							/* Get Information About Potential Overlap */
+							UPrimitiveComponent* OverlappedComponent = InternalProbedColliders[i].GetComponent();
+
+							if (HandleDepenetration(OverlappedComponent, ResolutionDirection, ResolutionDistance))
+							{
+								/* Resolve Along Obstruction Direction */
+								FHitStabilityReport MockReport{};
+								MockReport.bIsStable = IsStableOnNormal(ResolutionDirection);
+								ResolutionDirection = GetObstructionNormal(ResolutionDirection, MockReport.bIsStable);
+
+								/* Solve Overlap */
+								const FVector ResolutionMovement = ResolutionDirection * (ResolutionDistance + CollisionOffset);
+								TransientPosition += ResolutionMovement;
+
+								// TODO: I'm unsure if we even need to do this here, solving overlaps is enough now we just impart forces
+								if (bPhysicsInteractions)
+								{
+									
+								}
+
+								/* Remember Overlaps */
+								if (OverlapsCount < Overlaps.Num())
+								{
+									Overlaps[OverlapsCount] = FCustomOverlapResult(ResolutionDirection, OverlappedComponent);
+									OverlapsCount++;
+								}
+
+								break;
+							}
+						}
+					}
+					else
+					{
+						bOverlapSolved = true;
+					}
+					IterationsMade++;
+				}
+				/* HANDLE DEPENETRATION MOVES US TO THE TRANSIENTS, REMEMBER TO MOVE BACK */
+				UpdatedComponent->SetWorldLocationAndRotation(InitialPositionCache, InitialRotationCache);
+			}
 		}
 	}
 
-	// TODO: Call UpdateVelocity Event
+	/* EVENT: Update Velocity */
+	UpdateVelocity(Velocity, DeltaTime);
 
 	// TODO: Choose better names if we wanna refer to a moving platform as a base
-	if (BaseVelocity.Size() < MinVelocityMagnitude)
+	/*
+	 * We might as well just call this Velocity/use the one from our parent. We're never actually using the "Velocity"
+	 * from KCC, it's just a getter (NOTE: I DID THIS NOW). Given that Platform Velocity is never really factored into
+	 * our pawns velocity, it's just used quickly to get a movement delta INDEPENDENTLY
+	 */
+	if (Velocity.Size() < MinVelocityMagnitude)
 	{
-		BaseVelocity = FVector::ZeroVector;
+		Velocity = FVector::ZeroVector;
 	}
 
 	// Calculate character movement from velocity
-	if (BaseVelocity.Size() > 0.f)
+	if (Velocity.Size() > 0.f)
 	{
 		if (bSolveMovementCollisions)
 		{
-			InternalCharacterMove(BaseVelocity, DeltaTime);
+			InternalCharacterMove(Velocity, DeltaTime);
 		}
 		else
 		{
-			TransientPosition += BaseVelocity * DeltaTime;
+			TransientPosition += Velocity * DeltaTime;
 		}
 	}
 
+	// TODO: This might not be needed here as well if we're using the RootCollisionTouched method!
+	// We could however store hits in RootCollisionTouched and then process them elsewhere...
 	if (bPhysicsInteractions)
 	{
 		// TODO: Okay This Makes Sense, Imparting Velocity After Its Been Calculated And Us Moved
 		// Impart force onto them based on our movement velocity
 	}
 
-	// This is using from daddy UPawnMovement
+	// TODO: I THINK I MEANT THAT THERE ARE PLANAR CONSTRAINTS WE INHERIT SO WE CAN USE THOSE INSTEAD, CHECK DOCS
+	// This is using from daddy UPawnMovement uWu
 	// Handle Planar Constraint
 	if (bConstrainToPlane)
 	{
@@ -332,7 +419,9 @@ void UKinematicMovementComponent::UpdatePhase2(float DeltaTime)
 			// TODO: Call Event
 		}
 	}
-	// TODO: Call Event
+	
+	/* EVENT: After Character Update */
+	AfterCharacterUpdate(DeltaTime);
 }
 
 
@@ -592,39 +681,32 @@ bool UKinematicMovementComponent::InternalCharacterMove(FVector& TransientVeloci
 				FVector InitialPositionCache = UpdatedComponent->GetComponentLocation();
 				FQuat InitialRotationCache = UpdatedComponent->GetComponentQuat();
 				
-				// Temporarily move capsule then move it back so we can test penetration at TmpMovedPosition
-				// TODO: A GREAT CHANCE TO USE THE MOVEMENTSCOPE DEFERRED!!!!!!!!!!!!
-				// DOING THE ABOVE MIGHT ALSO MEAN WE DONT EVEN NEED TO GET OVERLAPS OUR SELVES WITH CAPSULE CASTS IT'LL DO IT
-				UpdatedComponent->SetWorldLocationAndRotation(TmpMovedPosition, TransientRotation);
-
 				for (int i = 0; i < NumOverlaps; i++)
 				{
-					FOverlapResult TmpCollider = InternalProbedColliders[i];
-
 					// TODO: Wait think about this some more, the capsule isnt at TmpPosition, we just wanna test at that position after our initial projections
 					// TODO: Can maybe use MoveUpdated Component
 					// TODO: For now just gonna set capsule position then set it back just for safety
-					FMTDResult PenetrationResult;
-					FVector OverlapPosition = TmpCollider.GetComponent()->GetComponentLocation();
-					FQuat OverlapRotation = TmpCollider.GetComponent()->GetComponentQuat();
+					FVector ResolutionDirection = CachedZeroVector;
+					float ResolutionDistance = 0.f;
+
+					UPrimitiveComponent* OverlappedComponent = InternalProbedColliders[i].GetComponent();
 					
-					if (Capsule->ComputePenetration(PenetrationResult, TmpCollider.GetComponent()->GetCollisionShape(), OverlapPosition, OverlapRotation))
+					if (HandleDepenetration(OverlappedComponent, ResolutionDirection, ResolutionDistance))
 					{
-						const float DotProduct = RemainingMovementDirection | PenetrationResult.Direction;
+						const float DotProduct = RemainingMovementDirection | ResolutionDirection;
 						if (DotProduct < 0.f && DotProduct < MostObstructingOverlapNormalDotProduct)
 						{
 							MostObstructingOverlapNormalDotProduct = DotProduct;
 
-							ClosestSweepHitNormal = PenetrationResult.Direction;
-							ClosestSweepHitCollider = TmpCollider.GetComponent();
-							ClosestSweepHitPoint = TmpMovedPosition + (TransientRotation * TransformToCapsuleCenter) + PenetrationResult.Distance * PenetrationResult.Direction;
+							ClosestSweepHitNormal = ResolutionDirection;
+							ClosestSweepHitCollider = OverlappedComponent;
+							ClosestSweepHitPoint = TmpMovedPosition + (TransientRotation * TransformToCapsuleCenter) + ResolutionDistance * ResolutionDirection;
 
 							bFoundClosestHit = true;
 						}
 					}
 				}
-
-				// Move back after penetrations were computed
+				/* HANDLE DEPENETRATION MOVES US TO THE TRANSIENTS, REMEMBER TO MOVE BACK */
 				UpdatedComponent->SetWorldLocationAndRotation(InitialPositionCache, InitialRotationCache);
 			}
 		}
@@ -1285,6 +1367,31 @@ int UKinematicMovementComponent::CollisionLineCasts(FVector Position, FVector Di
 	}
 
 	return NumHits;
+}
+
+bool UKinematicMovementComponent::HandleDepenetration(UPrimitiveComponent* OverlappedComponent, FVector& ResolutionDirection, float& ResolutionDistance)
+{
+	/* Initialize Penetration Data */
+	FMTDResult PenetrationResult;
+	
+	/* Temporary Move Us To Transient Position/Rotation For The Penetration Check */
+	// Could also use movement scopes in a deferred update type thing
+	// We move to the transient transform because that's where we want to check for penetration
+	// We want to do this each iteration as we're trying to resolve possible more than one penetration
+	UpdatedComponent->SetWorldLocationAndRotation(TransientPosition, TransientRotation);
+
+	/* Get Information About Potential Overlap */
+	FVector OverlapPosition = OverlappedComponent->GetComponentLocation();
+	FQuat OverlapRotation = OverlappedComponent->GetComponentQuat();
+
+	/* Retrieve Data About Penetration Status */
+	if (Capsule->ComputePenetration(PenetrationResult, Capsule->GetCollisionShape(0), OverlapPosition, OverlapRotation))
+	{
+		ResolutionDirection = PenetrationResult.Direction;
+		ResolutionDistance = PenetrationResult.Distance;
+		return true;
+	}
+	return false;
 }
 
 

@@ -29,6 +29,7 @@ struct FPostPhysicsTickFunction : public FTickFunction
 
 #pragma region Enums
 
+/// @brief	How to handle stepping
 UENUM(BlueprintType)
 enum EStepHandlingMethod
 {
@@ -37,6 +38,7 @@ enum EStepHandlingMethod
 	Extra
 };
 
+/// @brief  Sweep state during a movement update
 enum EMovementSweepState
 {
 	Initial,
@@ -49,17 +51,25 @@ enum EMovementSweepState
 
 #pragma region Probing Data
 
+/// @brief  Contains all information for the Motor's grounding status.
 struct FGroundingReport
 {
 public:
+	/// @brief  True if pawn is standing on anything in StableGroundLayers regardless of its geometry.
 	bool bFoundAnyGround;
+	/// @brief  True if pawn is standing on anything in StableGroundLayers that obeys the geometric restrictions set.
 	bool bIsStableOnGround;
+	/// @brief  True if IsStableWithSpecialCases returns false. Meaning snapping is disabled when exceeded a certain velocity
+	///			for ledge snapping, distance from a ledge beyond a certain threshold, or slope angle greater than certain denivelation (Delta) angle.
+	///			Will always be false if bLedgeAndDenivelationHandling is not enabled.
 	bool bSnappingPrevented;
 
 	FVector GroundNormal;
 	FVector InnerGroundNormal;
 	FVector OuterGroundNormal;
 
+	/// @brief  Copy over another grounding report into this one. Full copy.
+	/// @param  transientGroundingReport Grounding report to copy from
 	void CopyFrom(FGroundingReport transientGroundingReport)
 	{
 		bFoundAnyGround = transientGroundingReport.bFoundAnyGround;
@@ -72,6 +82,8 @@ public:
 	}
 };
 
+/// @brief  Represents the entire state of a pawns motor that is pertinent for simulation.
+///			Can be used to save a state or revert to a past state.
 struct FMotorState
 {
 public:
@@ -79,13 +91,18 @@ public:
 	FQuat Rotation;
 	FVector Velocity;
 
+	/// @brief  Prevents snapping to ground. Must be manually set to disable ground snapping.
 	bool bMustUnground;
+	/// @brief  Will force an ungrounding if time > 0.
 	float MustUngroundTime;
 	bool bLastMovementIterationFoundAnyGround;
 
 	FGroundingReport GroundingStatus;
+
+	/* Note for self, we are ignoring the AttachedRigidBody (Moving Base) because we can get it dynamically from current floor */
 };
 
+/// @brief  Describes an overlap between the pawn capsule and another collider, data retrieved from Penetration
 struct FCustomOverlapResult
 {
 public:
@@ -99,6 +116,7 @@ public:
 	}
 };
 
+/// @brief  Contains all the information from a hit stability evaluation
 struct FHitStabilityReport
 {
 public:
@@ -131,13 +149,13 @@ class PROTOTYPING_API UKinematicMovementComponent : public UPawnMovementComponen
 	GENERATED_BODY()
 
 public:
-	// Sets default values for this component's properties
+	/* UActorComponent Defaults */
 	UKinematicMovementComponent();
 	void InitializeComponent() override;
 	void SetUpdatedComponent(USceneComponent* NewUpdatedComponent);
 	void BeginPlay() override;
 	void TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
-
+	/* ======================= */
 
 #pragma region Updates
 
@@ -145,8 +163,26 @@ public:
 	void Simulate(float DeltaTime);
 	void PostSimulationInterpolationUpdate(float DeltaTime);
 	void CustomInterpolationUpdate(float DeltaTime);
-	
+
+	/// @brief  Update phase 1 is meant to be called after physics movers have calculated their velocities, but
+	///			before they have simulated their goal positions/rotations. It is responsible for: 
+	///			- Initializing all values for update
+	///			- Handling MovePosition calls
+	///			- Solving initial collision overlaps
+	///			- Ground probing
+	///			- Handle detecting potential interactable rigidbodies
+	/// @param  DeltaTime DeltaTime of the update
 	void UpdatePhase1(float DeltaTime);
+	
+	/// @brief  Update phase 2 is meant to be called after physics movers have simulated their goal positions/rotations. 
+	///			At the end of this, the TransientPosition/Rotation values will be up-to-date with where the motor should be at the end of its move. 
+	///			It is responsible for:
+	///			- Solving Rotation
+	///			- Handle MoveRotation calls
+	///			- Solving potential attached rigidbody overlaps
+	///			- Solving Velocity
+	///			- Applying planar constraint
+	/// @param  DeltaTime DeltaTime of the update 
 	void UpdatePhase2(float DeltaTime);
 
 #pragma endregion Updates
@@ -162,10 +198,14 @@ public:
 
 #pragma region Collider Component
 
+	/// @brief  PrimitiveComponent of the owner - Restricted to capsules.
 	UCapsuleComponent* Capsule;
+	/// @brief  Capsule Collider Radius.
 	float CapsuleRadius = 0.5f;
+	/// @brief  Capsule Collider Total Height.
 	float CapsuleHeight = 2.f;
-	float CapsuleZOffset = 1.f;
+	/// @brief  Capsule Collider Half-Height.
+	float CapsuleHalfHeight = 1.f;
 
 #pragma endregion Collider Component 
 
@@ -187,9 +227,14 @@ public:
 
 #pragma region Step Settings
 
+	/// @brief  Handles properly detecting grounding status on step, but has a performance cost.
 	EStepHandlingMethod StepHandling = EStepHandlingMethod::Standard;
+	/// @brief  Maximum height of a step which the pawn can climb.
 	float MaxStepHeight = 0.5f;
+	/// @brief  Can the pawn step up obstacles even if it is not currently stable?
 	bool bAllowSteppingWithoutStableGrounding = false;
+	/// @brief  Minimum length of a step that the character can step on (Used in Extra stepping method. Use this to let the pawn
+	///			step on steps that are smaller than it's radius
 	float MinRequiredStepDepth = 0.1f;
 
 #pragma endregion Step Settings
@@ -215,7 +260,11 @@ public:
 #pragma endregion Ledge Settings
 
 #pragma region Physics Interaction Settings
-
+	/*
+	 * Storing information about forces to impart when root collision touched (See GMC)
+	 * As well as information regarding moving bases and imparting velocity from them (See GMC)
+	 * Regarding momentum, might take from the KCC implementation but use GMC as a guide for the Unreal methods.
+	 */
 #pragma endregion Physics Interaction Settings
 
 #pragma region Motor Settings
@@ -315,9 +364,7 @@ public:
 
 	/// @brief  Did the last sweep collision detection find any ground?
 	bool bLastMovementIterationFoundAnyGround;
-
-	/// @brief  Velocity resulting from direct movement. Pure relative velocity to ground if on moving platform.
-	FVector BaseVelocity;
+	
 	/// @brief  Velocity of platform actor is currently standing on. (Equivalent to AttachedRigidBodyVelocity from KCC)
 	FVector PlatformVelocity;
 
@@ -325,23 +372,34 @@ public:
 
 #pragma region Storing Probing Data
 
+	/// @brief  I don't remember.
 	TArray<FHitResult> InternalCharacterHits;
+	/// @brief  List to keep track of colliders we've overlapped with during sweep check to later compute depenetration.
 	TArray<FOverlapResult> InternalProbedColliders;
 
+	/// @brief  If false pawn is essentially in noclip.
 	bool bSolveMovementCollisions = true;
+	/// @brief  If false pawn is never aware of any ground.
 	bool bSolveGrounding = true;
-	
+
+	/// @brief  Internal flag to check if SetPosition has been called externally.
 	bool bMovePositionDirty = false;
+	/// @brief  Target of SetPosition calls.
 	FVector MovePositionTarget = FVector::ZeroVector;
+	/// @brief  Internal flag to check if SetRotation has been called externally.
 	bool bMoveRotationDirty = false;
+	/// @brief  Target of SetRotation calls.
 	FQuat MoveRotationTarget = FQuat::Identity;
 
 	bool bLastSolvedOverlapNormalDirty = false;
 	FVector LastSolvedOverlapNormal = FVector::ForwardVector;
 
+	/// @brief  True if currently grounded and ForceUnground was called. Disables snapping and allows for leaving ground.
 	bool bMustUnground = false;
+	/// @brief  Counter to force ungrounding within the set time. Alternative to bMustUnground.
 	float MustUngroundTimeCounter = 0.f;
 
+	/* Caching world vectors for convenience */
 	FVector CachedWorldUp = FVector::UpVector;
 	FVector CachedWorldForward = FVector::ForwardVector;
 	FVector CachedWorldRight = FVector::RightVector;
@@ -430,6 +488,7 @@ public:
 	bool GroundSweep(FVector Position, FQuat Rotation, FVector Direction, float Distance, FHitResult& ClosestHit);
 	int CollisionLineCasts(FVector Position, FVector Direction, float Distance, FHitResult& ClosestHit, TArray<FHitResult>& Hits, bool bAcceptOnlyStableGroundLayer = false);
 
+	bool HandleDepenetration(UPrimitiveComponent* OverlappedComponent, FVector& ResolutionDirection, float& ResolutionDistance);
 
 #pragma endregion Collision Checks
 
@@ -444,6 +503,35 @@ public:
 	FCollisionObjectQueryParams SetupObjectQueryParams(TArray<ECollisionChannel> &CollisionChannels) const;
 
 #pragma endregion Utility
+
+
+#pragma region Virtual Methods Or BP Events
+
+	UFUNCTION(BlueprintNativeEvent, Category="Movement Controller")
+	void UpdateRotation(FQuat& CurrentRotation, float DeltaTime);
+	virtual void UpdateRotation_Implementation(FQuat& CurrentRotation, float DeltaTime) {return;};
+
+	UFUNCTION(BlueprintNativeEvent, Category="Movement Controller")
+	void UpdateVelocity(FVector& CurrentVelocity, float DeltaTime);
+	virtual void UpdateVelocity_Implementation(FVector& CurrentVelocity, float DeltaTime) {return;};
+
+	UFUNCTION(BlueprintNativeEvent, Category="Movement Controller")
+	void BeforeCharacterUpdate(float DeltaTime);
+	virtual void BeforeCharacterUpdate_Implementation(float DeltaTime) {return;}
+
+	UFUNCTION(BlueprintNativeEvent, Category="Movement Controller")
+	void PostGroundingUpdate(float DeltaTime);
+	virtual void PostGroundingUpdate_Implementation(float DeltaTime) {return;}
+
+	UFUNCTION(BlueprintNativeEvent, Category="Movement Controller")
+	void AfterCharacterUpdate(float DeltaTime);
+	virtual void AfterCharacterUpdate_Implementation(float DeltaTime) {return;}
+
+	UFUNCTION(BlueprintNativeEvent, Category="Movement Controller")
+	void OnLanded(UPrimitiveComponent* HitCollider, FVector HitNormal, FVector HitPoint, FHitStabilityReport& HitStabilityReport);
+	virtual void OnLanded_Implementation(UPrimitiveComponent* HitCollider, FVector HitNormal, FVector HitPoint, FHitStabilityReport& HitStabilityReport) {return;}
+
+#pragma endregion Virtual Methods Or BP Events
 
 };
 
