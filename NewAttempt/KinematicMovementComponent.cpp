@@ -33,6 +33,10 @@ void UKinematicMovementComponent::BeginPlay()
 	//SetTickGroup(ETickingGroup::TG_PostPhysics);
 
 	// Initialize it and cache it
+	SetUpdatedComponent(UpdatedComponent);
+	CharacterUp = UpdatedComponent->GetUpVector();
+	CharacterForward = UpdatedComponent->GetForwardVector();
+	CharacterRight = UpdatedComponent->GetRightVector();
 
 }
 
@@ -79,7 +83,21 @@ void UKinematicMovementComponent::PreSimulationInterpolationUpdate(float DeltaTi
 	InitialTickPosition = TransientPosition;
 	InitialTickRotation = TransientRotation;
 
+	const FVector MoveDelta = TransientPosition - UpdatedComponent->GetComponentLocation();
+
 	UpdatedComponent->SetWorldLocationAndRotation(TransientPosition, TransientRotation);
+	return;
+	for (int NumRetry = 1; NumRetry <= 10; ++NumRetry)
+	{
+		if (AutoResolvePenetration())
+		{
+			break;
+		}
+	}
+	InitialTickPosition = UpdatedComponent->GetComponentLocation();
+	InitialTickRotation = UpdatedComponent->GetComponentQuat();
+	TransientPosition = InitialTickPosition;
+	TransientRotation = InitialTickRotation;
 }
 
 
@@ -87,8 +105,8 @@ void UKinematicMovementComponent::Simulate(float DeltaTime)
 {
 	UpdatePhase1(DeltaTime);
 	UpdatePhase2(DeltaTime);
-
-	//UpdatedComponent->SetWorldLocationAndRotation(TransientPosition, TransientRotation);
+	
+	UpdatedComponent->SetWorldLocationAndRotation(TransientPosition, TransientRotation);
 }
 
 #pragma endregion Simulation Updates
@@ -109,7 +127,7 @@ void UKinematicMovementComponent::UpdatePhase1(float DeltaTime)
 	
 	/* Get Current Up-To-Date Information About Our Physics State */
 	TransientPosition = UpdatedComponent->GetComponentLocation();
-	TransientRotation = UpdatedComponent->GetComponentRotation().Quaternion();
+	TransientRotation = UpdatedComponent->GetComponentQuat();
 
 	/* Cache our initial physics state before we perform any updates */
 	InitialSimulatedPosition = TransientPosition;
@@ -175,7 +193,6 @@ void UKinematicMovementComponent::UpdatePhase1(float DeltaTime)
 		if (MustUnground())
 		{
 			TransientPosition += CharacterUp * (MinimumGroundProbingDistance * 1.5f);
-			MoveUpdatedComponent(CharacterUp  * (MinimumGroundProbingDistance * 1.5f), TransientRotation, false);
 		}
 		else
 		{
@@ -197,7 +214,7 @@ void UKinematicMovementComponent::UpdatePhase1(float DeltaTime)
 
 			if (!LastGroundingStatus.bIsStableOnGround && GroundingStatus.bIsStableOnGround)
 			{
-				// Handle Landing
+				/* Landing! */
 				Velocity = FVector::VectorPlaneProject(Velocity, CharacterUp);
 				Velocity = GetDirectionTangentToSurface(Velocity, GroundingStatus.GroundNormal) * Velocity.Size();
 			}
@@ -239,7 +256,7 @@ void UKinematicMovementComponent::UpdatePhase2(float DeltaTime)
 	}
 
 	// Handle physics interactions here?
-	if (bSolveMovementCollisions && bEnablePhysicsInteractions)
+	if (bSolveMovementCollisions && bEnablePhysicsInteractions && false)
 	{
 		if (bEnablePhysicsInteractions)
 		{
@@ -287,7 +304,6 @@ void UKinematicMovementComponent::UpdatePhase2(float DeltaTime)
 	/* EVENT: Update Velocity */
 	UpdateVelocity(Velocity, DeltaTime);
 
-	// TODO: Choose better names if we wanna refer to a moving platform as a base
 	/*
 	 * We might as well just call this Velocity/use the one from our parent. We're never actually using the "Velocity"
 	 * from KCC, it's just a getter (NOTE: I DID THIS NOW). Given that Platform Velocity is never really factored into
@@ -299,7 +315,7 @@ void UKinematicMovementComponent::UpdatePhase2(float DeltaTime)
 	}
 
 	// Calculate character movement from velocity
-	if (Velocity.Size() > 0.f)
+	if (Velocity.SizeSquared() > 0.f)
 	{
 		if (bSolveMovementCollisions)
 		{
@@ -308,7 +324,6 @@ void UKinematicMovementComponent::UpdatePhase2(float DeltaTime)
 		else
 		{
 			TransientPosition += Velocity * DeltaTime;
-			MoveUpdatedComponent(Velocity * DeltaTime, TransientRotation, false);
 		}
 	}
 
@@ -364,14 +379,14 @@ bool UKinematicMovementComponent::MustUnground() const
 
 #pragma region Evaluations
 
-bool UKinematicMovementComponent::IsStableOnNormal(const FVector Normal) const
+bool UKinematicMovementComponent::IsStableOnNormal(const FVector Normal)
 {
-	const float NormalAngle = FMath::Acos(Normal.GetSafeNormal() | CharacterUp.GetSafeNormal());
+	const float NormalAngle = FMath::RadiansToDegrees(FMath::Acos(Normal.GetSafeNormal() | CharacterUp.GetSafeNormal()));
 	return NormalAngle <= MaxStableSlopeAngle;
 }
 
 // TODO: Comment this in more depth, this is a really important method for launching off slopes and snapping and the likes
-bool UKinematicMovementComponent::IsStableWithSpecialCases(const FHitStabilityReport& StabilityReport, const FVector CharVelocity) const
+bool UKinematicMovementComponent::IsStableWithSpecialCases(const FHitStabilityReport& StabilityReport, const FVector CharVelocity)
 {
 	/* Only check for special cases if this is enabled, otherwise this method returns true by default */
 	if (bLedgeAndDenivelationHandling)
@@ -395,14 +410,14 @@ bool UKinematicMovementComponent::IsStableWithSpecialCases(const FHitStabilityRe
 
 		if (LastGroundingStatus.bFoundAnyGround && StabilityReport.InnerNormal.SizeSquared() != 0.f && StabilityReport.OuterNormal.SizeSquared() != 0.f)
 		{
-			float DenivelationAngle = FMath::Acos(StabilityReport.InnerNormal.GetSafeNormal() | StabilityReport.OuterNormal.GetSafeNormal());
+			float DenivelationAngle = FMath::RadiansToDegrees(FMath::Acos(StabilityReport.InnerNormal.GetSafeNormal() | StabilityReport.OuterNormal.GetSafeNormal()));
 			if (DenivelationAngle > MaxStableDenivelationAngle)
 			{
 				return false;
 			}
 			else
 			{
-				DenivelationAngle = FMath::Acos(LastGroundingStatus.InnerGroundNormal.GetSafeNormal() | StabilityReport.OuterNormal.GetSafeNormal());
+				DenivelationAngle = FMath::RadiansToDegrees(FMath::Acos(LastGroundingStatus.InnerGroundNormal.GetSafeNormal() | StabilityReport.OuterNormal.GetSafeNormal()));
 				if (DenivelationAngle > MaxStableDenivelationAngle)
 				{
 					return false;
@@ -651,24 +666,22 @@ bool UKinematicMovementComponent::InternalCharacterMove(FVector& TransientVeloci
 
 		// TODO: This whole thing, seems important! Given that we use SafeMoveUpdatedComponent, that might solve this for us however
 		/* Quick check for overlaps before performing movement */
-		if (bCheckMovementInitialOverlaps && false)
+		if (bCheckMovementInitialOverlaps)
 		{
-			AutoResolvePenetration(); // SEE GMC
+			FOverlapResult OverlapResult;
+			bFoundClosestHit = GetClosestOverlap(TmpMovedPosition, RemainingMovementDirection, OverlapResult, ClosestSweepHitNormal, ClosestSweepHitPoint);
+			if (bFoundClosestHit) ClosestSweepHitCollider = OverlapResult.GetComponent();
 		}
 
-		/* Setup MoveUpdatedComponent Call */
-		const FVector MoveDelta = RemainingMovementDirection * (RemainingMovementMagnitude + CollisionOffset);
-		const FQuat MoveRot = TransientRotation;
-		FHitResult MoveHit(NoInit);
-		
-		MoveUpdatedComponent(MoveDelta, MoveRot, true, &MoveHit);
+		FHitResult SweepHit(NoInit);
+		const int Sweeps = CollisionSweeps(TmpMovedPosition, TransientRotation, RemainingMovementDirection, RemainingMovementMagnitude + CollisionOffset, SweepHit, InternalCharacterHits);
 
-		if (!bFoundClosestHit && MoveHit.bBlockingHit)
+		if (!bFoundClosestHit && Sweeps > 0)
 		{
-			ClosestSweepHitNormal = MoveHit.ImpactNormal;
-			ClosestSweepHitPoint = MoveHit.ImpactPoint;
-			ClosestSweepHitCollider = MoveHit.GetComponent();
-			ClosestSweepHitDistance = MoveHit.Distance;
+			ClosestSweepHitNormal = SweepHit.ImpactNormal;
+			ClosestSweepHitPoint = SweepHit.ImpactPoint;
+			ClosestSweepHitCollider = SweepHit.GetComponent();
+			ClosestSweepHitDistance = SweepHit.Distance;
 
 			bFoundClosestHit = true;
 		}
@@ -684,7 +697,7 @@ bool UKinematicMovementComponent::InternalCharacterMove(FVector& TransientVeloci
 			/* Evaluate if hit is stable */
 			FHitStabilityReport MoveHitStabilityReport;
 			EvaluateHitStability(ClosestSweepHitCollider, ClosestSweepHitNormal, ClosestSweepHitPoint, TmpMovedPosition, TransientRotation, TransientVelocity, MoveHitStabilityReport);
-
+			
 			/* Handle stepping up steps higher than bottom capsule radius */
 			bool bFoundValidStepHit = false;
 
@@ -714,7 +727,6 @@ bool UKinematicMovementComponent::InternalCharacterMove(FVector& TransientVeloci
 						if (InternalCharacterHits[i].GetComponent() == MoveHitStabilityReport.SteppedCollider)
 						{
 							FVector EndStepPosition = StepCastStartPoint + (-CharacterUp * (InternalCharacterHits[i].Distance - CollisionOffset));
-							MoveUpdatedComponent(EndStepPosition - TmpMovedPosition, TransientRotation, false);
 							TmpMovedPosition = EndStepPosition;
 							bFoundValidStepHit = true;
 
@@ -782,7 +794,6 @@ bool UKinematicMovementComponent::InternalCharacterMove(FVector& TransientVeloci
 
 	/* Move position for the remaining of the movement */
 	TmpMovedPosition += (RemainingMovementDirection * RemainingMovementMagnitude);
-	MoveUpdatedComponent(RemainingMovementDirection * RemainingMovementMagnitude, TransientRotation, false);
 	TransientPosition = TmpMovedPosition;
 
 	return bWasCompleted;
@@ -1307,7 +1318,6 @@ bool UKinematicMovementComponent::GroundSweep(FVector Position, FQuat Rotation, 
 			}
 		}
 	}
-
 	return bFoundValidHit;
 }
 
@@ -1375,6 +1385,8 @@ bool UKinematicMovementComponent::ResolveOverlaps()
 {
 	
 	const int NumOverlaps = CollisionOverlaps(TransientPosition, TransientRotation, InternalProbedColliders);
+
+	const FVector InitialPosition = InitialSimulatedPosition;
 	
 	if (NumOverlaps > 0)
 	{
@@ -1390,7 +1402,7 @@ bool UKinematicMovementComponent::ResolveOverlaps()
 			FMTDResult PenetrationResult;
 	
 			/* Temporary Move Us To Transient Position/Rotation For The Penetration Check */
-			//UpdatedComponent->SetWorldLocationAndRotation(TransientPosition, TransientRotation);
+			UpdatedComponent->SetWorldLocationAndRotation(TransientPosition, TransientRotation);
 
 			/* Get Information About Potential Overlap */
 			FVector OverlapPosition = OverlappedComponent->GetComponentLocation();
@@ -1407,7 +1419,6 @@ bool UKinematicMovementComponent::ResolveOverlaps()
 				/* Solve Overlap */
 				const FVector ResolutionMovement = ResolutionDirection * (PenetrationResult.Distance + CollisionOffset);
 				TransientPosition += ResolutionMovement;
-				MoveUpdatedComponent(ResolutionMovement, TransientRotation, false);
 				//UpdatedComponent->SetWorldLocationAndRotation(TransientPosition, TransientRotation);
 				
 				/* Remember Overlaps */
@@ -1419,12 +1430,55 @@ bool UKinematicMovementComponent::ResolveOverlaps()
 				break;
 			}
 		}
+		UpdatedComponent->SetWorldLocationAndRotation(InitialPosition, TransientRotation);
 		return false;
 	}
 	return true;
 }
 
-FHitResult UKinematicMovementComponent::AutoResolvePenetration()
+bool UKinematicMovementComponent::GetClosestOverlap(FVector Position, FVector MoveDirection, FOverlapResult& OutOverlap, FVector& OutNormal, FVector& OutPoint)
+{
+	bool bFoundClosestHit = false;
+	
+	const int NumOverlaps = CollisionOverlaps(
+						Position,
+						TransientRotation,
+						InternalProbedColliders);
+	
+	if (NumOverlaps > 0)
+	{
+		UpdatedComponent->SetWorldLocationAndRotation(Position, TransientRotation);
+		float ClosestSweepHitDistance = 0.f;
+		float MostObstructingOverlapNormalDotProduct = 2.f;
+
+		for (int i = 0; i < NumOverlaps; i++)
+		{
+			UPrimitiveComponent* TmpCollider = InternalProbedColliders[i].GetComponent();
+			FMTDResult PenetrationResult;
+			
+			if (Capsule->ComputePenetration(PenetrationResult, TmpCollider->GetCollisionShape(), TmpCollider->GetComponentLocation(), TmpCollider->GetComponentQuat()))
+			{
+				float DotProduct = MoveDirection | PenetrationResult.Direction;
+				if (DotProduct < 0.f && DotProduct < MostObstructingOverlapNormalDotProduct)
+				{
+					MostObstructingOverlapNormalDotProduct = DotProduct;
+
+					OutNormal = PenetrationResult.Direction;
+					OutOverlap = InternalProbedColliders[i];
+					OutPoint = Position + (TransientRotation * TransformToCapsuleCenter) + (PenetrationResult.Distance * PenetrationResult.Direction);
+
+					bFoundClosestHit = true;
+				}
+			}
+		}
+	}
+
+	UpdatedComponent->SetWorldLocationAndRotation(InitialSimulatedPosition, InitialSimulatedRotation);
+
+	return bFoundClosestHit;
+}
+
+bool UKinematicMovementComponent::AutoResolvePenetration()
 {
 	const FQuat CurrentRotation = UpdatedComponent->GetComponentQuat();
 	const FVector TestDelta = {0.01f, 0.01f, 0.01f};
@@ -1433,11 +1487,11 @@ FHitResult UKinematicMovementComponent::AutoResolvePenetration()
 	const auto TestMove = [&](const FVector& Delta)
 	{
 		FScopedMovementUpdate ScopedMovement(UpdatedComponent, EScopedUpdate::DeferredUpdates);
-		
-		/* Checks for penetrations by applying small location deltas */
+
+		// Check for penetrations by applying a small location delta.
 		MoveUpdatedComponent(Delta, CurrentRotation, true, &Hit);
 
-		/* Revert the movement again afterwards, we are only interested in the hit result */
+		// Revert the movement again afterwards, we are only interested in the hit result.
 		ScopedMovement.RevertMove();
 	};
 
@@ -1445,20 +1499,21 @@ FHitResult UKinematicMovementComponent::AutoResolvePenetration()
 
 	if (!Hit.bBlockingHit || Hit.IsValidBlockingHit())
 	{
-		/* Apply test delta in opposite direction */
+		// Apply the test delta in the opposite direction.
 		TestMove(-TestDelta);
 
 		if (!Hit.bBlockingHit || Hit.IsValidBlockingHit())
 		{
-			/* Pawn not in penetration, no action needed */
-			return Hit;
+			// The pawn is not in penetration, no action is needed.
+			return true;
 		}
 	}
 
-	/* Else we resolve penetration through SafeMoveUpdatedComponent */
-	return Hit;
-}
+	SafeMoveUpdatedComponent(TestDelta, CurrentRotation, true, Hit);
+	SafeMoveUpdatedComponent(-TestDelta, CurrentRotation, true, Hit);
 
+	return !Hit.bStartPenetrating;
+}
 
 
 #pragma endregion Collision Checks

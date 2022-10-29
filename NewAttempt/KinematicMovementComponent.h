@@ -255,7 +255,7 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category= "Motor | Step Settings")
 	/// @brief  Minimum length of a step that the character can step on (Used in Extra stepping method. Use this to let the pawn
 	///			step on steps that are smaller than it's radius
-	float MinRequiredStepDepth = 0.1f;
+	float MinRequiredStepDepth = 10.f;
 
 #pragma endregion Step Settings
 
@@ -267,7 +267,7 @@ public:
 
 	/// @brief  Distance from the capsule central axis at which the character can stand on a ledge and still be stable.
 	UPROPERTY(EditDefaultsOnly, Category= "Motor | Ledge Settings", meta=(EditCondition = "bLedgeAndDenivelationHandling", EditConditionHides, ClampMin="0", UIMin="0"))
-	float MaxStableDistanceFromLedge = 0.5f;
+	float MaxStableDistanceFromLedge = 50.f;
 
 	/// @brief Prevents snapping to ground on ledges beyond a certain velocity.
 	UPROPERTY(EditDefaultsOnly, Category= "Motor | Ledge Settings", meta=(EditCondition = "bLedgeAndDenivelationHandling", EditConditionHides, ClampMin="0", UIMin="0"))
@@ -285,15 +285,21 @@ public:
 	 * As well as information regarding moving bases and imparting velocity from them (See GMC)
 	 * Regarding momentum, might take from the KCC implementation but use GMC as a guide for the Unreal methods.
 	 */
+	UPROPERTY(EditDefaultsOnly, Category= "Motor | Physics Settings")
 	bool bEnablePhysicsInteractions = true;
 #pragma endregion Physics Interaction Settings
 
 #pragma region Motor Settings
 
+	UPROPERTY(EditDefaultsOnly, Category= "Motor | Motor Settings")
 	int MaxMovementIterations = 5;
+	UPROPERTY(EditDefaultsOnly, Category= "Motor | Motor Settings")
 	int MaxDecollisionIterations = 1;
+	UPROPERTY(EditDefaultsOnly, Category= "Motor | Motor Settings")
 	bool bCheckMovementInitialOverlaps = true;
+	UPROPERTY(EditDefaultsOnly, Category= "Motor | Motor Settings")
 	bool bKillVelocityWhenExceedMaxMovementIterations = true;
+	UPROPERTY(EditDefaultsOnly, Category= "Motor | Motor Settings")
 	bool bKillRemainingMovementWhenExceedMovementIterations = true;
 
 #pragma endregion Motor Settings
@@ -306,19 +312,19 @@ public:
 	static inline const int MaxGroundSweepIterations = 2;
 	static inline const int MaxSteppingSweepIterations = 3;
 	static inline const int MaxRigidBodyOverlapsCount = 16;
-	static inline const float CollisionOffset = 0.01f;
-	static inline const float GroundProbeReboundDistance = 0.02f;
-	static inline const float MinimumGroundProbingDistance = 0.005f;
-	static inline const float GroundProbingBackstepDistance = 0.1f;
-	static inline const float SweepProbingBackstepDistance = 0.002f;
-	static inline const float SecondaryProbesVertical = 0.02f;
-	static inline const float SecondaryProbesHorizontal = 0.001f;
-	static inline const float MinVelocityMagnitude = 0.01f;
-	static inline const float SteppingForwardDistance = 0.03f;
-	static inline const float MinDistanceForLedge = 0.05f;
-	static inline const float CorrelationForVerticalObstruction = 0.01f;
-	static inline const float ExtraSteppingForwardDistance = 0.01f;
-	static inline const float ExtraStepHeightPadding = 0.01f;
+	static inline const float CollisionOffset = 1.f;
+	static inline const float GroundProbeReboundDistance = 2.f;
+	static inline const float MinimumGroundProbingDistance = 0.5f;
+	static inline const float GroundProbingBackstepDistance = 10.f;
+	static inline const float SweepProbingBackstepDistance = 0.2f;
+	static inline const float SecondaryProbesVertical = 2.f;
+	static inline const float SecondaryProbesHorizontal = 0.1f;
+	static inline const float MinVelocityMagnitude = 1.f;
+	static inline const float SteppingForwardDistance = 3.f;
+	static inline const float MinDistanceForLedge = 5.f;
+	static inline const float CorrelationForVerticalObstruction = 1.f;
+	static inline const float ExtraSteppingForwardDistance = 1.f;
+	static inline const float ExtraStepHeightPadding = 1.f;
 
 #pragma endregion const
 
@@ -399,8 +405,10 @@ public:
 	/// @brief  List to keep track of colliders we've overlapped with during sweep check to later compute depenetration.
 	TArray<FOverlapResult> InternalProbedColliders;
 
+	UPROPERTY(EditDefaultsOnly, Category= "Motor | Collision Settings")
 	/// @brief  If false pawn is essentially in noclip.
 	bool bSolveMovementCollisions = true;
+	UPROPERTY(EditDefaultsOnly, Category= "Motor | Collision Settings")
 	/// @brief  If false pawn is never aware of any ground.
 	bool bSolveGrounding = true;
 
@@ -439,9 +447,9 @@ public:
 	/// @brief  Determines if the pawn can be considered stable on a given slope normal.
 	/// @param  Normal Given ground normal
 	/// @return True if the pawn can be considered stable on a given slope normal
-	bool IsStableOnNormal(FVector Normal) const;
+	bool IsStableOnNormal(FVector Normal);
 
-	bool IsStableWithSpecialCases(const FHitStabilityReport& StabilityReport, FVector CharVelocity) const;
+	bool IsStableWithSpecialCases(const FHitStabilityReport& StabilityReport, FVector CharVelocity);
 
 #pragma endregion Update Evaluations
 
@@ -549,7 +557,8 @@ public:
 	int CollisionLineCasts(FVector Position, FVector Direction, float Distance, FHitResult& ClosestHit, TArray<FHitResult>& Hits, bool bAcceptOnlyStableGroundLayer = false);
 
 	bool ResolveOverlaps();
-	FHitResult AutoResolvePenetration();
+	bool GetClosestOverlap(FVector Position, FVector MoveDirection, FOverlapResult& OutOverlap, FVector& OutNormal, FVector& OutPoint);
+	bool AutoResolvePenetration();
 
 #pragma endregion Collision Checks
 
@@ -594,8 +603,9 @@ public:
 	void OnLanded(UPrimitiveComponent* HitCollider, FVector HitNormal, FVector HitPoint, FHitStabilityReport& HitStabilityReport);
 	virtual void OnLanded_Implementation(UPrimitiveComponent* HitCollider, FVector HitNormal, FVector HitPoint, FHitStabilityReport& HitStabilityReport) {return;}
 
-	UFUNCTION(BlueprintImplementableEvent, Category="Movement Controller")
-	void DebugEvent();
+	UFUNCTION(BlueprintNativeEvent, Category="Movement Controller")
+	void DebugEvent(const FString& DebugText, FColor DebugColor = FColor::Red);
+	virtual void DebugEvent_Implementation(const FString& DebugText, FColor DebugColor = FColor::Red) {return;}
 #pragma endregion Virtual Methods Or BP Events
 
 };
