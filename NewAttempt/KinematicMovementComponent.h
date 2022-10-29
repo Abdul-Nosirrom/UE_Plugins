@@ -57,20 +57,28 @@ struct FGroundingReport
 {
 	GENERATED_BODY()
 public:
+	UPROPERTY(BlueprintReadOnly)
 	/// @brief  True if pawn is standing on anything in StableGroundLayers regardless of its geometry.
 	bool bFoundAnyGround;
+	UPROPERTY(BlueprintReadOnly)
 	/// @brief  True if pawn is standing on anything in StableGroundLayers that obeys the geometric restrictions set.
 	bool bIsStableOnGround;
+	UPROPERTY(BlueprintReadOnly)
 	/// @brief  True if IsStableWithSpecialCases returns false. Meaning snapping is disabled when exceeded a certain velocity
 	///			for ledge snapping, distance from a ledge beyond a certain threshold, or slope angle greater than certain denivelation (Delta) angle.
 	///			Will always be false if bLedgeAndDenivelationHandling is not enabled.
 	bool bSnappingPrevented;
 
+	UPROPERTY(BlueprintReadOnly)
 	FVector GroundNormal;
+	UPROPERTY(BlueprintReadOnly)
 	FVector InnerGroundNormal;
+	UPROPERTY(BlueprintReadOnly)
 	FVector OuterGroundNormal;
 
-	UPrimitiveComponent* GroundCollider;
+	UPROPERTY(BlueprintReadOnly)
+	FHitResult GroundHit;
+	UPROPERTY(BlueprintReadOnly)
 	FVector GroundPoint;
 
 	/// @brief  Copy over another grounding report into this one. Full copy.
@@ -152,7 +160,7 @@ public:
 
 #pragma endregion Probing Data
 
-UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
+UCLASS(ClassGroup="Kinematic Movement", BlueprintType, Blueprintable, meta = (BlueprintSpawnableComponent))
 class PROTOTYPING_API UKinematicMovementComponent : public UPawnMovementComponent
 {
 	GENERATED_BODY()
@@ -170,8 +178,6 @@ public:
 
 	void PreSimulationInterpolationUpdate(float DeltaTime);
 	void Simulate(float DeltaTime);
-	void PostSimulationInterpolationUpdate(float DeltaTime);
-	void CustomInterpolationUpdate(float DeltaTime);
 
 	/// @brief  Update phase 1 is meant to be called after physics movers have calculated their velocities, but
 	///			before they have simulated their goal positions/rotations. It is responsible for: 
@@ -221,8 +227,9 @@ public:
 
 #pragma region Grounding Settings
 
+	UPROPERTY(EditDefaultsOnly, Category= "Motor | Ground Settings")
 	float GroundDetectionExtraDistance = 0.f;
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	UPROPERTY(EditDefaultsOnly, Category= "Motor | Ground Settings")
 	/// @brief  Maximum ground slope angle relative to the actor up direction.
 	float MaxStableSlopeAngle = 60.f;
 	
@@ -236,12 +243,16 @@ public:
 
 #pragma region Step Settings
 
+	UPROPERTY(EditDefaultsOnly, Category= "Motor | Step Settings")
 	/// @brief  Handles properly detecting grounding status on step, but has a performance cost.
-	EStepHandlingMethod StepHandling = EStepHandlingMethod::Standard;
+	TEnumAsByte<EStepHandlingMethod> StepHandling = EStepHandlingMethod::Standard;
+	UPROPERTY(EditDefaultsOnly, Category= "Motor | Step Settings")
 	/// @brief  Maximum height of a step which the pawn can climb.
 	float MaxStepHeight = 0.5f;
+	UPROPERTY(EditDefaultsOnly, Category= "Motor | Step Settings")
 	/// @brief  Can the pawn step up obstacles even if it is not currently stable?
 	bool bAllowSteppingWithoutStableGrounding = false;
+	UPROPERTY(EditDefaultsOnly, Category= "Motor | Step Settings")
 	/// @brief  Minimum length of a step that the character can step on (Used in Extra stepping method. Use this to let the pawn
 	///			step on steps that are smaller than it's radius
 	float MinRequiredStepDepth = 0.1f;
@@ -313,10 +324,11 @@ public:
 
 #pragma region Motor Information
 
+	UPROPERTY(BlueprintReadOnly)
 	/// @brief  Information about ground in current update.
-	FGroundingReport* GroundingStatus = new FGroundingReport();
+	FGroundingReport GroundingStatus =  FGroundingReport();
 	/// @brief  Information about ground in previous update.
-	FGroundingReport* LastGroundingStatus = new FGroundingReport();
+	FGroundingReport LastGroundingStatus = FGroundingReport();
 
 	// TODO: I have concerns about this and how KCC generates it. It's not visible but instead generated automatically from the physics settings
 	// Something we can do I think since we have access to the ObjectType we're attached to. There's a chance that this is actually auto-handled
@@ -457,7 +469,7 @@ public:
 	bool MustUnground() const;
 
 	// TODO: Implement These
-	
+/*	
 	/// @brief  Directly set the pawns position. Does not do collision sweeps.
 	/// @param  Position Target position
 	/// @param  bBypassInterpolation Whether to immediately set the position by overriding InitialTickPosition used in interpolation.
@@ -487,7 +499,9 @@ public:
 	/// @param  ToRotation Target rotation
 	UFUNCTION(BlueprintCallable)
 	void RotateCharacter(FQuat ToRotation);
-
+*/
+	FVector GetVelocityFromMovement(FVector MoveDelta, float DeltaTime);
+	
 	FMotorState GetState();
 	void ApplyState(FMotorState State, bool bBypassInterpolation = true);
 	
@@ -512,7 +526,7 @@ public:
 #pragma region Step Handling
 
 	void DetectSteps(FVector CharPosition, FQuat CharRotation, FVector HitPoint, FVector InnerHitDirection, FHitStabilityReport& StabilityReport);
-	bool CheckStepValidity(int numStepHits, FVector CharPosition, FQuat CharRotation, FVector InnerHitDirection, FVector StepCheckStartPost, UPrimitiveComponent* HitCollider);
+	bool CheckStepValidity(int numStepHits, FVector CharPosition, FQuat CharRotation, FVector InnerHitDirection, FVector StepCheckStartPost, FHitResult& OutHit);
 
 #pragma endregion Step Handling
 
@@ -534,6 +548,7 @@ public:
 	bool GroundSweep(FVector Position, FQuat Rotation, FVector Direction, float Distance, FHitResult& ClosestHit);
 	int CollisionLineCasts(FVector Position, FVector Direction, float Distance, FHitResult& ClosestHit, TArray<FHitResult>& Hits, bool bAcceptOnlyStableGroundLayer = false);
 
+	bool ResolveOverlaps();
 	FHitResult AutoResolvePenetration();
 
 #pragma endregion Collision Checks
@@ -579,6 +594,8 @@ public:
 	void OnLanded(UPrimitiveComponent* HitCollider, FVector HitNormal, FVector HitPoint, FHitStabilityReport& HitStabilityReport);
 	virtual void OnLanded_Implementation(UPrimitiveComponent* HitCollider, FVector HitNormal, FVector HitPoint, FHitStabilityReport& HitStabilityReport) {return;}
 
+	UFUNCTION(BlueprintImplementableEvent, Category="Movement Controller")
+	void DebugEvent();
 #pragma endregion Virtual Methods Or BP Events
 
 };
@@ -586,9 +603,9 @@ public:
 FORCEINLINE FVector UKinematicMovementComponent::GetObstructionNormal(FVector HitNormal, bool bStableOnHit) const
 {
 	FVector ObstructionNormal = HitNormal;
-	if (GroundingStatus->bIsStableOnGround && !MustUnground() && !bStableOnHit)
+	if (GroundingStatus.bIsStableOnGround && !MustUnground() && !bStableOnHit)
 	{
-		const FVector ObstructionLeftAlongGround = (GroundingStatus->GroundNormal ^ ObstructionNormal).GetSafeNormal();
+		const FVector ObstructionLeftAlongGround = (GroundingStatus.GroundNormal ^ ObstructionNormal).GetSafeNormal();
 		ObstructionNormal = (ObstructionLeftAlongGround ^ CharacterUp).GetSafeNormal();
 	}
 
