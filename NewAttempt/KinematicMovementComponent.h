@@ -368,7 +368,7 @@ public:
 	/// @brief  Stores overlap information from depentration computation.
 	///			UpdatePhase1 - Checks for InternalProbedColliders and stores the colliders
 	///			as well as the depenetration direction/normal from the FMTDResult.
-	TArray<FCustomOverlapResult> Overlaps;
+	TArray<FCustomOverlapResult> StoredOverlaps;
 	/// @brief  Overlap counts to compute depenetration. Reset at the beginning of the update.
 	int OverlapsCount;
 
@@ -519,7 +519,6 @@ public:
 #pragma region Collision Validity
 	
 	bool CheckIfColliderValidForCollisions(UPrimitiveComponent* Collider);
-	bool InternalIsColliderValidForCollisions(UPrimitiveComponent* Collider);
 
 #pragma endregion Collision Validity
 
@@ -529,15 +528,13 @@ public:
 	void ProbeGround(FVector& ProbingPosition, FQuat AtRotation, float ProbingDistance, FGroundingReport& GroundingReport);
 
 	int CollisionOverlaps(FVector Position, FQuat Rotation, TArray<FOverlapResult>& OverlappedColliders, float Inflate = 0.f, bool bAcceptOnlyStableGroundLayer = false);
-	int CharacterOverlaps(FVector Position, FQuat Rotation, TArray<FOverlapResult>& OverlappedColliders, ECollisionChannel TraceChannel, FCollisionResponseParams ResponseParams, float Inflate = 0.f);
 
 	int CollisionSweeps(FVector Position, FQuat Rotation,  FVector Direction, float Distance, FHitResult& ClosestHit, TArray<FHitResult>& Hits, float Inflate = 0.f, bool bAcceptOnlyStableGroundLayer = false);
-	int CharacterSweeps(FVector Position, FQuat Rotation,  FVector Direction, float Distance, FHitResult& ClosestHit, TArray<FHitResult>& Hits, ECollisionChannel TraceChannel, FCollisionResponseParams ResponseParams, float Inflate = 0.f);
 
 	bool GroundSweep(FVector Position, FQuat Rotation, FVector Direction, float Distance, FHitResult& ClosestHit);
 	int CollisionLineCasts(FVector Position, FVector Direction, float Distance, FHitResult& ClosestHit, TArray<FHitResult>& Hits, bool bAcceptOnlyStableGroundLayer = false);
 
-	bool HandleDepenetration(UPrimitiveComponent* OverlappedComponent, FVector& ResolutionDirection, float& ResolutionDistance) const;
+	FHitResult AutoResolvePenetration();
 
 #pragma endregion Collision Checks
 
