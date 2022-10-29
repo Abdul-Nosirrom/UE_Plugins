@@ -10,7 +10,7 @@
 #include "KinematicMovementComponent.generated.h"
 
 #pragma region Tick Group Structs
-
+/*
 struct FPrePhysicsTickFunction : public FTickFunction
 {
 	class UKinematicMovementComponent* Target;
@@ -24,7 +24,7 @@ struct FPostPhysicsTickFunction : public FTickFunction
 
 	virtual void ExecuteTick(float DeltaTime, ELevelTick TickType, ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent) override;
 };
-
+*/
 #pragma endregion Tick Group Structs 
 
 #pragma region Enums
@@ -52,8 +52,10 @@ enum EMovementSweepState
 #pragma region Probing Data
 
 /// @brief  Contains all information for the Motor's grounding status.
+USTRUCT(BlueprintType)
 struct FGroundingReport
 {
+	GENERATED_BODY()
 public:
 	/// @brief  True if pawn is standing on anything in StableGroundLayers regardless of its geometry.
 	bool bFoundAnyGround;
@@ -67,6 +69,9 @@ public:
 	FVector GroundNormal;
 	FVector InnerGroundNormal;
 	FVector OuterGroundNormal;
+
+	UPrimitiveComponent* GroundCollider;
+	FVector GroundPoint;
 
 	/// @brief  Copy over another grounding report into this one. Full copy.
 	/// @param  transientGroundingReport Grounding report to copy from
@@ -84,8 +89,10 @@ public:
 
 /// @brief  Represents the entire state of a pawns motor that is pertinent for simulation.
 ///			Can be used to save a state or revert to a past state.
+USTRUCT(BlueprintType)
 struct FMotorState
 {
+	GENERATED_BODY()
 public:
 	FVector Position;
 	FQuat Rotation;
@@ -116,9 +123,11 @@ public:
 	}
 };
 
+USTRUCT(BlueprintType)
 /// @brief  Contains all the information from a hit stability evaluation
 struct FHitStabilityReport
 {
+	GENERATED_BODY()
 public:
 	bool bIsStable;
 
@@ -191,8 +200,8 @@ public:
 
 #pragma region Tick Groups
 
-	FPrePhysicsTickFunction PrePhysicsTick;
-	FPostPhysicsTickFunction PostPhysicsTick;
+	//FPrePhysicsTickFunction PrePhysicsTick;
+	//FPostPhysicsTickFunction PostPhysicsTick;
 
 #pragma endregion Tick Groups
 
@@ -217,9 +226,9 @@ public:
 	/// @brief  Maximum ground slope angle relative to the actor up direction.
 	float MaxStableSlopeAngle = 60.f;
 	
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	//UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	/// @brief  Ground Layers that the actor is considered stable on/grounded, i.e meets slope limits etc...
-	TArray<ECollisionChannel> StableGroundLayers;
+	//TArray<TEnumAsByte<ECollisionChannel>> StableGroundLayers;
 
 	bool bDiscreteCollisionEvents = false;
 
@@ -265,6 +274,7 @@ public:
 	 * As well as information regarding moving bases and imparting velocity from them (See GMC)
 	 * Regarding momentum, might take from the KCC implementation but use GMC as a guide for the Unreal methods.
 	 */
+	bool bEnablePhysicsInteractions = true;
 #pragma endregion Physics Interaction Settings
 
 #pragma region Motor Settings
@@ -286,7 +296,7 @@ public:
 	static inline const int MaxSteppingSweepIterations = 3;
 	static inline const int MaxRigidBodyOverlapsCount = 16;
 	static inline const float CollisionOffset = 0.01f;
-	static inline const float GroundProveReboundDistance = 0.02f;
+	static inline const float GroundProbeReboundDistance = 0.02f;
 	static inline const float MinimumGroundProbingDistance = 0.005f;
 	static inline const float GroundProbingBackstepDistance = 0.1f;
 	static inline const float SweepProbingBackstepDistance = 0.002f;
@@ -315,7 +325,7 @@ public:
 	
 	/// @brief  List of all collision channels we can collider with, including stable ground channels.
 	/// @link	https://www.unrealengine.com/en-US/blog/collision-filtering
-	TArray<ECollisionChannel> CollidableLayers;
+	//TArray<TEnumAsByte<ECollisionChannel>> CollidableLayers;
 
 	UPROPERTY(BlueprintReadOnly)
 	FTransform Transform;
@@ -414,13 +424,18 @@ public:
 	void EvaluateCrease(FVector CurCharacterVelocity, FVector PrevCharacterVelocity, FVector CurHitNormal, FVector PrevHitNormal, bool bCurrentHitIsStable, bool bPreviousHitIsStable, bool bCharIsStable, bool& bIsValidCrease, FVector& CreaseDirection);
 	void EvaluateHitStability(UPrimitiveComponent* HitCollider, FVector HitNormal, FVector HitPoint, FVector atCharPosition, FQuat atCharRotation, FVector withCharVelocity, FHitStabilityReport& StabilityReport);
 
-	bool IsStableOnNormal(FVector Normal);
-	bool IsStableWithSpecialCases(FHitStabilityReport& StabilityReport, FVector CharVelocity);
+	/// @brief  Determines if the pawn can be considered stable on a given slope normal.
+	/// @param  Normal Given ground normal
+	/// @return True if the pawn can be considered stable on a given slope normal
+	bool IsStableOnNormal(FVector Normal) const;
+
+	bool IsStableWithSpecialCases(const FHitStabilityReport& StabilityReport, FVector CharVelocity) const;
 
 #pragma endregion Update Evaluations
 
 #pragma region Data Handling
 
+	/// @brief  Internal check to make sure set date is valid.
 	void ValidateData();
 	
 	void SetCapsuleCollisionsActivation(bool bCollisionsActive);
@@ -431,14 +446,46 @@ public:
 
 #pragma region Character State Handling
 
+	/// @brief  Sets bMustUnground internally which prevents ground snapping and moves the pawn above the ground such
+	///			that ground probing finds no ground.
+	/// @param  time Time to unground if not immediate. Default to 0.1 seconds.
+	UFUNCTION(BlueprintCallable)
 	void ForceUnground(float time = 0.1f);
-	bool MustUnground();
 
+	/// @brief  Checks if unground flags have been set.
+	/// @return True if bMustUnground is set or the Unground timer is met.
+	bool MustUnground() const;
+
+	// TODO: Implement These
+	
+	/// @brief  Directly set the pawns position. Does not do collision sweeps.
+	/// @param  Position Target position
+	/// @param  bBypassInterpolation Whether to immediately set the position by overriding InitialTickPosition used in interpolation.
+	UFUNCTION(BlueprintCallable)
 	void SetPosition(FVector Position, bool bBypassInterpolation = true);
 	void SetTransientPosition(FVector NewPos);
+	
+	/// @brief  Directly set the pawns rotation.
+	/// @param  Rotation Target rotation
+	/// @param  bBypassInterpolation Whether to immediately set the rotation by overriding InitialTickRotation used in interpolation.
+	UFUNCTION(BlueprintCallable)
 	void SetRotation(FQuat Rotation, bool bBypassInterpolation = true);
+	
+	/// @brief  Directly set the pawns position and rotation.
+	/// @param  Position Target position
+	/// @param  Rotation Target rotation
+	/// @param  bBypassInterpolation Whether to immediately set state by overriding InitialTick state used in interpolation.
+	UFUNCTION(BlueprintCallable)
 	void SetPositionAndRotation(FVector Position, FQuat Rotation, bool bBypassInterpolation);
+
+	/// @brief  Set a target position to be moved to during the update phase. Movement sweeps are handled properly.
+	/// @param  ToPosition Target Position
+	UFUNCTION(BlueprintCallable)
 	void MoveCharacter(FVector ToPosition);
+
+	/// @brief  Set a target rotation to be rotated to during the update phase. Movement sweeps are handled properly.
+	/// @param  ToRotation Target rotation
+	UFUNCTION(BlueprintCallable)
 	void RotateCharacter(FQuat ToRotation);
 
 	FMotorState GetState();
@@ -448,10 +495,10 @@ public:
 #pragma endregion Character State Handling
 
 #pragma region Velocity & Movement Handlers
-
+	//TODO: Implement These
 	// Can move these to inlines maybe
-	FVector GetVelocityFromMovePosition(FVector FromPosition, FVector ToPosition, float DeltaTime);
-	FVector GetVelocityFromMovement(FVector Movement, float DeltaTime);
+	//FVector GetVelocityFromMovePosition(FVector FromPosition, FVector ToPosition, float DeltaTime);
+	//FVector GetVelocityFromMovement(FVector Movement, float DeltaTime);
 
 	bool InternalCharacterMove(FVector& TrnasientVelocity, float DeltaTime);
 	void InternalHandleVelocityProjection(bool bStableOnHit, FVector HitNormal, FVector ObstructionNormal, FVector OriginalDistance, EMovementSweepState& SweepState, bool bPreviousHitIsStable,
@@ -462,12 +509,12 @@ public:
 
 #pragma endregion Velocity & Movement Handlers
 
-#pragma region Detection
+#pragma region Step Handling
 
 	void DetectSteps(FVector CharPosition, FQuat CharRotation, FVector HitPoint, FVector InnerHitDirection, FHitStabilityReport& StabilityReport);
 	bool CheckStepValidity(int numStepHits, FVector CharPosition, FQuat CharRotation, FVector InnerHitDirection, FVector StepCheckStartPost, UPrimitiveComponent* HitCollider);
 
-#pragma endregion Detection
+#pragma endregion Step Handling
 
 #pragma region Collision Validity
 	
@@ -478,6 +525,8 @@ public:
 
 
 #pragma region Collision Checks
+	
+	void ProbeGround(FVector& ProbingPosition, FQuat AtRotation, float ProbingDistance, FGroundingReport& GroundingReport);
 
 	int CollisionOverlaps(FVector Position, FQuat Rotation, TArray<FOverlapResult>& OverlappedColliders, float Inflate = 0.f, bool bAcceptOnlyStableGroundLayer = false);
 	int CharacterOverlaps(FVector Position, FQuat Rotation, TArray<FOverlapResult>& OverlappedColliders, ECollisionChannel TraceChannel, FCollisionResponseParams ResponseParams, float Inflate = 0.f);
@@ -488,7 +537,7 @@ public:
 	bool GroundSweep(FVector Position, FQuat Rotation, FVector Direction, float Distance, FHitResult& ClosestHit);
 	int CollisionLineCasts(FVector Position, FVector Direction, float Distance, FHitResult& ClosestHit, TArray<FHitResult>& Hits, bool bAcceptOnlyStableGroundLayer = false);
 
-	bool HandleDepenetration(UPrimitiveComponent* OverlappedComponent, FVector& ResolutionDirection, float& ResolutionDistance);
+	bool HandleDepenetration(UPrimitiveComponent* OverlappedComponent, FVector& ResolutionDirection, float& ResolutionDistance) const;
 
 #pragma endregion Collision Checks
 
@@ -497,10 +546,12 @@ public:
 	// I think this is fine since all it does is tell it to ignore us, object query params does more of the heavy lifting
 	FCollisionQueryParams CachedQueryParams;
 	
-	FVector GetDirectionTangentToSurface(FVector Direction, FVector SurfaceNormal);
+	FVector GetDirectionTangentToSurface(FVector Direction, FVector SurfaceNormal) const;
 
-	FCollisionQueryParams SetupQueryParams() const;
-	FCollisionObjectQueryParams SetupObjectQueryParams(TArray<ECollisionChannel> &CollisionChannels) const;
+	FVector GetObstructionNormal(FVector HitNormal, bool bStableOnHit) const;
+
+	/* USE THIS [InitSweepCollisionParams(Params, ResponseParam);], SEE MOVEUPDATEDCOMPONENTIMPL FOR MORE DETAIL!!! */
+	FCollisionObjectQueryParams SetupObjectQueryParams(TArray<TEnumAsByte<ECollisionChannel>> &CollisionChannels) const;
 
 #pragma endregion Utility
 
@@ -535,31 +586,32 @@ public:
 
 };
 
+FORCEINLINE FVector UKinematicMovementComponent::GetObstructionNormal(FVector HitNormal, bool bStableOnHit) const
+{
+	FVector ObstructionNormal = HitNormal;
+	if (GroundingStatus->bIsStableOnGround && !MustUnground() && !bStableOnHit)
+	{
+		const FVector ObstructionLeftAlongGround = (GroundingStatus->GroundNormal ^ ObstructionNormal).GetSafeNormal();
+		ObstructionNormal = (ObstructionLeftAlongGround ^ CharacterUp).GetSafeNormal();
+	}
+
+	if (ObstructionNormal.SizeSquared() == 0.f)
+	{
+		ObstructionNormal = HitNormal;
+	}
+
+	return ObstructionNormal;
+}
+
 // Might not want to inline this if we want it to be blueprintable 
-FORCEINLINE FVector UKinematicMovementComponent::GetDirectionTangentToSurface(FVector Direction, FVector SurfaceNormal)
+FORCEINLINE FVector UKinematicMovementComponent::GetDirectionTangentToSurface(FVector Direction, FVector SurfaceNormal) const
 {
 	return (SurfaceNormal ^ (Direction ^ CharacterUp)).GetSafeNormal();
 }
 
-// This is fine however
-FORCEINLINE FCollisionQueryParams UKinematicMovementComponent::SetupQueryParams() const
-{
-	FCollisionQueryParams QueryParams;
-
-	// Ignore Self
-	QueryParams.AddIgnoredActor(PawnOwner);
-
-	// I don't know what this does because the documentation is a bitch
-	QueryParams.bDebugQuery = true;
-
-
-	FMaskFilter IgnoreMask; // Specific Channels to ignore? That's below though.
-
-	return QueryParams;
-}
 
 // It might not actually inline given the existence of the for loop inside it
-FORCEINLINE FCollisionObjectQueryParams UKinematicMovementComponent::SetupObjectQueryParams(TArray<ECollisionChannel> &CollisionChannels) const
+FORCEINLINE FCollisionObjectQueryParams UKinematicMovementComponent::SetupObjectQueryParams(TArray<TEnumAsByte<ECollisionChannel>> &CollisionChannels) const
 {
 	FCollisionObjectQueryParams ObjectQueryParams;
 
