@@ -403,7 +403,7 @@ public:
 	/// @brief  I don't remember.
 	TArray<FHitResult> InternalCharacterHits;
 	/// @brief  List to keep track of colliders we've overlapped with during sweep check to later compute depenetration.
-	TArray<FOverlapResult> InternalProbedColliders;
+	TArray<FHitResult> InternalProbedColliders;
 
 	UPROPERTY(EditDefaultsOnly, Category= "Motor | Collision Settings")
 	/// @brief  If false pawn is essentially in noclip.
@@ -549,7 +549,7 @@ public:
 	
 	void ProbeGround(FVector& ProbingPosition, FQuat AtRotation, float ProbingDistance, FGroundingReport& GroundingReport);
 
-	int CollisionOverlaps(FVector Position, FQuat Rotation, TArray<FOverlapResult>& OverlappedColliders, float Inflate = 0.f, bool bAcceptOnlyStableGroundLayer = false);
+	int CollisionOverlaps(FVector Position, FQuat Rotation, TArray<FHitResult>& OverlappedColliders, float Inflate = 0.f, bool bAcceptOnlyStableGroundLayer = false);
 
 	int CollisionSweeps(FVector Position, FQuat Rotation,  FVector Direction, float Distance, FHitResult& ClosestHit, TArray<FHitResult>& Hits, float Inflate = 0.f, bool bAcceptOnlyStableGroundLayer = false);
 
@@ -557,7 +557,7 @@ public:
 	int CollisionLineCasts(FVector Position, FVector Direction, float Distance, FHitResult& ClosestHit, TArray<FHitResult>& Hits, bool bAcceptOnlyStableGroundLayer = false);
 
 	bool ResolveOverlaps();
-	bool GetClosestOverlap(FVector Position, FVector MoveDirection, FOverlapResult& OutOverlap, FVector& OutNormal, FVector& OutPoint);
+	bool GetClosestOverlap(FVector Position, FVector MoveDirection, FHitResult& OutOverlap, FVector& OutNormal, FVector& OutPoint);
 	bool AutoResolvePenetration();
 
 #pragma endregion Collision Checks
@@ -606,6 +606,10 @@ public:
 	UFUNCTION(BlueprintNativeEvent, Category="Movement Controller")
 	void DebugEvent(const FString& DebugText, FColor DebugColor = FColor::Red);
 	virtual void DebugEvent_Implementation(const FString& DebugText, FColor DebugColor = FColor::Red) {return;}
+
+	UFUNCTION(BlueprintNativeEvent, Category="Movement Controller")
+	void DrawDebugShit(FVector Start, FVector End, FColor DebugColor = FColor::Red);
+	virtual void DrawDebugShit_Implementation(FVector Start, FVector End, FColor DebugColor = FColor::Red) {return;}
 #pragma endregion Virtual Methods Or BP Events
 
 };

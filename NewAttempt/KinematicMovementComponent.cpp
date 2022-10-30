@@ -3,6 +3,8 @@
 
 #include "KinematicMovementComponent.h"
 
+#include "Kismet/KismetSystemLibrary.h"
+
 
 // Sets default values for this component's properties
 UKinematicMovementComponent::UKinematicMovementComponent()
@@ -86,7 +88,7 @@ void UKinematicMovementComponent::PreSimulationInterpolationUpdate(float DeltaTi
 	const FVector MoveDelta = TransientPosition - UpdatedComponent->GetComponentLocation();
 
 	UpdatedComponent->SetWorldLocationAndRotation(TransientPosition, TransientRotation);
-	return;
+	//return;
 	for (int NumRetry = 1; NumRetry <= 10; ++NumRetry)
 	{
 		if (AutoResolvePenetration())
@@ -105,8 +107,9 @@ void UKinematicMovementComponent::Simulate(float DeltaTime)
 {
 	UpdatePhase1(DeltaTime);
 	UpdatePhase2(DeltaTime);
-	
-	UpdatedComponent->SetWorldLocationAndRotation(TransientPosition, TransientRotation);
+
+	MoveUpdatedComponent(TransientPosition - InitialTickPosition, TransientRotation, true);
+	//UpdatedComponent->SetWorldLocationAndRotation(TransientPosition, TransientRotation);
 }
 
 #pragma endregion Simulation Updates
@@ -651,9 +654,7 @@ bool UKinematicMovementComponent::InternalCharacterMove(FVector& TransientVeloci
 			PreviousObstructionNormal = ObstructionNormal;
 		}
 	}
-
-	FScopedMovementUpdate ScopedMovement(UpdatedComponent, EScopedUpdate::DeferredUpdates);
-
+	
 	// Now sweep the desired movement to detect collisions
 	while (RemainingMovementMagnitude > 0.f && (SweepsMade <= MaxMovementIterations) && bHitSomethingThisSweepIteration)
 	{
@@ -668,7 +669,7 @@ bool UKinematicMovementComponent::InternalCharacterMove(FVector& TransientVeloci
 		/* Quick check for overlaps before performing movement */
 		if (bCheckMovementInitialOverlaps)
 		{
-			FOverlapResult OverlapResult;
+			FHitResult OverlapResult;
 			bFoundClosestHit = GetClosestOverlap(TmpMovedPosition, RemainingMovementDirection, OverlapResult, ClosestSweepHitNormal, ClosestSweepHitPoint);
 			if (bFoundClosestHit) ClosestSweepHitCollider = OverlapResult.GetComponent();
 		}
@@ -1172,22 +1173,33 @@ void UKinematicMovementComponent::ProbeGround(FVector& ProbingPosition, FQuat At
 
 // TODO: Add Ignore Actor (Self) In FCollisionQueryParams. Then In CheckIfColliderValidForCollisions we can skip the first check
 
-int UKinematicMovementComponent::CollisionOverlaps(FVector Position, FQuat Rotation, TArray<FOverlapResult>& OverlappedColliders, float Inflate, bool AcceptOnlyStableGroundLayer)
+int UKinematicMovementComponent::CollisionOverlaps(FVector Position, FQuat Rotation, TArray<FHitResult>& OverlappedColliders, float Inflate, bool AcceptOnlyStableGroundLayer)
 {
 	const UWorld* World = GetWorld();
 
 	int NumHits = 0;
 	if (World)
 	{
+		/* Initialize Sweep Parameters */
+		FComponentQueryParams Params;
+		FCollisionQueryParams QueryParams = FCollisionQueryParams::DefaultQueryParam;
+		QueryParams.AddIgnoredActor(PawnOwner);
+		QueryParams.AddIgnoredComponent(Capsule);
+		FCollisionResponseParams ResponseParams;
+		Capsule->InitSweepCollisionParams(Params, ResponseParams);
 		/* The "Test Channel" Sets up what overlaps we detect */
-		if (Capsule->ComponentOverlapMulti(
+		if (World->SweepMultiByChannel(
 					OverlappedColliders,
-					World,
+					Position,
 					Position,
 					Rotation,
-					Capsule->GetCollisionObjectType(), FComponentQueryParams::DefaultComponentQueryParams, FCollisionObjectQueryParams::DefaultObjectQueryParam))
+					Capsule->GetCollisionObjectType(),
+					Capsule->GetCollisionShape(Inflate),
+					QueryParams,
+					ResponseParams))
 		{
 			const int NumUnfilteredHits = OverlappedColliders.Num();
+			NumHits = NumUnfilteredHits;
 			for (int i = NumUnfilteredHits - 1; i >= 0; i--)
 			{
 				if (!CheckIfColliderValidForCollisions(OverlappedColliders[i].GetComponent()))
@@ -1197,6 +1209,10 @@ int UKinematicMovementComponent::CollisionOverlaps(FVector Position, FQuat Rotat
 					{
 						OverlappedColliders[i] = OverlappedColliders[NumHits];
 					}
+				}
+				else if (OverlappedColliders[i].bStartPenetrating)
+				{
+					DebugEvent("Penetrating...", FColor::Purple);
 				}
 			}
 		}
@@ -1383,60 +1399,46 @@ int UKinematicMovementComponent::CollisionLineCasts(FVector Position, FVector Di
 
 bool UKinematicMovementComponent::ResolveOverlaps()
 {
-	
 	const int NumOverlaps = CollisionOverlaps(TransientPosition, TransientRotation, InternalProbedColliders);
-
-	const FVector InitialPosition = InitialSimulatedPosition;
 	
 	if (NumOverlaps > 0)
 	{
 		/* Solve All Overlaps */
 		for (int i = 0; i < NumOverlaps; i++)
 		{
-			UPrimitiveComponent* OverlappedComponent = InternalProbedColliders[i].GetComponent();
-
-			/* Ignore Physics Objects */
-			if (OverlappedComponent->IsSimulatingPhysics()) continue;
-			
-			/* Initialize Penetration Data */
-			FMTDResult PenetrationResult;
-	
-			/* Temporary Move Us To Transient Position/Rotation For The Penetration Check */
-			UpdatedComponent->SetWorldLocationAndRotation(TransientPosition, TransientRotation);
-
-			/* Get Information About Potential Overlap */
-			FVector OverlapPosition = OverlappedComponent->GetComponentLocation();
-			FQuat OverlapRotation = OverlappedComponent->GetComponentQuat();
-
-			/* Retrieve Data About Penetration Status */
-			if (Capsule->ComputePenetration(PenetrationResult, OverlappedComponent->GetCollisionShape(), OverlapPosition, OverlapRotation))
+			if (InternalProbedColliders[i].bStartPenetrating)
 			{
+				/* Ignore Physics Objects */
+				if (InternalProbedColliders[i].GetComponent()->IsSimulatingPhysics()) continue;
+				
+				/* Initialize Penetration Data */
+				FVector ResolutionDirection = InternalProbedColliders[i].Normal;
+				float ResolutionDistance = InternalProbedColliders[i].PenetrationDepth;
+
 				/* Resolve Along Obstruction Direction */
 				FHitStabilityReport MockReport{};
-				MockReport.bIsStable = IsStableOnNormal(PenetrationResult.Direction);
-				const FVector ResolutionDirection = GetObstructionNormal(PenetrationResult.Direction, MockReport.bIsStable);
+				MockReport.bIsStable = IsStableOnNormal(ResolutionDirection);
+				ResolutionDirection = GetObstructionNormal(ResolutionDirection, MockReport.bIsStable);
 
 				/* Solve Overlap */
-				const FVector ResolutionMovement = ResolutionDirection * (PenetrationResult.Distance + CollisionOffset);
+				DrawDebugShit(InternalProbedColliders[i].ImpactPoint, InternalProbedColliders[i].ImpactPoint + ResolutionDirection * 100.f, FColor::Red);
+				const FVector ResolutionMovement = ResolutionDirection * (ResolutionDistance);
 				TransientPosition += ResolutionMovement;
-				//UpdatedComponent->SetWorldLocationAndRotation(TransientPosition, TransientRotation);
-				
+
 				/* Remember Overlaps */
 				if (OverlapsCount < StoredOverlaps.Num())
 				{
-					StoredOverlaps[OverlapsCount] = FCustomOverlapResult(ResolutionDirection, OverlappedComponent);
+					StoredOverlaps[OverlapsCount] = FCustomOverlapResult(ResolutionDirection, InternalProbedColliders[i].GetComponent());
 					OverlapsCount++;
 				}
-				break;
 			}
 		}
-		UpdatedComponent->SetWorldLocationAndRotation(InitialPosition, TransientRotation);
 		return false;
 	}
 	return true;
 }
 
-bool UKinematicMovementComponent::GetClosestOverlap(FVector Position, FVector MoveDirection, FOverlapResult& OutOverlap, FVector& OutNormal, FVector& OutPoint)
+bool UKinematicMovementComponent::GetClosestOverlap(FVector Position, FVector MoveDirection, FHitResult& OutOverlap, FVector& OutNormal, FVector& OutPoint)
 {
 	bool bFoundClosestHit = false;
 	
@@ -1447,34 +1449,28 @@ bool UKinematicMovementComponent::GetClosestOverlap(FVector Position, FVector Mo
 	
 	if (NumOverlaps > 0)
 	{
-		UpdatedComponent->SetWorldLocationAndRotation(Position, TransientRotation);
 		float ClosestSweepHitDistance = 0.f;
 		float MostObstructingOverlapNormalDotProduct = 2.f;
 
 		for (int i = 0; i < NumOverlaps; i++)
 		{
-			UPrimitiveComponent* TmpCollider = InternalProbedColliders[i].GetComponent();
-			FMTDResult PenetrationResult;
-			
-			if (Capsule->ComputePenetration(PenetrationResult, TmpCollider->GetCollisionShape(), TmpCollider->GetComponentLocation(), TmpCollider->GetComponentQuat()))
+			if (InternalProbedColliders[i].bStartPenetrating)
 			{
-				float DotProduct = MoveDirection | PenetrationResult.Direction;
+				float DotProduct = MoveDirection | InternalProbedColliders[i].Normal;
 				if (DotProduct < 0.f && DotProduct < MostObstructingOverlapNormalDotProduct)
 				{
 					MostObstructingOverlapNormalDotProduct = DotProduct;
 
-					OutNormal = PenetrationResult.Direction;
+					OutNormal = InternalProbedColliders[i].Normal;
 					OutOverlap = InternalProbedColliders[i];
-					OutPoint = Position + (TransientRotation * TransformToCapsuleCenter) + (PenetrationResult.Distance * PenetrationResult.Direction);
+					OutPoint = Position + (TransientRotation * TransformToCapsuleCenter) + (InternalProbedColliders[i].PenetrationDepth * InternalProbedColliders[i].Normal);
 
 					bFoundClosestHit = true;
 				}
 			}
 		}
 	}
-
-	UpdatedComponent->SetWorldLocationAndRotation(InitialSimulatedPosition, InitialSimulatedRotation);
-
+	
 	return bFoundClosestHit;
 }
 
