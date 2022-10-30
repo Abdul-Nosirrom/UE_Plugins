@@ -336,6 +336,7 @@ public:
 	/// @brief  Information about ground in previous update.
 	FGroundingReport LastGroundingStatus = FGroundingReport();
 
+
 	// TODO: I have concerns about this and how KCC generates it. It's not visible but instead generated automatically from the physics settings
 	// Something we can do I think since we have access to the ObjectType we're attached to. There's a chance that this is actually auto-handled
 	// when we do traces and sweeps. That is, if we're ObjectTypeA, then those sweeps will conform to the defaults of ObjectTypeA and the settings are for
@@ -563,16 +564,10 @@ public:
 #pragma endregion Collision Checks
 
 #pragma region Utility
-
-	// I think this is fine since all it does is tell it to ignore us, object query params does more of the heavy lifting
-	FCollisionQueryParams CachedQueryParams;
 	
 	FVector GetDirectionTangentToSurface(FVector Direction, FVector SurfaceNormal) const;
 
 	FVector GetObstructionNormal(FVector HitNormal, bool bStableOnHit) const;
-
-	/* USE THIS [InitSweepCollisionParams(Params, ResponseParam);], SEE MOVEUPDATEDCOMPONENTIMPL FOR MORE DETAIL!!! */
-	FCollisionObjectQueryParams SetupObjectQueryParams(TArray<TEnumAsByte<ECollisionChannel>> &CollisionChannels) const;
 
 #pragma endregion Utility
 
@@ -638,17 +633,4 @@ FORCEINLINE FVector UKinematicMovementComponent::GetDirectionTangentToSurface(FV
 }
 
 
-// It might not actually inline given the existence of the for loop inside it
-FORCEINLINE FCollisionObjectQueryParams UKinematicMovementComponent::SetupObjectQueryParams(TArray<TEnumAsByte<ECollisionChannel>> &CollisionChannels) const
-{
-	FCollisionObjectQueryParams ObjectQueryParams;
-
-	for (auto Channel : CollisionChannels)
-	{
-		ObjectQueryParams.AddObjectTypesToQuery(Channel);
-	}
-	
-	return ObjectQueryParams;
-	
-}
 

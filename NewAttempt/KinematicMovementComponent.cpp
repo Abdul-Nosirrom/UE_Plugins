@@ -88,7 +88,7 @@ void UKinematicMovementComponent::PreSimulationInterpolationUpdate(float DeltaTi
 	const FVector MoveDelta = TransientPosition - UpdatedComponent->GetComponentLocation();
 
 	UpdatedComponent->SetWorldLocationAndRotation(TransientPosition, TransientRotation);
-	//return;
+	return;
 	for (int NumRetry = 1; NumRetry <= 10; ++NumRetry)
 	{
 		if (AutoResolvePenetration())
@@ -107,9 +107,8 @@ void UKinematicMovementComponent::Simulate(float DeltaTime)
 {
 	UpdatePhase1(DeltaTime);
 	UpdatePhase2(DeltaTime);
-
-	MoveUpdatedComponent(TransientPosition - InitialTickPosition, TransientRotation, true);
-	//UpdatedComponent->SetWorldLocationAndRotation(TransientPosition, TransientRotation);
+	
+	UpdatedComponent->SetWorldLocationAndRotation(TransientPosition, TransientRotation);
 }
 
 #pragma endregion Simulation Updates
@@ -1299,7 +1298,7 @@ bool UKinematicMovementComponent::GroundSweep(FVector Position, FQuat Rotation, 
 		QueryParams.AddIgnoredActor(PawnOwner);
 		FCollisionResponseParams ResponseParams;
 		Capsule->InitSweepCollisionParams(Params, ResponseParams);
-
+		
 		/* Perform Sweep */
 		if (World->SweepMultiByChannel(
 					InternalCharacterHits,
