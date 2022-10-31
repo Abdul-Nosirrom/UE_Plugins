@@ -117,20 +117,6 @@ public:
 	/* Note for self, we are ignoring the AttachedRigidBody (Moving Base) because we can get it dynamically from current floor */
 };
 
-/// @brief  Describes an overlap between the pawn capsule and another collider, data retrieved from Penetration
-struct FCustomOverlapResult
-{
-public:
-	FVector Normal;
-	UPrimitiveComponent* Collider;
-
-	FCustomOverlapResult(FVector NewNormal, UPrimitiveComponent* NewCollider)
-	{
-		Normal = NewNormal;
-		Collider = NewCollider;
-	}
-};
-
 USTRUCT(BlueprintType)
 /// @brief  Contains all the information from a hit stability evaluation
 struct FHitStabilityReport
@@ -176,9 +162,6 @@ public:
 
 #pragma region Updates
 
-	void PreSimulationInterpolationUpdate(float DeltaTime);
-	void Simulate(float DeltaTime);
-
 	/// @brief  Update phase 1 is meant to be called after physics movers have calculated their velocities, but
 	///			before they have simulated their goal positions/rotations. It is responsible for: 
 	///			- Initializing all values for update
@@ -187,7 +170,7 @@ public:
 	///			- Ground probing
 	///			- Handle detecting potential interactable rigidbodies
 	/// @param  DeltaTime DeltaTime of the update
-	void UpdatePhase1(float DeltaTime);
+	void PreMovementUpdate(float DeltaTime);
 	
 	/// @brief  Update phase 2 is meant to be called after physics movers have simulated their goal positions/rotations. 
 	///			At the end of this, the TransientPosition/Rotation values will be up-to-date with where the motor should be at the end of its move. 
@@ -198,7 +181,9 @@ public:
 	///			- Solving Velocity
 	///			- Applying planar constraint
 	/// @param  DeltaTime DeltaTime of the update 
-	void UpdatePhase2(float DeltaTime);
+	void MovementUpdate(float DeltaTime);
+
+	void SolveGrounding(float DeltaTime);
 
 #pragma endregion Updates
 
@@ -311,7 +296,7 @@ public:
 	static inline const int MaxCollisionBudget = 16;
 	static inline const int MaxGroundSweepIterations = 2;
 	static inline const int MaxSteppingSweepIterations = 3;
-	static inline const int MaxRigidBodyOverlapsCount = 16;
+	static inline const int MaxOverlapsCount = 16;
 	static inline const float CollisionOffset = 1.f;
 	static inline const float GroundProbeReboundDistance = 2.f;
 	static inline const float MinimumGroundProbingDistance = 0.5f;
@@ -320,7 +305,7 @@ public:
 	static inline const float SecondaryProbesVertical = 2.f;
 	static inline const float SecondaryProbesHorizontal = 0.1f;
 	static inline const float MinVelocityMagnitude = 1.f;
-	static inline const float SteppingForwardDistance = 3.f;
+	static inline const float SteppingForwardDistance = 5.f;
 	static inline const float MinDistanceForLedge = 5.f;
 	static inline const float CorrelationForVerticalObstruction = 1.f;
 	static inline const float ExtraSteppingForwardDistance = 1.f;
@@ -366,19 +351,11 @@ public:
 	/// @brief  Vector from transform position to capsule top hemisphere center.
 	FVector TransformToCapsuleTopHemi;
 
-	/// @brief  Remembers initial position before all simulations are done.
-	FVector InitialTickPosition;
-	/// @brief  Remembers initial rotation before all simulations are done.
-	FQuat InitialTickRotation;
-
 	/// @brief  Position When Movement Calculations Begin
 	FVector InitialSimulatedPosition;
 	/// @brief  Rotation When Movement Calculations Begin
 	FQuat InitialSimulatedRotation;
 
-	/// @brief  Goal position in movement calculations.
-	///			Always equal to the current position during the update phase.
-	FVector TransientPosition;
 	/// @brief  Goal rotation in movement calculations.
 	///			Always equal to the current position during the update phase.
 	FQuat TransientRotation;
@@ -387,7 +364,7 @@ public:
 	/// @brief  Stores overlap information from depentration computation.
 	///			UpdatePhase1 - Checks for InternalProbedColliders and stores the colliders
 	///			as well as the depenetration direction/normal from the FMTDResult.
-	TArray<FCustomOverlapResult> StoredOverlaps;
+	TStaticArray<FHitResult, MaxOverlapsCount> StoredOverlaps;
 	/// @brief  Overlap counts to compute depenetration. Reset at the beginning of the update.
 	int OverlapsCount;
 
@@ -523,12 +500,12 @@ public:
 	//FVector GetVelocityFromMovePosition(FVector FromPosition, FVector ToPosition, float DeltaTime);
 	//FVector GetVelocityFromMovement(FVector Movement, float DeltaTime);
 
-	bool InternalCharacterMove(FVector& TrnasientVelocity, float DeltaTime);
+	bool InternalCharacterMove(FVector& MoveVelocity, float DeltaTime);
 	void InternalHandleVelocityProjection(bool bStableOnHit, FVector HitNormal, FVector ObstructionNormal, FVector OriginalDistance, EMovementSweepState& SweepState, bool bPreviousHitIsStable,
 										FVector PrevVelocity, FVector PrevObstructionNormal, FVector& TransientVelocity, float& RemainingMovementMagnitude, FVector& RemainingMovementDirection);
 
 	// Another thing that may be overriden
-	void HandleVelocityProjection(FVector& TransientVelocity, FVector ObstructionNormal, bool bStableOnHit);
+	void HandleVelocityProjection(FVector& MoveVelocity, FVector ObstructionNormal, bool bStableOnHit);
 
 #pragma endregion Velocity & Movement Handlers
 
@@ -548,7 +525,7 @@ public:
 
 #pragma region Collision Checks
 	
-	void ProbeGround(FVector& ProbingPosition, FQuat AtRotation, float ProbingDistance, FGroundingReport& GroundingReport);
+	void ProbeGround(FVector ProbingPosition, FQuat AtRotation, float ProbingDistance, FGroundingReport& GroundingReport);
 
 	int CollisionOverlaps(FVector Position, FQuat Rotation, TArray<FHitResult>& OverlappedColliders, float Inflate = 0.f, bool bAcceptOnlyStableGroundLayer = false);
 
@@ -557,9 +534,15 @@ public:
 	bool GroundSweep(FVector Position, FQuat Rotation, FVector Direction, float Distance, FHitResult& ClosestHit);
 	int CollisionLineCasts(FVector Position, FVector Direction, float Distance, FHitResult& ClosestHit, TArray<FHitResult>& Hits, bool bAcceptOnlyStableGroundLayer = false);
 
-	bool ResolveOverlaps();
-	bool GetClosestOverlap(FVector Position, FVector MoveDirection, FHitResult& OutOverlap, FVector& OutNormal, FVector& OutPoint);
-	bool AutoResolvePenetration();
+	/// @brief  Computes most obstructing penetration. Optional flag to attempt to resolve that penetration.
+	/// @param  OutHit Penetration Hit Result
+	/// @param  bAttemptResolve Should we attempt to resolve it here if we compute a penetration?
+	/// @return True if a penetration was found. If bAttemptResolve, returns true if penetration was resolved.
+	bool ComputePenetration(FHitResult& OutHit, bool bAttemptResolve);
+	
+	/// @brief  Attempts to resolve all penetrations
+	/// @return True if successfully moved out of penetration
+	void AutoResolvePenetration();
 
 #pragma endregion Collision Checks
 
