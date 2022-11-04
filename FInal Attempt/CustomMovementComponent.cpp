@@ -3,8 +3,7 @@
 
 #include "CustomMovementComponent.h"
 
-#include "Prototyping/Gameplay/GenCustomMovementComponent.h"
-
+#include "Kismet/KismetSystemLibrary.h"
 
 // Sets default values for this component's properties
 UCustomMovementComponent::UCustomMovementComponent()
@@ -30,11 +29,11 @@ void UCustomMovementComponent::BeginPlay()
 	}
 
 	// Set a reference to the skeletal mesh of the owning pawn if present
-	const auto Mesh = PawnOwner->FindComponentByClass(USkeletalMeshComponent::StaticClass());
-	if (Mesh)
-	{
-		SetSkeletalMeshReference(Cast<USkeletalMeshComponent>(Mesh));
-	}
+	//const auto Mesh = PawnOwner->FindComponentByClass(USkeletalMeshComponent::StaticClass());
+	//if (Mesh)
+	//{
+	//	SetSkeletalMeshReference(Cast<USkeletalMeshComponent>(Mesh));
+	//}
 
 	// Set root collision Shape
 
@@ -69,7 +68,7 @@ void UCustomMovementComponent::SetUpdatedComponent(USceneComponent* NewUpdatedCo
 
 	if (PawnOwner->GetRootComponent() != UpdatedComponent)
 	{
-		FLog(EMessageSeverity::Warning, "New updated component must be the root component");
+		//FLog(EMessageSeverity::Warning, "New updated component must be the root component");
 		PawnOwner->SetRootComponent(UpdatedComponent);
 	}
 
@@ -92,10 +91,10 @@ void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 		return;
 	}
 	
-	if (IsAIControlled())
-	{
-		CheckAvoidance();
-	}
+	//if (IsAIControlled())
+	//{
+	//	CheckAvoidance();
+	//}
 
 	/* Resolve penetrations that could've been caused from our previous movements or other actor movements */
 	//AutoResolvePenetration();
@@ -103,21 +102,21 @@ void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 	/* Perform our move */
 	PerformMovement(DeltaTime);
 
-	if (ShouldComputeAvoidance())
-	{
-		AvoidanceLockTimer = FMath::Clamp(AvoidanceLockTimer - DeltaTime, 0.f, BIG_NUMBER);
-	}
+	//if (ShouldComputeAvoidance())
+	//{
+	//	AvoidanceLockTimer = FMath::Clamp(AvoidanceLockTimer - DeltaTime, 0.f, BIG_NUMBER);
+	//}
 
 	if (bEnablePhysicsInteractions)
 	{
-		ApplyDownwardForce(DeltaTime);
-		ApplyRepulsionForce(DeltaTime);
+		//ApplyDownwardForce(DeltaTime);
+		//ApplyRepulsionForce(DeltaTime);
 	}
 
-	if (ShouldComputeAvoidance())
-	{
-		UpdateAvoidance();
-	}
+	//if (ShouldComputeAvoidance())
+	//{
+	//	UpdateAvoidance();
+	//}
 
 	if (UpdatedComponent->IsSimulatingPhysics())
 	{
@@ -141,28 +140,33 @@ void UCustomMovementComponent::PerformMovement(float DeltaTime)
 	}
 
 	// Store our input vector, we might want to do this earlier however. So long as we do it before the UpdateVelocity call we're good
-	InputVector = ConsumeInputVector();
+	//InputVector = ConsumeInputVector();
 
 	// Internal Character Move - looking at CMC, it applies UpdateVelocity, RootMotion, etc... before the character move...
 	// TODO: CMC mentions scoped is good for performance when there are multiple MoveUpdatedComp calls...
-	MovementUpdate(DeltaTime);
+	MovementUpdate(Velocity, DeltaTime);
 
+	if (GroundingStatus.bIsStableOnGround)
+	{
+		const float VelMag = Velocity.Size();
+		Velocity = GetDirectionTangentToSurface(Velocity, GroundingStatus.GroundNormal).GetSafeNormal() * VelMag;
+	}
 	// Tell the updated component what velocity it should have stored after the velocity has been adjusted for sweeps
 	UpdatedComponent->ComponentVelocity = Velocity;
 	
 	// We call these events before getting root motion, as root motion should override them. A separate event to override root motion is provided.
-	UpdateRotation(DeltaTime);
-	UpdateVelocity(DeltaTime);
+	//UpdateRotation(UpdatedComponent->GetComponentQuat(), DeltaTime);
+	UpdateVelocity(Velocity, DeltaTime);
 
 	
 
 	// Might also want to make a flag whether we have a skeletal mesh or not in InitializeComponent or something such that we can keep this whole thing general
-	const bool bIsPlayingRootMotionMontage = static_cast<bool>(GetRootMotionMontageInstance(SkeletalMesh));
-	if (bIsPlayingRootMotionMontage && SkeletalMesh->ShouldTickPose())
-	{
+	//const bool bIsPlayingRootMotionMontage = false;//static_cast<bool>(GetRootMotionMontageInstance(SkeletalMesh));
+	//if (bIsPlayingRootMotionMontage && SkeletalMesh->ShouldTickPose())
+	//{
 		// This will update velocity and rotation based on the root motion
-		TickPose(DeltaTime);
-	}
+	//	TickPose(DeltaTime);
+	//}
 
 	PostMovementUpdate(DeltaTime);
 }
@@ -232,11 +236,11 @@ void UCustomMovementComponent::PreMovementUpdate(float DeltaTime)
 			{
 				if (StepHandling != EStepHandlingMethod::None)
 				{
-					SelectedGroundProbingDistance = FMath::Max(CapsuleRadius, MaxStepHeight);
+					SelectedGroundProbingDistance = FMath::Max(UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius(), MaxStepHeight);
 				}
 				else
 				{
-					SelectedGroundProbingDistance = GetCapsuleRadius;
+					SelectedGroundProbingDistance = UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius();
 				}
 
 				SelectedGroundProbingDistance += GroundDetectionExtraDistance;
@@ -245,13 +249,13 @@ void UCustomMovementComponent::PreMovementUpdate(float DeltaTime)
 			// Now that we've setup our ground probing distance, we're ready to actually do the probing (and snapping, there's one call
 			// to MoveUpdatedComp to handle the snapping)
 
-			ProbeGround(UpdatedComponent->GetComponentLocation(), UpdatedComponent->GetComponentQuat(), SelectedGroundProbingDistance, GroundingStatus);
+			ProbeGround(SelectedGroundProbingDistance, GroundingStatus);
 
 			// Handle projecting our velocity if we just landed this frame
 			if (!LastGroundingStatus.bIsStableOnGround && GroundingStatus.bIsStableOnGround)
 			{
 				/* EVENT: On Landed */
-				Velocity = FVector::VectorPlaneProject(Velocity, PawnUp);
+				Velocity = FVector::VectorPlaneProject(Velocity, UpdatedComponent->GetUpVector());
 				Velocity = GetDirectionTangentToSurface(Velocity, GroundingStatus.GroundNormal) * Velocity.Size();
 			}
 		}
@@ -287,7 +291,7 @@ void UCustomMovementComponent::PreMovementUpdate(float DeltaTime)
 		
 		}
 	}
-
+	bMustUnground = false;
 #pragma endregion UpdatePhase1
 
 	
@@ -364,18 +368,26 @@ void UCustomMovementComponent::MovementUpdate(FVector& MoveVelocity, float Delta
 			/* Setup hit stability evaluation */
 			FHitStabilityReport MoveHitStabilityReport;
 			EvaluateHitStability(CurrentHitResult, MoveVelocity, MoveHitStabilityReport);
+			FVector HitNormal = CurrentHitResult.ImpactNormal;
 
 			/* First we check for steps as that could be what we hit, so the move is valid and needs manual override */
 			bool bFoundValidStepHit = false;
 			if (bSolveGrounding && StepHandling != EStepHandlingMethod::None && MoveHitStabilityReport.bValidStepDetected)
 			{
-				
+				float ObstructionCorrelation = FMath::Abs(HitNormal | UpdatedComponent->GetUpVector());
+
+				if (ObstructionCorrelation <= CORRELATION_FOR_VERTICAL_OBSTRUCTION)
+				{
+					FVector StepForwardDirection = FVector::VectorPlaneProject(-HitNormal, UpdatedComponent->GetUpVector()).GetSafeNormal();
+
+					// TODO: 1.) Need to think deeply about this, I like the CMC/GMC method of using a movement scope to go up and forward, check, then go back down...
+					// TODO: 2.) KCC actually basically does just this with its collision sweep, substituting that with MoveUpdatedComponent in a deffered update scope like KCC/GMC would actually work just fine!
+				}
 			}
 
 			/* If no steps were found, this is just a blocking hit so project against it and handle impact */
 			if (!bFoundValidStepHit)
 			{
-				FVector HitNormal = CurrentHitResult.ImpactNormal;
 				// TODO: NOTE, A hit result from a sweep - the impact normal is always the most obstructing normal/most opposed to sweep direction!!!!!!!!!
 				// Reorients the obstruction normal based on pawn rotation depending on grounding status
 				FVector ObstructionNormal = GetObstructionNormal(HitNormal, MoveHitStabilityReport.bIsStable);
@@ -424,57 +436,19 @@ void UCustomMovementComponent::PostMovementUpdate(float DeltaTime)
 	
 }
 
-void UCustomMovementComponent::InternalMove(FVector& MoveVelocity, float& DeltaTime)
-{
-	const FVector MoveDelta = MoveVelocity * DeltaTime;
-	FHitResult SweepHit(1.f);
-	SafeMoveUpdatedComponent(MoveDelta, UpdatedComponent->GetComponentQuat(), true, SweepHit);
-	
-	if (SweepHit.bStartPenetrating)
-	{
-		// Internal velocity project
-		HandleImpact(SweepHit);
-		SlideAlongSurface(MoveDelta, 1.f, SweepHit.Normal, SweepHit, true);
-
-		if (SweepHit.bStartPenetrating)
-		{
-			OnStuckInGeometry(&SweepHit);
-		}
-	}
-	else if (SweepHit.IsValidBlockingHit())
-	{
-		float PercentTimeApplied = SweepHit.Time;
-		// The check CMC does right here we don't need to do. Our movement is always projected to the ground so the sweep
-		// wouldn't register our current slope as a blocking hit as our movement is always parallel to the slope.
-		
-		bool bFoundValidStepHit = false;
-		FHitStabilityReport MoveHitStabilityReport;
-		EvaluateHitStability(SweepHit, MoveVelocity, MoveHitStabilityReport);
-		
-		// Check if we can step up
-		if (bSolveGrounding && StepHandling != EStepHandlingMethod::None && MoveHitStabilityReport.bValidStepDetected)
-		{
-			// Check Steps
-
-			// If not a step, handle impact and slide along the surface
-			if (!bFoundValidStepHit)
-			{
-				HandleImpact(SweepHit, DeltaTime, MoveDelta);
-				SlideAlongSurface(MoveDelta, 1.f - PercentTimeApplied, SweepHit.Normal, SweepHit, true);
-			}
-		}
-		else if (SweepHit.Component.IsValid() && !SweepHit.GetComponent()->CanCharacterStepUp(PawnOwner))
-		{
-			HandleImpact(SweepHit, DeltaTime, MoveDelta);
-			SlideAlongSurface(MoveDelta, 1.f - PercentTimeApplied, SweepHit.Normal, SweepHit, true);
-		}
-	}
-	
-}
-
 #pragma endregion Core Update Loop
 
 #pragma region Stability Evaluations
+
+bool UCustomMovementComponent::CanMove()
+{
+	if (!UpdatedComponent || !PawnOwner) return false;
+	if (UpdatedComponent->Mobility != EComponentMobility::Movable) return false;
+	if (bStuckInGeometry) return false;
+
+	return true;
+}
+
 
 // TODO: Could be inlined?
 bool UCustomMovementComponent::MustUnground() const
@@ -483,14 +457,94 @@ bool UCustomMovementComponent::MustUnground() const
 }
 
 
-
-void UCustomMovementComponent::ProbeGround(FVector ProbingPosition, FQuat AtRotation, float ProbingDistance, FGroundingReport& OutGroundingReport)
+// Could this whole thing be made a lot simpler by sweeping with MoveUpdatedComponent?
+void UCustomMovementComponent::ProbeGround(float ProbingDistance, FGroundingReport& OutGroundingReport)
 {
+	/* Ensure our probing distance is valid */
+	if (ProbingDistance < MINIMUM_GROUND_PROBING_DISTANCE)
+	{
+		ProbingDistance = MINIMUM_GROUND_PROBING_DISTANCE;
+	}
+
+	/* Initialize ground sweep data */
+	int GroundSweepsMade = 0;
+	FHitResult GroundSweepHit(NoInit);
+	bool bGroundSweepIsOver = false;
+	FVector GroundSweepPosition = UpdatedComponent->GetComponentLocation();
+	FVector GroundSweepDirection = -UpdatedComponent->GetUpVector(); // Ground sweeps relative to character orientation
+	float GroundProbeDistanceRemaining = ProbingDistance;
+
+	//FScopedMovementUpdate GroundSweepScopedUpdate(UpdatedComponent, EScopedUpdate::DeferredUpdates);
 	
+	/* Begin performing sweep iterations */
+	while (GroundProbeDistanceRemaining > 0 && (GroundSweepsMade <= MAX_GROUND_SWEEP_ITERATIONS) && !bGroundSweepIsOver)
+	{
+		if (GroundSweep(GroundSweepPosition, UpdatedComponent->GetComponentQuat(), GroundSweepDirection, GroundProbeDistanceRemaining, GroundSweepHit))
+		{
+			/* Evaluate stability of the ground hit */
+			// Don't sweep, we just want the hit stability result to have up-to-date information about our location post sweep (target position)
+			FVector TargetPosition = GroundSweepPosition + (GroundSweepDirection * GroundSweepHit.Distance);
+			FVector SweepDelta = TargetPosition - UpdatedComponent->GetComponentLocation();
+			
+			//MoveUpdatedComponent(SweepDelta, UpdatedComponent->GetComponentQuat(), false);
+			FHitStabilityReport GroundHitStabilityReport;
+			EvaluateHitStability(GroundSweepHit, Velocity, GroundHitStabilityReport);
+
+			/* Fill out ground information from hit stability report */
+			OutGroundingReport.bFoundAnyGround = true;
+			OutGroundingReport.GroundNormal = GroundSweepHit.ImpactNormal;
+			OutGroundingReport.InnerGroundNormal = GroundHitStabilityReport.InnerNormal;
+			OutGroundingReport.OuterGroundNormal = GroundHitStabilityReport.OuterNormal;
+			OutGroundingReport.GroundPoint = GroundSweepHit.ImpactPoint;
+			OutGroundingReport.GroundHit = GroundSweepHit;
+			OutGroundingReport.bSnappingPrevented = false;
+
+			/* Evaluate the stability of the ground */
+			if (GroundHitStabilityReport.bIsStable)
+			{
+				/* Revert the moves we used for sweeps and perform the actual snapping (or not)*/
+				//GroundSweepScopedUpdate.RevertMove();
+				
+				/* Find all scenarios where snapping should be cancelled */
+				OutGroundingReport.bSnappingPrevented = !IsStableWithSpecialCases(GroundHitStabilityReport, Velocity);
+				OutGroundingReport.bIsStableOnGround = true;
+
+				/* Snap us to the ground */
+				if (!OutGroundingReport.bSnappingPrevented)
+				{
+					FHitResult DummyHit;
+					SafeMoveUpdatedComponent(GroundSweepDirection * (GroundSweepHit.Distance - COLLISION_OFFSET), UpdatedComponent->GetComponentQuat(), true, DummyHit);
+				}
+
+				bGroundSweepIsOver = true;
+				return;
+			}
+			else
+			{
+				/* Calculate movement from this iteration and advance position*/
+				FVector SweepMovement = (GroundSweepDirection * GroundSweepHit.Distance) + UpdatedComponent->GetUpVector() * FMath::Max(COLLISION_OFFSET, GroundSweepHit.Distance);
+
+				/* Set remaining distance */
+				GroundProbeDistanceRemaining = FMath::Min(GROUND_PROBING_REBOUND_DISTANCE, FMath::Max(GroundProbeDistanceRemaining - SweepMovement.Size(), 0.f));
+
+				/* Reorient direction */
+				GroundSweepDirection = FVector::VectorPlaneProject(GroundSweepDirection, GroundSweepHit.ImpactNormal);
+			}
+		}
+		else
+		{
+			bGroundSweepIsOver = true;
+		}
+
+		GroundSweepsMade++;
+	}
+
+	/* No ground found, revert the move regardless */
+	//GroundSweepScopedUpdate.RevertMove();
 }
 
 
-void UCustomMovementComponent::EvaluateHitStability(FHitResult Hit, FVector MoveVelocity, FHitStabilityReport& OutStabilityReport)
+void UCustomMovementComponent::EvaluateHitStability(FHitResult Hit, FVector MoveDelta, FHitStabilityReport& OutStabilityReport)
 {
 	if (bSolveGrounding)
 	{
@@ -500,31 +554,72 @@ void UCustomMovementComponent::EvaluateHitStability(FHitResult Hit, FVector Move
 
 	/* Doing everything relative to character up so get that */
 	FVector PawnUp = UpdatedComponent->GetUpVector(); // This will be up to date I think so no need to get the AtCharRotation (unless we're evaluating stability of a rotation?)
-	FVector InnerHitDirection = FVector::VectorPlaneProject(Hit.ImpactNormal, PawnUp);
+	const FVector HitNormal = Hit.ImpactNormal;
+	FVector InnerHitDirection = FVector::VectorPlaneProject(HitNormal, PawnUp);
 
 	/* Initialize the stability report */
-	OutStabilityReport.bIsStable = IsStableOnNormal(Hit.ImpactNormal);
+	OutStabilityReport.bIsStable = IsStableOnNormal(HitNormal);
 	OutStabilityReport.bFoundInnerNormal = false;
 	OutStabilityReport.bFoundOuterNormal = false;
-	OutStabilityReport.InnerNormal = Hit.ImpactNormal;
-	OutStabilityReport.OuterNormal = Hit.ImpactNormal;
+	OutStabilityReport.InnerNormal = HitNormal;
+	OutStabilityReport.OuterNormal = HitNormal;
 
 	/* Only really useful for Ledge and Denivelation Handling*/
 	if (bLedgeAndDenivelationHandling)
 	{
-		// TODO: Leaving this for later	
+		/* Setup our raycast information */
+		float LedgeCheckHeight = MIN_DISTANCE_FOR_LEDGE;
+		if (StepHandling != EStepHandlingMethod::None)
+		{
+			LedgeCheckHeight = MaxStepHeight;
+		}
+
+		FVector InnerStart = Hit.ImpactPoint + (PawnUp * SECONDARY_PROBES_VERTICAL) + (InnerHitDirection * SECONDARY_PROBES_HORIZONTAL);
+		FVector OuterStart = Hit.ImpactPoint + (PawnUp * SECONDARY_PROBES_VERTICAL) + (-InnerHitDirection * SECONDARY_PROBES_HORIZONTAL);
+
+		FHitResult CastHit;
+		bool bStableLedgeInner = false;
+		bool bStableLedgeOuter = false;
+
+		/* Cast for ledge, slightly offset in each case such that if one hits and one doesn't, its a ledge */
+		if (CollisionLineCast(InnerStart, -PawnUp, LedgeCheckHeight + SECONDARY_PROBES_VERTICAL, CastHit))
+		{
+			FVector InnerLedgeNormal = CastHit.ImpactNormal;
+			OutStabilityReport.InnerNormal = InnerLedgeNormal;
+			OutStabilityReport.bFoundInnerNormal = true;
+			bStableLedgeInner = IsStableOnNormal(InnerLedgeNormal);
+		}
+		if (CollisionLineCast(OuterStart, -PawnUp, LedgeCheckHeight + SECONDARY_PROBES_VERTICAL, CastHit))
+		{
+			FVector OuterLedgeNormal = CastHit.ImpactNormal;
+			OutStabilityReport.OuterNormal = OuterLedgeNormal;
+			OutStabilityReport.bFoundOuterNormal = true;
+			bStableLedgeOuter = IsStableOnNormal(OuterLedgeNormal);
+		}
+
+		/* With both ledge cast information, evaluate whether it is a ledge and fill info accordingly */
+		OutStabilityReport.bLedgeDetected = (bStableLedgeInner != bStableLedgeOuter);
+		if (OutStabilityReport.bLedgeDetected)
+		{
+			// fill out information, leaving for later because i wanna understand the math
+			OutStabilityReport.bIsOnEmptySideOfLedge = bStableLedgeOuter && !bStableLedgeInner;
+			OutStabilityReport.LedgeGroundNormal = bStableLedgeOuter ? OutStabilityReport.OuterNormal : OutStabilityReport.InnerNormal;
+			OutStabilityReport.LedgeRightDirection = (HitNormal ^ OutStabilityReport.LedgeGroundNormal).GetSafeNormal();
+			OutStabilityReport.LedgeFacingDirection = FVector::VectorPlaneProject((OutStabilityReport.LedgeGroundNormal ^ OutStabilityReport.LedgeFacingDirection).GetSafeNormal(), PawnUp).GetSafeNormal();
+			//OutStabilityReport.DistanceFromLedge = FVector::VectorPlaneProject()
+			OutStabilityReport.bIsMovingTowardsEmptySideOfLedge = (MoveDelta.GetSafeNormal() | OutStabilityReport.LedgeFacingDirection) > 0.f;
+		}
 	}
 
 	/* Step Handling */
 	if (StepHandling != EStepHandlingMethod::None && !OutStabilityReport.bIsStable)
 	{
 		/* How important is a check for whether the hit component is simulating physics? Should be fine for now */
-		DetectSteps();
+		// check if the collider is valid first perhaps
+		
+		DetectSteps(Hit, InnerHitDirection, OutStabilityReport);
 
-		if (OutStabilityReport.bValidStepDetected)
-		{
-			OutStabilityReport.bIsStable = true;
-		}
+		if (OutStabilityReport.bValidStepDetected) OutStabilityReport.bIsStable = true;
 	}
 }
 
@@ -631,14 +726,51 @@ bool UCustomMovementComponent::IsStableWithSpecialCases(const FHitStabilityRepor
 
 /* ===== Steps ===== */
 
-void UCustomMovementComponent::DetectSteps(FVector CharPosition, FQuat CharRotation, FVector HitPoint, FVector InnerHitDirection, FHitStabilityReport& StabilityReport)
+void UCustomMovementComponent::DetectSteps(FHitResult Hit, FVector InnerHitDirection, FHitStabilityReport& StabilityReport)
 {
+	/* Initialize Stepping Vectors */
+	FVector PawnUp = UpdatedComponent->GetUpVector();
+
+	// I'm not too sure about VerticalPawnToHit...
+	FVector VerticalPawnToHit = (Hit.ImpactPoint - UpdatedComponent->GetComponentLocation()).ProjectOnTo(PawnUp);
+	FVector HorizontalPawnToHitDirection = FVector::VectorPlaneProject(Hit.ImpactPoint - UpdatedComponent->GetComponentLocation(), PawnUp).GetSafeNormal();
+	float DistanceToFloor = FMath::Abs(VerticalPawnToHit.Size());
+
+	float TravelUpHeight = FMath::Max(MaxStepHeight - DistanceToFloor, 0.f);
 	
+	FScopedMovementUpdate StepsScopedMovement(UpdatedComponent, EScopedUpdate::DeferredUpdates);
+
+	FHitResult StepSweepHit;
+
+	MoveUpdatedComponent(PawnUp * TravelUpHeight, UpdatedComponent->GetComponentQuat(), true, &StepSweepHit);
+
+	if (StepSweepHit.bStartPenetrating)
+	{
+		StepsScopedMovement.RevertMove();
+	}
+	else
+	{
+		// we wanna check if the ground is walkable (if bAllowSteppingWithoutStableGround)
+		// We do this with just raycasts, no need for a sweep or anything
+	}
+
+	StabilityReport.bValidStepDetected = true;
+
+	FVector ForwardSweepDelta;
+	// Step up was successful, now we check for depth
+	if (StepHandling == EStepHandlingMethod::Extra && !StabilityReport.bValidStepDetected)
+	{
+		ForwardSweepDelta = -InnerHitDirection * MinRequiredStepDepth;
+	}
+	else
+	{
+		//ForwardSweepDel
+	}
 }
 
 bool UCustomMovementComponent::CheckStepValidity(int numStepHits, FVector CharPosition, FQuat CharRotation, FVector InnerHitDirection, FVector StepCheckStartPost, FHitResult& OutHit)
 {
-	
+	return false;
 }
 
 
@@ -669,97 +801,6 @@ void UCustomMovementComponent::HandleImpact(const FHitResult& Hit, float TimeSli
 		const FVector ForceAccel = Acceleration + ; // Stuff here we don't have yet to compute the force
 	}
 	*/ 
-}
-
-
-float UCustomMovementComponent::SlideAlongSurface(const FVector& Delta, float Time, const FVector& InNormal, FHitResult& OutHit, bool bHandleImpact)
-{
-	if (!OutHit.bBlockingHit) return 0.f;
-
-	FVector Normal(InNormal);
-	
-	if (GroundingStatus.bIsStableOnGround && !MustUnground())
-	{
-		const float VerticalNormalFactor = OutHit.Normal | UpdatedComponent->GetUpVector();
-		
-
-		// We don't want to be pushed up an unwalkable surface
-		if (!IsStableOnNormal(Normal))
-		{
-			// If the hit normal is pointing down from us, so like a roof we don't want to be pushed down
-			if (VerticalNormalFactor < 0.f)
-			{
-				if (FVector::PointPlaneDist(UpdatedComponent->GetComponentLocation(), GroundingStatus.GroundPoint, GroundingStatus.GroundNormal) < MINIMUM_GROUND_PROBING_DISTANCE && GroundingStatus.GroundHit.bBlockingHit)
-				{
-					const FVector FloorNormal = GroundingStatus.GroundNormal;
-					const bool bFloorOpposedToMovement = (Delta | FloorNormal) < 0.f && (UpdatedComponent->GetUpVector() | FloorNormal) < (1.f - DELTA);
-
-					if (bFloorOpposedToMovement)
-					{
-						Normal = FloorNormal;
-					}
-
-					Normal = FVector::VectorPlaneProject(Normal, UpdatedComponent->GetUpVector()).GetSafeNormal();
-				}
-			}
-			else
-			{
-				Normal = FVector::VectorPlaneProject(Normal, UpdatedComponent->GetUpVector()).GetSafeNormal();
-			}
-		}
-
-	}
-
-	return Super::SlideAlongSurface(Delta, Time, Normal, OutHit, bHandleImpact);
-}
-
-
-// Handles creases!
-// TODO: Figure out the maths
-void UCustomMovementComponent::TwoWallAdjust(FVector& Delta, const FHitResult& Hit, const FVector& OldHitNormal) const
-{
-	const FVector InDelta = Delta;
-	Super::TwoWallAdjust(Delta, Hit, OldHitNormal);
-
-	// This is here to ensure a crease doesn't move us up or doesn't move us down further into the ground if we're grounded along the CreaseDirection in EvaluateCrease
-	if (GroundingStatus.bIsStableOnGround && !MustUnground())
-	{
-		float VerticalMoveFactor = Delta.GetSafeNormal() | UpdatedComponent->GetUpVector();
-
-		// Allow slides up walkable surfaces but not unwalkable ones, treating those as vertical barriers
-		if (VerticalMoveFactor > 0)
-		{
-			const bool bHitStable = IsStableOnNormal(Hit.ImpactNormal);
-			
-			if (bHitStable)
-			{
-				// Maintain planar velocity
-				const float Time = (1.f - Hit.Time);
-				// Adjust mightve changed our magnitude, we want to maintain it
-				const FVector ScaledDelta = Delta.GetSafeNormal() * InDelta.Size();
-
-				const FVector InDeltaOnPlane = FVector::VectorPlaneProject(InDelta, UpdatedComponent->GetUpVector()).GetSafeNormal();
-				FVector ScaledDeltaOnUpPlane = FVector::VectorPlaneProject(ScaledDelta, UpdatedComponent->GetUpVector());
-				const FVector HitNormalOnUpPlane = FVector::VectorPlaneProject(Hit.Normal, UpdatedComponent->GetUpVector());
-
-				ScaledDeltaOnUpPlane = {ScaledDeltaOnUpPlane.X / HitNormalOnUpPlane.X, ScaledDeltaOnUpPlane.Y / HitNormalOnUpPlane.Y, ScaledDeltaOnUpPlane.Z / HitNormalOnUpPlane.Z};
-			}
-			else
-			{
-				// If the hit was not stable, we do not project along it
-				Delta -= VerticalMoveFactor * UpdatedComponent->GetUpVector();
-			}
-		}
-		else if (VerticalMoveFactor < 0)
-		{
-			// Don't push down into the floor
-			// TODO: Is our grounding status up to date here? If not that explains the multiple ProbeGround calls in CMC. Assuming it is...
-			if (FVector::PointPlaneDist(UpdatedComponent->GetComponentLocation(), GroundingStatus.GroundPoint, GroundingStatus.GroundNormal) < MINIMUM_GROUND_PROBING_DISTANCE && GroundingStatus.GroundHit.bBlockingHit)
-			{
-				Delta -= VerticalMoveFactor * UpdatedComponent->GetUpVector();
-			}
-		}
-	}
 }
 
 void UCustomMovementComponent::InternalHandleVelocityProjection(bool bStableOnHit, FVector HitNormal, FVector ObstructionNormal, FVector OriginalDirection, EMovementSweepState& SweepState, bool bPreviousHitIsStable, FVector PrevVelocity, FVector PrevObstructionNormal, FVector& MoveVelocity, float& RemainingMoveDistance, FVector& RemainingMoveDirection)
@@ -832,6 +873,99 @@ void UCustomMovementComponent::InternalHandleVelocityProjection(bool bStableOnHi
 	RemainingMoveDirection = MoveVelocity.GetSafeNormal();
 }
 
+FHitResult UCustomMovementComponent::SinglePeneterationResolution()
+{
+	const FQuat CurrentRotation = UpdatedComponent->GetComponentQuat();
+	const FVector TestDelta = {0.01f, 0.01f, 0.01f};
+	FHitResult Hit;
+
+	const auto TestMove = [&](const FVector& Delta) {
+		FScopedMovementUpdate ScopedMovement(UpdatedComponent, EScopedUpdate::DeferredUpdates);
+
+		// Check for penetrations by applying a small location delta.
+		MoveUpdatedComponent(Delta, CurrentRotation, true, &Hit);
+
+		// Revert the movement again afterwards, we are only interested in the hit result.
+		ScopedMovement.RevertMove();
+	};
+
+	TestMove(TestDelta);
+
+	if (!Hit.bBlockingHit || Hit.IsValidBlockingHit())
+	{
+		// Apply the test delta in the opposite direction.
+		TestMove(-TestDelta);
+
+		if (!Hit.bBlockingHit || Hit.IsValidBlockingHit())
+		{
+			// The pawn is not in penetration, no action is needed.
+			return Hit;
+		}
+	}
+	
+	SafeMoveUpdatedComponent(TestDelta, CurrentRotation, true, Hit);
+	SafeMoveUpdatedComponent(-TestDelta, CurrentRotation, true, Hit);
+
+	return Hit;
+}
+
+FHitResult UCustomMovementComponent::AutoResolvePenetration()
+{
+	FHitResult Hit = SinglePeneterationResolution();
+	
+	if (Hit.bStartPenetrating)
+	{
+		const bool bHitPawn = static_cast<bool>(Cast<APawn>(Hit.GetActor()));
+		if (const FVector AdjustmentDirection = GetPenetrationAdjustment(Hit).GetSafeNormal(); AdjustmentDirection != FVector::ZeroVector)
+		{
+			const FVector InitialLocation = UpdatedComponent->GetComponentLocation();
+			const float MaxDepenetration = 100.f;
+			// Subdivide the max depenetration distance into smaller substeps and incrementally adjust the pawn position.
+			// @attention This can lead to an overall greater adjustment than the set max depenetration distance.
+			constexpr int32 Resolution = 10;
+			const float AdjustmentStepDistance = MaxDepenetration / Resolution;
+			for (int NumRetry = 1; NumRetry <= Resolution; ++NumRetry)
+			{
+				UpdatedComponent->SetWorldLocation(InitialLocation + AdjustmentDirection * NumRetry * AdjustmentStepDistance);
+				if (SinglePeneterationResolution().bStartPenetrating)
+				{
+					// If we are still stuck after adjusting undo the location change.
+					UpdatedComponent->SetWorldLocation(InitialLocation);
+				}
+				else
+				{
+					// The penetration was resolved. We still return the original downward hit.
+					return Hit;
+				}
+			}
+		}
+		bStuckInGeometry = true;
+	}
+
+	return Hit;
+}
+
+
+void UCustomMovementComponent::HandleVelocityProjection(FVector& MoveVelocity, FVector ObstructionNormal, bool bStableOnHit)
+{
+	if (GroundingStatus.bIsStableOnGround && !MustUnground())
+	{
+		if (bStableOnHit)
+		{
+			MoveVelocity = GetDirectionTangentToSurface(MoveVelocity, ObstructionNormal) * MoveVelocity.Size();
+		}
+		else
+		{
+			MoveVelocity = FVector::VectorPlaneProject(MoveVelocity, ObstructionNormal);
+		}
+	}
+	else
+	{
+		MoveVelocity = FVector::VectorPlaneProject(MoveVelocity, ObstructionNormal);
+	}
+}
+
+
 
 #pragma endregion Collision Adjustments
 
@@ -879,42 +1013,101 @@ void UCustomMovementComponent::RootCollisionTouched(
 
 #pragma endregion Physics Interactions
 
-#pragma region UNUSED BUT KEEPING FOR SAFETY
-void UCustomMovementComponent::MovementUpdate(FVector& MoveVelocity, float DeltaTime)
+#pragma region Collision Checks
+
+bool UCustomMovementComponent::GroundSweep(FVector Position, FQuat Rotation, FVector Direction, float Distance, FHitResult& OutHit)
 {
-	if (UpdatedPrimitive->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
-	{
-		MoveUpdatedComponent(MoveVelocity * DeltaTime, UpdatedComponent->GetComponentQuat(), false);
-		return;
-	}
+	/* Initialize sweep data */
+	const TArray<AActor*> ActorsToIgnore = {PawnOwner};
+	const FCollisionShape CollisionShape = UpdatedPrimitive->GetCollisionShape();
+	const float Radius = CollisionShape.GetCapsuleRadius();
+	const float HalfHeight = CollisionShape.GetCapsuleHalfHeight();
 	
-	/* Ensure a valid delta time*/
-	if (DeltaTime <= 0.f) return;
+	return UKismetSystemLibrary::CapsuleTraceSingle(
+											GetWorld(),
+											Position,
+											Position + Direction * (Distance + GROUND_PROBING_BACKSTEP_DISTANCE),
+											Radius, HalfHeight,
+											UEngineTypes::ConvertToTraceType(UpdatedComponent->GetCollisionObjectType()),
+											false,
+											ActorsToIgnore,
+											bDebugGroundSweep ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None,
+											OutHit,
+											true,
+											GroundSweepDebugColor, GroundSweepHitDebugColor);
+}
 
-	int SweepsMade = 0;
 
-	float RemainingTime = DeltaTime;
+bool UCustomMovementComponent::CollisionLineCast(FVector StartPoint, FVector Direction, float Distance, FHitResult& OutHit)
+{
+	const TArray<AActor*> ActorsToIgnore = {PawnOwner};
+	
+	return UKismetSystemLibrary::LineTraceSingle(
+											GetWorld(),
+											StartPoint,
+											StartPoint + Direction * Distance,
+											UEngineTypes::ConvertToTraceType(UpdatedComponent->GetCollisionObjectType()),
+											false,
+											ActorsToIgnore,
+											bDebugLineTrace ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None,
+											OutHit,
+											true,
+											LineTraceDebugColor, LineTraceHitDebugColor);
 
-	while ((RemainingTime > 0.f) && (SweepsMade < MaxMovementIterations))
-	{
-		SweepsMade++;
-		// TODO: CMC Updates the RemainingTime in a weird way I don't understand it yet, is it better?
+}
 
-		/* Compute Move Parameters */
-		const FVector MoveDelta = MoveVelocity * RemainingTime;
-		const bool bZeroDelta = MoveDelta.IsNearlyZero();
+#pragma endregion Collision Checks
 
-		if (bZeroDelta) break;
-		
-		
-		/* Save current values */
-		const FVector PrevVelocity = MoveVelocity;
+#pragma region Exposed Calls
 
-		InternalMove(MoveVelocity, RemainingTime);
-		
-	}
+void UCustomMovementComponent::HaltMovement()
+{
+	
+}
+
+void UCustomMovementComponent::DisableMovement()
+{
+	
+}
+
+void UCustomMovementComponent::EnableMovement()
+{
+	
+}
+
+
+void UCustomMovementComponent::ForceUnground()
+{
+	bMustUnground = true;
+}
+
+void UCustomMovementComponent::MoveCharacter(FVector ToPosition)
+{
+	
+}
+
+void UCustomMovementComponent::RotateCharacter(FQuat ToRotation)
+{
+	
+}
+
+void UCustomMovementComponent::ApplyState(FMotorState StateToApply)
+{
+	
+}
+
+
+FVector UCustomMovementComponent::GetVelocityFromMovement(FVector MoveDelta, float DeltaTime)
+{
+	if (DeltaTime <= 0.f) return FVector::ZeroVector;
+
+	return MoveDelta / DeltaTime;
 }
 
 
 
-#pragma endregion UNUSED BUT KEEPING FOR SAFETY
+
+
+
+
+#pragma endregion Exposed Calls 
