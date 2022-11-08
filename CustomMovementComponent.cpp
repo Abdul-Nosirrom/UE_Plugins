@@ -311,39 +311,29 @@ void UCustomMovementComponent::MovementUpdate(FVector& MoveVelocity, float Delta
 	/* Initialize sweep iteration data */
 	FVector RemainingMoveDirection = MoveVelocity.GetSafeNormal();
 	float RemainingMoveDistance = MoveVelocity.Size() * DeltaTime;
-	FVector OriginalVelDirection = RemainingMoveDirection;
 
-	EMovementSweepState SweepState = EMovementSweepState::Initial;
 	int SweepsMade = 0;
 	bool bHitSomethingThisSweepIteration = true;
 	FHitResult CurrentHitResult(NoInit);
-
-	/* Initialize previous data to iterate through (e.g checking for creases for example) */
-	bool bPreviousHitIsStable = false;
-	FVector PreviousVelocity = FVector::ZeroVector;
-	FVector PreviousObstructionNormal = FVector::ZeroVector;
-	FHitResult PreviousHitResult(NoInit);
 
 	// TODO: In KCC, they first project the move against all current overlaps before doing the sweeps. I'm unsure if we need to do that. If we store them in RootCollisionTouched though then maybe?
 
 	while (RemainingMoveDistance > 0.f && (SweepsMade < MaxMovementIterations) && bHitSomethingThisSweepIteration)
 	{
-		/* Cache the previous hit result which we'll need for computing creases */
-		PreviousHitResult = CurrentHitResult;
-		
 		/* First sweep with the full current delta which will give us the first blocking hit */
 		SafeMoveUpdatedComponent(RemainingMoveDirection * RemainingMoveDistance, UpdatedComponent->GetComponentQuat(), true, CurrentHitResult);
 		RemainingMoveDistance *= 1.f - CurrentHitResult.Time;
 		FVector RemainingMoveDelta = RemainingMoveDistance * RemainingMoveDirection;
 		/* Update movement by the movement amount */
 
-		if (CurrentHitResult.bStartPenetrating && false)
+		if (CurrentHitResult.bStartPenetrating)
 		{
 			HandleImpact(CurrentHitResult);
-			SlideAlongSurface(RemainingMoveDelta, 1.f, CurrentHitResult.Normal, CurrentHitResult, true);
+			SlideAlongSurface(RemainingMoveDelta, 1.f, CurrentHitResult.ImpactNormal, CurrentHitResult, true);
+			//InternalHandleVelocityProjection(CurrentHitResult, bStableOnHit, RemainingMoveDelta, SweepState, MoveVelocity, PreviousVelocity, RemainingMoveDistance, RemainingMoveDirection); 
 			GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, "Started Penetrating...");
 		}
-		else if (CurrentHitResult.bBlockingHit)//CurrentHitResult.IsValidBlockingHit()) //CurrentHitResult.IsValidBlockingHit())
+		else if (CurrentHitResult.IsValidBlockingHit()) //CurrentHitResult.IsValidBlockingHit())
 		{
 			/* Setup hit stability evaluation */
 			FHitStabilityReport MoveHitStabilityReport;
@@ -368,58 +358,27 @@ void UCustomMovementComponent::MovementUpdate(FVector& MoveVelocity, float Delta
 			/* If no steps were found, this is just a blocking hit so project against it and handle impact */
 			if (!bFoundValidStepHit)
 			{
-				// TODO: NOTE, A hit result from a sweep - the impact normal is always the most obstructing normal/most opposed to sweep direction!!!!!!!!!
-				// Reorients the obstruction normal based on pawn rotation depending on grounding status
-				FVector ObstructionNormal = GetObstructionNormal(HitNormal, MoveHitStabilityReport.bIsStable);
-
 				/* Were we stable when we hit this? */
 				// For a crease, this would be false (I think), HitStabilityReport would give us false earlier for bStableOnHit
 				bool bStableOnHit = MoveHitStabilityReport.bIsStable && !MustUnground();
-				FVector VelocityBeforeProj = MoveVelocity;
-				FVector PrevLocation = UpdatedComponent->GetComponentLocation();
-				//HandleImpact(CurrentHitResult);
-				//SlideAlongSurface(RemainingMoveDelta, 1.f - CurrentHitResult.Time, CurrentHitResult.Normal, CurrentHitResult, true);
+				FVector ObstructionNormal = GetObstructionNormal(CurrentHitResult.ImpactNormal, bStableOnHit);
+				HandleImpact(CurrentHitResult);
+				HandleVelocityProjection(MoveVelocity, ObstructionNormal, bStableOnHit);
 
-				//FVector UpdateDelta = (UpdatedComponent->GetComponentLocation() - PrevLocation).GetSafeNormal();
+				if (!bStableOnHit)
+				{
+					float t = 1.f - Super::SlideAlongSurface(RemainingMoveDelta, 1.f - CurrentHitResult.Time, CurrentHitResult.Normal, CurrentHitResult, true);
+					RemainingMoveDistance *= t;
+				}
 
-				//if (UpdateDelta.SizeSquared() >= 0.f)
-				//{
-				//	MoveVelocity = UpdateDelta * MoveVelocity.Size();
-				//	RemainingMoveDirection = UpdateDelta;
-				//}
-				
-				RemainingMoveDistance *= 1.f - CurrentHitResult.Time;
-				/* Project Velocity For Next Move Iteration */
-
-				
-				InternalHandleVelocityProjection(
-												bStableOnHit,
-												CurrentHitResult.ImpactNormal,
-												ObstructionNormal,
-												OriginalVelDirection,
-												SweepState,
-												bPreviousHitIsStable,
-												PreviousVelocity,
-												PreviousObstructionNormal,
-												MoveVelocity, RemainingMoveDistance, RemainingMoveDirection); 
-
-				// TODO: Use InternalHandleVelocityProjection, but then perform a move after it along the projected direction and get the hit (if any)
-				// use that instead of PrevHitResult...
-				
-				/* Update previous data */
-				bPreviousHitIsStable = bStableOnHit;
-				PreviousVelocity = VelocityBeforeProj;
-				PreviousObstructionNormal = ObstructionNormal;
+				RemainingMoveDirection = MoveVelocity.GetSafeNormal();
 			}
 		}
 		else
 		{
 			bHitSomethingThisSweepIteration = false;
 		}
-
-		//MoveVelocity = RemainingMoveDelta.GetSafeNormal() * MoveVelocity.Size();
-		//RemainingMoveDirection = MoveVelocity.GetSafeNormal();
-
+		
 		SweepsMade++;
 		if (SweepsMade > MaxMovementIterations)
 		{
@@ -428,7 +387,7 @@ void UCustomMovementComponent::MovementUpdate(FVector& MoveVelocity, float Delta
 		}
 	}
 
-	//MoveUpdatedComponent(RemainingMoveDirection * (RemainingMoveDistance + COLLISION_OFFSET), UpdatedComponent->GetComponentQuat(), true);
+	MoveUpdatedComponent(RemainingMoveDirection * (RemainingMoveDistance + COLLISION_OFFSET), UpdatedComponent->GetComponentQuat(), false);
 
 }
 
@@ -814,76 +773,6 @@ void UCustomMovementComponent::HandleImpact(const FHitResult& Hit, float TimeSli
 	*/ 
 }
 
-void UCustomMovementComponent::InternalHandleVelocityProjection(bool bStableOnHit, FVector HitNormal, FVector ObstructionNormal, FVector OriginalDirection, EMovementSweepState& SweepState, bool bPreviousHitIsStable, FVector PrevVelocity, FVector PrevObstructionNormal, FVector& MoveVelocity, float& RemainingMoveDistance, FVector& RemainingMoveDirection)
-{
-	/* Don't project if our move velocity for the projection is zero */
-	if (MoveVelocity.SizeSquared() <= 0.f) return;
-
-	FVector VelocityBeforeProj = MoveVelocity;
-
-	if (bStableOnHit)
-	{
-		bLastMovementIterationFoundAnyGround = true;
-		HandleVelocityProjection(MoveVelocity, ObstructionNormal, bStableOnHit);
-	}
-	else
-	{
-		/* Handle Projection - First hit we only have one HitResult so the most we can do is just project against it. Can't check for creases or anything just yet... */
-		if (SweepState == EMovementSweepState::Initial)
-		{
-			HandleVelocityProjection(MoveVelocity, ObstructionNormal, bStableOnHit);
-			SweepState = EMovementSweepState::AfterFirstHit;
-		}
-		/* When here, we have a lot more information about our geometry that we can infer from two hit results (Previous & Current) */
-		else if (SweepState == EMovementSweepState::AfterFirstHit)
-		{
-			bool bFoundCrease = false;
-			FVector CreaseDirection = FVector::ZeroVector;
-			
-			/* Blocking Crease Handling */
-			EvaluateCrease(
-						MoveVelocity,
-						PrevVelocity,
-						ObstructionNormal,
-						PrevObstructionNormal,
-						bStableOnHit,
-						bPreviousHitIsStable,
-						GroundingStatus.bIsStableOnGround && !MustUnground(),
-						bFoundCrease, CreaseDirection);
-
-			/* If we found a crease, that means its constraining our velocity (we are moving into the crease -v- ) */
-			if (bFoundCrease)
-			{
-				if (GroundingStatus.bIsStableOnGround && !MustUnground())
-				{
-					MoveVelocity = FVector::ZeroVector;
-					SweepState = EMovementSweepState::FoundBlockingCorner;
-				}
-				else
-				{
-					// TODO: A bit unsure of this, wouldn't this project our velocity downwards or upwards? Is that the intent?
-					MoveVelocity = MoveVelocity.ProjectOnTo(CreaseDirection);
-					SweepState = EMovementSweepState::FoundBlockingCrease;
-				}
-			}
-			/* If no creases were found, we just continue to project as usual */
-			else
-			{
-				HandleVelocityProjection(MoveVelocity, ObstructionNormal, bStableOnHit);
-			}
-		}
-		else if (SweepState == EMovementSweepState::FoundBlockingCrease)
-		{
-			MoveVelocity = FVector::ZeroVector;
-			SweepState = EMovementSweepState::FoundBlockingCorner;
-		}
-	}
-
-	float NewVelFactor = MoveVelocity.Size() / VelocityBeforeProj.Size();
-	RemainingMoveDistance *= NewVelFactor;
-	RemainingMoveDirection = MoveVelocity.GetSafeNormal();
-}
-
 FHitResult UCustomMovementComponent::SinglePeneterationResolution()
 {
 	const FQuat CurrentRotation = UpdatedComponent->GetComponentQuat();
@@ -952,11 +841,13 @@ float UCustomMovementComponent::SlideAlongSurface(const FVector& Delta, float Ti
 {
 	if (!Hit.bBlockingHit) return 0.f;
 
+	if (IsStableOnNormal(Normal) && !MustUnground()) return 0.f;
+	
 	FVector NewNormal = Normal;
 
 	if (GroundingStatus.bIsStableOnGround)
 	{
-		if (!IsStableOnNormal(NewNormal) || true)
+		if (!IsStableOnNormal(NewNormal))
 		{
 			// Do not push the pawn up an unwalkable surface
 			NewNormal = FVector::VectorPlaneProject(NewNormal, GroundingStatus.GroundNormal).GetSafeNormal();
