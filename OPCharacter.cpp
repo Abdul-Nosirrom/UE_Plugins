@@ -231,6 +231,7 @@ void AOPCharacter::UpdateNavigationRelevance()
 
 float AOPCharacter::PlayAnimMontage(UAnimMontage* AnimMontage, float InPlayRate, FName StartSectionName)
 {
+	return 0.f;
 }
 
 void AOPCharacter::StopAnimMontage(UAnimMontage* AnimMontage)
@@ -239,10 +240,12 @@ void AOPCharacter::StopAnimMontage(UAnimMontage* AnimMontage)
 
 UAnimMontage* AOPCharacter::GetCurrentMontage() const
 {
+	return nullptr;
 }
 
 FAnimMontageInstance* AOPCharacter::GetRootMotionAnimMontageInstance() const
 {
+	return nullptr;
 }
 
 bool AOPCharacter::IsPlayingRootMotion() const
