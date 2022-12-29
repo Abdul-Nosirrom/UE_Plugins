@@ -4,10 +4,9 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/PawnMovementComponent.h"
-#include "Kismet/KismetSystemLibrary.h"
-
 #include "CustomMovementComponent.generated.h"
 
+#define CM_DEBUG_BREAK GEngine->DeferredCommands.Add(TEXT("pause"));
 
 #pragma region Enums
 
@@ -18,16 +17,6 @@ enum EStepHandlingMethod
 	None,
 	Standard,
 	Extra
-};
-
-
-/// @brief  Sweep state during a movement update
-enum EMovementSweepState
-{
-	Initial,
-	AfterFirstHit,
-	FoundBlockingCrease,
-	FoundBlockingCorner
 };
 
 #pragma endregion Enums
@@ -129,6 +118,30 @@ public:
 
 #pragma endregion Stability Data Structs 
 
+#pragma region Debug & Logging
+
+struct FSimulationState
+{
+	uint8 bFoundLedge			: 1;
+	uint8 bValidatedSteps		: 1;
+	uint8 bSnappingPrevented	: 1;
+	uint8 bIsMovingWithBase		: 1;
+	uint8 bIsPlayingRM			: 1;
+	
+	float GroundAngle;
+	float Speed;
+	float MontagePosition;
+
+	float LastGroundSnappingDistance;
+	float LastSuccessfulStepHeight;
+	float LastExceededDenivelationAngle;
+
+	FVector MovingBaseVelocity;
+	FVector RootMotionVelocity;
+};
+
+#pragma endregion Debug & Logging
+
 UCLASS(ClassGroup = "Kinematic Movement", BlueprintType, Blueprintable)
 class MOVEMENTTESTING_API UCustomMovementComponent : public UPawnMovementComponent
 {
@@ -143,11 +156,11 @@ public:
 	bool bSolveGrounding{true};
 	
 	/// @brief  Extra probing distance for ground detection.
-	UPROPERTY(EditAnywhere, Category= "Motor | Ground Settings", meta=(EditCondition="bSolveGrounding", EditConditionHides))
+	UPROPERTY(EditDefaultsOnly, Category= "Motor | Ground Settings", meta=(EditCondition="bSolveGrounding", EditConditionHides))
 	float GroundDetectionExtraDistance = 0.f;
 	
 	/// @brief  Maximum ground slope angle relative to the actor up direction.
-	UPROPERTY(EditAnywhere, Category= "Motor | Ground Settings", meta=(EditCondition="bSolveGrounding", EditConditionHides))
+	UPROPERTY(EditDefaultsOnly, Category= "Motor | Ground Settings", meta=(EditCondition="bSolveGrounding", EditConditionHides))
 	float MaxStableSlopeAngle = 60.f;
 
 	UPROPERTY(BlueprintReadOnly, Category="Motor | Ground Status")
@@ -168,20 +181,20 @@ public:
 #pragma region Step Settings
 
 	/// @brief  Handles properly detecting grounding status on step, but has a performance cost.
-	UPROPERTY(EditAnywhere, Category= "Motor | Step Settings")
+	UPROPERTY(EditDefaultsOnly, Category= "Motor | Step Settings")
 	TEnumAsByte<EStepHandlingMethod> StepHandling = EStepHandlingMethod::Standard;
 	
 	/// @brief  Maximum height of a step which the pawn can climb.
-	UPROPERTY(EditAnywhere, Category= "Motor | Step Settings")
+	UPROPERTY(EditDefaultsOnly, Category= "Motor | Step Settings")
 	float MaxStepHeight = 50.f;
 	
 	/// @brief  Can the pawn step up obstacles even if it is not currently on stable ground (e.g from air)?
-	UPROPERTY(EditAnywhere, Category= "Motor | Step Settings")
+	UPROPERTY(EditDefaultsOnly, Category= "Motor | Step Settings")
 	bool bAllowSteppingWithoutStableGrounding = false;
 
 	/// @brief  Minimum length of a step that the character can step on (Used in Extra stepping method. Use this to let the pawn
 	///			step on steps that are smaller than it's radius
-	UPROPERTY(EditAnywhere, Category= "Motor | Step Settings", meta=(EditCondition = "StepHandling == EStephandlingMethod::Extra", EditConditionHides))
+	UPROPERTY(EditDefaultsOnly, Category= "Motor | Step Settings", meta=(EditCondition = "StepHandling == EStephandlingMethod::Extra", EditConditionHides))
 	float MinRequiredStepDepth = 10.f;
 
 #pragma endregion Step Settings
@@ -225,20 +238,22 @@ public:
 
 #pragma region Debug Parameters
 
-	UPROPERTY(EditAnywhere, Category = "Motor | Debug Settings")
+	UPROPERTY(EditInstanceOnly, Category = "Motor | Debug Settings")
 	bool bDebugGroundSweep{false};
-	UPROPERTY(EditAnywhere, Category = "Motor | Debug Settings", AdvancedDisplay, meta=(EditCondition="bDebugGroundSweep", EditConditionHides))
+	UPROPERTY(EditInstanceOnly, Category = "Motor | Debug Settings", AdvancedDisplay, meta=(EditCondition="bDebugGroundSweep", EditConditionHides))
 	FColor GroundSweepDebugColor{FColor::Red};
-	UPROPERTY(EditAnywhere, Category = "Motor | Debug Settings", AdvancedDisplay, meta=(EditCondition="bDebugGroundSweep", EditConditionHides))
+	UPROPERTY(EditInstanceOnly, Category = "Motor | Debug Settings", AdvancedDisplay, meta=(EditCondition="bDebugGroundSweep", EditConditionHides))
 	FColor GroundSweepHitDebugColor{FColor::Green};
 	
-	UPROPERTY(EditAnywhere, Category = "Motor | Debug Settings")
+	UPROPERTY(EditInstanceOnly, Category = "Motor | Debug Settings")
 	bool bDebugLineTrace{false};
-	UPROPERTY(EditAnywhere, Category = "Motor | Debug Settings", AdvancedDisplay, meta=(EditCondition="bDebugLineTrace", EditConditionHides))
+	UPROPERTY(EditInstanceOnly, Category = "Motor | Debug Settings", AdvancedDisplay, meta=(EditCondition="bDebugLineTrace", EditConditionHides))
 	FColor LineTraceDebugColor{FColor::Red};
-	UPROPERTY(EditAnywhere, Category = "Motor | Debug Settings", AdvancedDisplay, meta=(EditCondition="bDebugLineTrace", EditConditionHides))
+	UPROPERTY(EditInstanceOnly, Category = "Motor | Debug Settings", AdvancedDisplay, meta=(EditCondition="bDebugLineTrace", EditConditionHides))
 	FColor LineTraceHitDebugColor{FColor::Green};
 
+	FSimulationState DebugSimulationState{None};
+	
 #pragma endregion Debug Parameters
 
 #pragma region Const Simulation Parameters
@@ -264,6 +279,7 @@ private:
 	static constexpr float CORRELATION_FOR_VERTICAL_OBSTRUCTION = 0.01f; // For dot product so we don't scale it for units
 	static constexpr float EXTRA_STEPPING_FORWARD_DISTANCE = 1.f;
 	static constexpr float EXTRA_STEPPING_HEIGHT_PADDING = 1.f;
+	static constexpr float MIN_DELTA_TIME = 1e-6f;
 
 #pragma endregion Const Simulation Parameters
 	
@@ -280,7 +296,6 @@ public:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType,
 	                           FActorComponentTickFunction* ThisTickFunction) override;
 
-
 /* Overriding methods from parent */
 #pragma region Movement Component Overrides
 
@@ -290,15 +305,23 @@ public:
 
 #pragma region Exposed Calls
 protected:
+	/// @brief Whether SetVelocity has been called externally
+	//uint8 bSetVelocity			: 1		{false};
+	
 	/// @brief  Whether a direct call to MoveCharacter has been made
 	bool bMovePositionDirty{false};
-	/// @brief  The target of a direct call to MoveCharacter
-	FVector MovePositionTarget;
 
 	/// @brief  Whether a direct call to RotateCharacter has been made
 	bool bMoveRotationDirty{false};
+
+	/// @brief  The target of a direct call to MoveCharacter
+	FVector MovePositionTarget;
+	
 	/// @brief  The target of a direct call to RotateCharacter
 	FQuat MoveRotationTarget;
+
+	/// @brief Accumulated velocity through AddVelocity between update ticks
+	//FVector VelocityToAdd;
 
 public:
 	
@@ -307,37 +330,56 @@ public:
 	void DisableMovement();
 
 	/// @brief  Unground and prevent snapping to allow for leaving ground
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category="Physics State")
 	void ForceUnground();
 
 	/// @brief  Set a target position to be moved to during the update phase. Movement sweeps are handled properly.
 	/// @param  ToPosition Target Position
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category="Physics State")
 	void MoveCharacter(FVector ToPosition);
 
 	/// @brief  Set a target rotation to be rotated to during the update phase. Movement sweeps are handled properly.
 	/// @param  ToRotation Target rotation
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category="Physics State")
 	void RotateCharacter(FQuat ToRotation);
 
 	/// @brief  Get the velocity required to move [MoveDelta] amount in [DeltaTime] time.
 	/// @param  MoveDelta Movement Delta To Compute Velocity
 	/// @param  DeltaTime Delta Time In Which Move Would Be Performed
 	/// @return Velocity corresponding to MoveDelta/DeltaTime if valid delta time was passed through
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category="Physics State")
 	FVector GetVelocityFromMovement(FVector MoveDelta, float DeltaTime);
 
 	/// @brief  Apply a specific movement state (e.g position, rotation, velocity, etc...)
 	/// @param  StateToApply Motor state to go to, with its velocity, position, rotation and grounding status
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category="Physics State")
 	void ApplyState(FMotorState StateToApply);
+	
+	UFUNCTION(BlueprintCallable, Category="Physics State")
+	FVector GetVelocity() const;
+
+	UFUNCTION(BlueprintCallable, Category="Physics State")
+	void SetVelocity(const FVector& NewVelocity);
+
+	UFUNCTION(BlueprintCallable, Category="Physics State")
+	void AddVelocity(const FVector& AddVelocity);
+
+	UFUNCTION(BlueprintCallable, Category="Physics State")
+	void AddImpulse(const FVector& Impulse, bool bVelChange);
 
 #pragma region Events
-	
+
+	/// @brief Entry point for gameplay manipulation of rotation via blueprints or child class
+	/// @param CurrentRotation Reference to current rotation to modify
+	/// @param DeltaTime Current sub-step delta time
 	UFUNCTION(BlueprintNativeEvent, Category="Movement Controller")
 	void UpdateRotation(FQuat& CurrentRotation, float DeltaTime);
 	virtual void UpdateRotation_Implementation(FQuat& CurrentRotation, float DeltaTime) {return;};
 
+	/// @brief	Entry point for gameplay manipulation of velocity via blueprints or child class
+	///			Velocity should only be modified through here as the order is important to what updates come after
+	/// @param	CurrentVelocity Reference to current velocity to modify
+	/// @param	DeltaTime Current sub-step delta time
 	UFUNCTION(BlueprintNativeEvent, Category="Movement Controller")
 	void UpdateVelocity(FVector& CurrentVelocity, float DeltaTime);
 	virtual void UpdateVelocity_Implementation(FVector& CurrentVelocity, float DeltaTime) {return;};
@@ -359,15 +401,112 @@ public:
 
 #pragma endregion Core Update Loop
 
+/* Methods and fields to handle root motion */
+#pragma region Root Motion
+
+protected:
+
+	UPROPERTY(Transient)
+	FRootMotionMovementParams RootMotionParams;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Motor | Animation")
+	bool bApplyRootMotionDuringBlendIn{true};
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Motor | Animation")
+	bool bApplyRootMotionDuringBlendOut{true};
+
+	UPROPERTY(BlueprintReadWrite, Category="Motor | Animation")
+	bool bHasAnimRootMotion{false};
+	
+	UPROPERTY(BlueprintReadWrite, Category="Motor | Animation")
+	float AnimRootMotionTranslationScale{1.f};
+
+	UPROPERTY(BlueprintReadWrite, Category="Motor | Animation")
+	USkeletalMeshComponent* SkeletalMesh{nullptr};
+
+	
+public:
+	
+	virtual void SetSkeletalMeshReference(USkeletalMeshComponent* Mesh);
+
+	float GetAnimRootMotionTranslationScale() const;
+
+	void SetAnimRootMotionTranslationScale(float Scale = 1.f);
+
+	UFUNCTION(BlueprintCallable)
+	bool IsPlayingMontage() const;
+
+	UFUNCTION(BlueprintCallable)
+	bool IsPlayingRootMotion() const;
+
+protected:
+	
+	/// @brief	Returns the currently playing root motion montage instance (if any)
+	/// @param	Mesh Skeletal mesh of the owning pawn
+	/// @return Current root motion montage instance or nullptr if none is currently playing
+	FAnimMontageInstance* GetRootMotionMontageInstance() const;
+	
+	void BlockSkeletalMeshPoseTick() const;
+
+	void TickPose(float DeltaTime);
+
+	virtual void ApplyAnimRootMotionRotation(float DeltaTime);
+
+	virtual void CalculateAnimRootMotionVelocity(float DeltaTime);
+
+	bool ShouldDiscardRootMotion(UAnimMontage* RootMotionMontage, float RootMotionMontagePosition) const;
+	
+	UFUNCTION(BlueprintNativeEvent, Category = "General Movement Component")
+	FVector PostProcessAnimRootMotionVelocity(const FVector& RootMotionVelocity, float DeltaSeconds);
+	virtual FVector PostProcessAnimRootMotionVelocity_Implementation(const FVector& RootMotionVelocity, float DeltaSeconds) {return RootMotionVelocity; }
+
+#pragma endregion Root Motion
+	
 /* Methods to impart forces and evaluate physics interactions*/
 #pragma region Physics Interactions
 
 public:
-
 	/* Wanna keep this setting exposed and read/writable */
 	/// @brief  Whether the pawn should interact with physics objects in the world
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category= "Motor | Physics Interactions")
-	bool bEnablePhysicsInteractions = true;
+	bool bEnablePhysicsInteraction{true};
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Motor | Physics Interactions", meta = (ClampMin = "0.0001", UIMin = "1", EditCondition="bEnablePhysicsInteraction"))
+	float Mass{100.f};
+	
+	/// @brief  If true, "TouchForceScale" is applied per kilogram of mass of the affected object.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category= "Motor | Physics Interactions", meta=(EditCondition="bEnablePhysicsInteraction"))
+	bool bScaleTouchForceToMass{true};
+
+	/// @brief  Multiplier for the force that is applied to physics objects that are touched by the pawn.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category= "Motor | Physics Interactions", meta=(EditCondition="bEnablePhysicsInteraction", ClampMin = "0", UIMin="0"))
+	float TouchForceScale{1.f};
+
+	/// @brief  The minimum force applied to physics objects touched by the pawn.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category= "Motor | Physics Interactions", meta=(EditCondition="bEnablePhysicsInteraction", ClampMin = "0", UIMin="0"))
+	float MinTouchForce{0.f};
+
+	/// @brief  The maximum force applied to physics objects touched by the pawn.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category= "Motor | Physics Interactions", meta=(EditCondition="bEnablePhysicsInteraction", ClampMin = "0", UIMin="0"))
+	float MaxTouchForce{250.f};
+
+	
+	/// @brief Event invoked when the root collision component hits another collision component
+	/// @param OverlappedComponent 
+	/// @param OtherActor 
+	/// @param OtherComponent 
+	/// @param OtherBodyIndex 
+	/// @param bFromSweep 
+	/// @param SweepResult 
+	UFUNCTION()
+	virtual void RootCollisionTouched(
+	  UPrimitiveComponent* OverlappedComponent,
+	  AActor* OtherActor,
+	  UPrimitiveComponent* OtherComponent,
+	  int32 OtherBodyIndex,
+	  bool bFromSweep,
+	  const FHitResult& SweepResult
+	);
 
 #pragma endregion Physics Interactions
 
@@ -377,23 +516,51 @@ public:
 protected:
 	
 	/// @brief  Whether to move with the platform/base relatively
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category= "Motor | Moving Base Settings")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category= "Motor | Movement Base Settings")
 	bool bMoveWithBase{true};
 
 	/// @brief  Whether to impart the linear velocity of teh current movement base when falling off it. Velocity is never imparted
 	///			from a base that is simulating physics.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category= "Motor | Moving Base Settings", meta=(EditCondition="bMoveWithBase", EditConditionHides))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category= "Motor | Movement Base Settings", meta=(EditCondition="bMoveWithBase", EditConditionHides))
 	bool bImpartBaseVelocity{true};
 
 	/// @brief  Whether to impart the angular velocity of the current movement base when falling off it. Angular velocity is never imparted
 	///			from a base that is simulating physics
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category= "Motor | Moving Base Settings", meta=(EditCondition="bMoveWithBase", EditConditionHides))
-	bool bImpactAngularBaseVelocity{false};
+	//UPROPERTY(EditAnywhere, BlueprintReadWrite, Category= "Motor | Moving Base Settings", meta=(EditCondition="bMoveWithBase", EditConditionHides))
+	//bool bImpactAngularBaseVelocity{false};
 
 	// TODO: Do we want to consider bConsiderMassOnImpartVelocity?
 	
-	//UPROPERTY(BlueprintSetter="SetMovingBaseOverride")
-	//AActor* MovingBaseOverride{nullptr};
+	UPROPERTY(BlueprintSetter="SetMovementBaseOverride")
+	UPrimitiveComponent* MovementBaseOverride{nullptr};
+
+	void MovementBaseUpdate(float DeltaTime);
+
+	/// @brief Set a moving base to keep, useful for things like following an elevator where when you jump, you still
+	///			want to follow it
+	/// @param BaseOverride Override any moving bases with the one passed through here
+	UFUNCTION(BlueprintSetter)
+	void SetMovementBaseOverride(UPrimitiveComponent* BaseOverride) {MovementBaseOverride = BaseOverride;}
+
+	/// @brief Given a primitive component, get its velocity to be used in moving base update
+	/// @param MovementBase Current moving base whose velocity is desired
+	/// @return Correct velocity of the moving base, considering physics
+	FVector ComputeBaseVelocity(UPrimitiveComponent* MovementBase) const;
+
+	/// @brief Given a primitive component, compute its effective rotation on movement component owner
+	/// @param MovementBase Current moving base whose rotation is desired
+	/// @return Quaternion rotation as a result of Base angular velocity
+	FQuat ComputeBaseRotation(UPrimitiveComponent* MovementBase, float DeltaTime) const;
+	
+	/// @brief Check the validity of the ground as a moving base
+	/// @param MovementBase Moving base to check the validity of, likely from GroundingStatus hit result
+	/// @return True if component is not null and is movable
+	bool IsValidMovementBase(UPrimitiveComponent* MovementBase) const;
+
+	/// @brief Check whether should impart velocity from current moving base
+	/// @param MovementBase Moving base to check whether to impart velocity from
+	/// @return True if component is movable, and NOT simulating physics (Can cause large impulse)
+	bool ShouldImpartVelocityFromBase(UPrimitiveComponent* MovementBase) const; 
 
 #pragma endregion Moving Base 
 	
@@ -427,8 +594,7 @@ protected:
 	bool IsStableOnNormal(FVector Normal) const;
 	bool IsStableWithSpecialCases(const FHitStabilityReport& StabilityReport, FVector CharVelocity);
 
-	void DetectSteps(FHitResult Hit, FVector InnerHitDirection, FHitStabilityReport& StabilityReport);
-	bool CheckStepValidity(int numStepHits, FVector CharPosition, FQuat CharRotation, FVector InnerHitDirection, FVector StepCheckStartPost, FHitResult& OutHit);
+	bool CheckStepValidity(FHitResult& StepHit, FVector InnerHitDirection);
 
 #pragma endregion Stability Evaluations
 
@@ -442,6 +608,8 @@ protected:
 	virtual void HandleImpact(const FHitResult& Hit, float TimeSlice = 0.f, const FVector& MoveDelta = FVector::ZeroVector) override;
 
 	void HandleVelocityProjection(FVector& MoveVelocity, FVector ObstructionNormal, bool bStableOnHit);
+
+	bool StepUp(FHitResult StepHit, FVector InnerHitDirection, FHitResult* OutForwardHit = nullptr);
 
 	virtual float SlideAlongSurface(const FVector& Delta, float Time, const FVector& Normal, FHitResult& Hit, bool bHandleImpact) override;
 	virtual void TwoWallAdjust(FVector& Delta, const FHitResult& Hit, const FVector& OldHitNormal) const override;
@@ -488,6 +656,21 @@ FORCEINLINE FVector UCustomMovementComponent::GetDirectionTangentToSurface(const
 {
 	const FVector DirectionRight = Direction ^ UpdatedComponent->GetUpVector();
 	return (SurfaceNormal ^ DirectionRight).GetSafeNormal();
+}
+
+FORCEINLINE FVector UCustomMovementComponent::GetVelocity() const
+{
+	return Velocity;
+}
+
+FORCEINLINE float UCustomMovementComponent::GetAnimRootMotionTranslationScale() const
+{
+	return AnimRootMotionTranslationScale;
+}
+
+FORCEINLINE void UCustomMovementComponent::SetAnimRootMotionTranslationScale(float Scale)
+{
+	AnimRootMotionTranslationScale = Scale;
 }
 
 
