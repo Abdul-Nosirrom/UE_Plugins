@@ -1,11 +1,5 @@
 ﻿#pragma once
 
-#pragma once
-
-#include "CoreTypes.h"
-#include "Containers/CircularBuffer.h"
-#include "Templates/Atomic.h"
-
 /**
  * Implements a lock-free first-in first-out queue using a circular array.
  *
@@ -25,219 +19,120 @@ template<typename T> class TBufferContainer
 public:
 	using FElementType = T;
 
-	/**
-	 * Constructor.
-	 *
-	 * @param CapacityPlusOne The number of elements that the queue can hold (will be rounded up to the next power of 2).
-	 */
-	explicit TBufferContainer(uint32 CapacityPlusOne)
-		: Buffer(CapacityPlusOne)
-		, Head(0)
-		, Tail(0)
-	{ }
-
-public:
-
-	/**
-	 * Gets the number of elements in the queue.
-	 *
-	 * Can be called from any thread. The result reflects the calling thread's current
-	 * view. Since no locking is used, different threads may return different results.
-	 *
-	 * @return Number of queued elements.
-	 */
-	uint32 Count() const
+	explicit TBufferContainer(uint32 BufferCapacity) : 
+		Capacity(BufferCapacity)
+		, Start(0), End(0), Size(0)
 	{
-		int32 Count = Tail.Load() - Head.Load();
+		Buffer.AddZeroed(BufferCapacity);
+	}
 
-		if (Count < 0)
+	/* Setter */
+	FORCEINLINE FElementType& operator[](uint32 Index)
+	{
+		return Buffer[InternalIndex(Index)];
+	}
+
+	/* Getter */
+	FORCEINLINE FElementType operator[](uint32 Index) const
+	{
+		return Buffer[InternalIndex(Index)];
+	}
+	
+	int InternalIndex(uint32 Index) const
+	{
+		return Start + (Index < (Capacity - Start) ? Index : Index - Capacity);
+	}
+
+	void PushFront(FElementType Item)
+	{
+		if (IsFull())
 		{
-			Count += Buffer.Capacity();
+			Decrement(Start);
+			End = Start;
+			Buffer[End] = Item;
 		}
-
-		return (uint32)Count;
-	}
-
-	/**
-	 * Removes an item from the front of the queue.
-	 *
-	 * @param OutElement Will contain the element if the queue is not empty.
-	 * @return true if an element has been returned, false if the queue was empty.
-	 * @note To be called only from consumer thread.
-	 */
-	bool Dequeue(FElementType& OutElement)
-	{
-		const uint32 CurrentHead = Head.Load();
-
-		if (CurrentHead != Tail.Load())
+		else 
 		{
-			OutElement = MoveTemp(Buffer[CurrentHead]);
-			Head.Store(Buffer.GetNextIndex(CurrentHead));
-
-			return true;
+			Decrement(Start);
+			Buffer[Start] = Item;
+			++Size;
 		}
-
-		return false;
 	}
 
-	/**
-	 * Removes an item from the front of the queue.
-	 *
-	 * @return true if an element has been removed, false if the queue was empty.
-	 * @note To be called only from consumer thread.
-	 */
-	bool Dequeue()
+	void PushBack(FElementType Item)
 	{
-		const uint32 CurrentHead = Head.Load();
-
-		if (CurrentHead != Tail.Load())
+		if (IsFull())
 		{
-			Head.Store(Buffer.GetNextIndex(CurrentHead));
-
-			return true;
+			Buffer[End] = Item;
+			Increment(End);
+			Start = End;
 		}
-
-		return false;
-	}
-
-	/**
-	 * Empties the queue.
-	 *
-	 * @note To be called only from consumer thread.
-	 * @see IsEmpty
-	 */
-	void Empty()
-	{
-		Head.Store(Tail.Load());
-	}
-
-	/**
-	 * Adds an item to the end of the queue.
-	 *
-	 * @param Element The element to add.
-	 * @return true if the item was added, false if the queue was full.
-	 * @note To be called only from producer thread.
-	 */
-	bool Enqueue(const FElementType& Element)
-	{
-		const uint32 CurrentTail = Tail.Load();
-		uint32 NewTail = Buffer.GetNextIndex(CurrentTail);
-
-		if (NewTail != Head.Load())
+		else 
 		{
-			Buffer[CurrentTail] = Element;
-			Tail.Store(NewTail);
-
-			return true;
+			Buffer[End] = Item;
+			Increment(End);
+			++Size;
 		}
-
-		return false;
 	}
 
-	/**
-	 * Adds an item to the end of the queue.
-	 *
-	 * @param Element The element to add.
-	 * @return true if the item was added, false if the queue was full.
-	 * @note To be called only from producer thread.
-	 */
-	bool Enqueue(FElementType&& Element)
+	void PopFront()
 	{
-		const uint32 CurrentTail = Tail.Load();
-		uint32 NewTail = Buffer.GetNextIndex(CurrentTail);
+		//Buffer[End] = null; // Needs to be just a default of FElementType
+		Increment(Start);
+		--Size;
+	}
 
-		if (NewTail != Head.Load())
+	void PopBack()
+	{
+		Decrement(End);
+		//Buffer[End] = null; // Needs to be just a default of FElementType
+		--Size;
+	}
+
+	void Clear()
+	{
+		Size = 0;
+		Start = 0;
+		End = 0;
+		Buffer.Clear();
+	}
+
+
+	FORCEINLINE int GetCapacity() const { return Capacity; }
+
+	FORCEINLINE int GetSize() const { return Size; }
+
+	FORCEINLINE bool IsEmpty() const { return Size == 0; }
+
+	FORCEINLINE bool IsFull() const { return Size == Capacity; }
+
+	FElementType Front() { return Buffer[Start]; }
+
+	FElementType Back() { return Buffer[(End != 0 ? End : Capacity) - 1]; }
+
+protected:
+
+	void Increment(uint32& Index)
+	{
+		if (++Index == Capacity)
 		{
-			Buffer[CurrentTail] = MoveTemp(Element);
-			Tail.Store(NewTail);
-
-			return true;
+			Index = 0;
 		}
-
-		return false;
 	}
 
-	/**
-	 * Checks whether the queue is empty.
-	 *
-	 * Can be called from any thread. The result reflects the calling thread's current
-	 * view. Since no locking is used, different threads may return different results.
-	 *
-	 * @return true if the queue is empty, false otherwise.
-	 * @see Empty, IsFull
-	 */
-	FORCEINLINE bool IsEmpty() const
+	void Decrement(uint32& Index)
 	{
-		return (Head.Load() == Tail.Load());
-	}
-
-	/**
-	 * Checks whether the queue is full.
-	 *
-	 * Can be called from any thread. The result reflects the calling thread's current
-	 * view. Since no locking is used, different threads may return different results.
-	 *
-	 * @return true if the queue is full, false otherwise.
-	 * @see IsEmpty
-	 */
-	bool IsFull() const
-	{
-		return (Buffer.GetNextIndex(Tail.Load()) == Head.Load());
-	}
-
-	/**
-	 * Returns the oldest item in the queue without removing it.
-	 *
-	 * @param OutItem Will contain the item if the queue is not empty.
-	 * @return true if an item has been returned, false if the queue was empty.
-	 * @note To be called only from consumer thread.
-	 */
-	bool Peek(FElementType& OutItem) const
-	{
-		const uint32 CurrentHead = Head.Load();
-
-		if (CurrentHead != Tail.Load())
+		if (Index == 0)
 		{
-			OutItem = Buffer[CurrentHead];
-
-			return true;
+			Index = Capacity;
 		}
-
-		return false;
+		Index--;
 	}
+	/* Holds the buffer */
+	TArray<FElementType> Buffer;
 
-	/**
-	 * Returns the oldest item in the queue without removing it.
-	 *
-	 * @return an FElementType pointer if an item has been returned, nullptr if the queue was empty.
-	 * @note To be called only from consumer thread.
-	 * @note The return value is only valid until Dequeue, Empty, or the destructor has been called.
-	 */
-	const FElementType* Peek() const
-	{
-		const uint32 CurrentHead = Head.Load();
-
-		if (CurrentHead != Tail.Load())
-		{
-			return &Buffer[CurrentHead];
-		}
-
-		return nullptr;
-	}
-
-	FElementType operator[](uint32 Index)
-	{
-		return Buffer[Index];
-	}
-
-private:
-
-	/** Holds the buffer. */
-	TCircularBuffer<FElementType> Buffer;
-
-	/** Holds the index to the first item in the buffer. */
-	TAtomic<uint32> Head;
-
-	/** Holds the index to the last item in the buffer. */
-	TAtomic<uint32> Tail;
+	uint32 Capacity;
+	uint32 Start;
+	uint32 End;
+	uint32 Size;
 };
