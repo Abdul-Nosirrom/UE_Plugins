@@ -19,6 +19,8 @@ template<typename T> class TBufferContainer
 public:
 	using FElementType = T;
 
+	TBufferContainer() : Capacity(16), Start(0), End(0), Size(0) {};
+	
 	explicit TBufferContainer(uint32 BufferCapacity) : 
 		Capacity(BufferCapacity)
 		, Start(0), End(0), Size(0)
