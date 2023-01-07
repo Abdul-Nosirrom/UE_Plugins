@@ -3,148 +3,28 @@
 
 #include "BufferedController.h"
 
+#include "DisplayDebugHelpers.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "GameplayTagsManager.h"
 #include "InputMappingContext.h"
+#include "Engine/Canvas.h"
 
-#pragma region Input Buffer Core
-
-FInputBuffer::FInputBuffer() : InputBuffer(BufferUtility::BUFFER_SIZE)
+namespace BufferUtility
 {
-	/* Initialize Buffer Data Structure */
-	for (int i = 0; i < BufferUtility::BUFFER_SIZE; i++)
-	{
-		FBufferFrame NewFrame = FBufferFrame();
-		NewFrame.InitializeFrame();
-		InputBuffer.PushBack(NewFrame);
-	}
+	TArray<FName> InputIDs;
 
-	/* Initialize Button State Container */
-	for (auto ID : BufferUtility::InputIDs)
-	{
-		ButtonInputCurrentState.Add(ID, -1);
-	}
+	TMap<FName, bool> RawButtonContainer;
+	TMap<FName, FVector2D> RawAxisContainer;
 }
 
-void FInputBuffer::UpdateBuffer()
-{
-	/* Each frame, push a new list of inputs and their states to the front */
-	FBufferFrame FrontFrame = InputBuffer.Front();
-	FBufferFrame NewFrame = FBufferFrame();
-	NewFrame.InitializeFrame();
-	NewFrame.CopyFrameState(FrontFrame);
-	NewFrame.UpdateFrameState();
-	
-	/* Push newly updated frame to the buffer, and delete oldest frame from heap */
-	InputBuffer.PushBack(NewFrame);
-
-	/* Store the frame value in which each input can be used */
-	for (auto InputID : BufferUtility::InputIDs)
-	{
-		ButtonInputCurrentState[InputID] = -1;
-		for (int frame = 0; frame < BufferUtility::BUFFER_SIZE; frame++)
-		{
-			/* Set the button state to the frame it can be used */
-			if (InputBuffer[frame].InputsFrameState[InputID].CanExecute()) ButtonInputCurrentState[InputID] = frame;
-		}
-	}
-}
-
-void FInputBuffer::UseInput(const FName InputID)
-{
-	InputBuffer[ButtonInputCurrentState[InputID]].InputsFrameState[InputID].bUsed = true;
-	ButtonInputCurrentState[InputID] = -1;
-}
-
-#pragma endregion Input Buffer Core
-
-#pragma region Frame States
-
-/* ~~~~~ Buffer Frame ~~~~~ */
-
-void FBufferFrame::InitializeFrame()
-{
-	for (auto ID : BufferUtility::InputIDs)
-	{
-		FInputFrameState NewFS = FInputFrameState(ID);
-		InputsFrameState.Add(ID, NewFS);
-	}
-}
-
-void FBufferFrame::UpdateFrameState()
-{
-	for (auto FrameState : InputsFrameState)
-	{
-		FrameState.Value.ResolveCommand();
-	}
-}
-
-void FBufferFrame::CopyFrameState(FBufferFrame& FrameState)
-{
-	for (auto ID : BufferUtility::InputIDs)
-	{
-		InputsFrameState[ID].Value = FrameState.InputsFrameState[ID].Value;
-		InputsFrameState[ID].HoldTime = FrameState.InputsFrameState[ID].HoldTime;
-		InputsFrameState[ID].bUsed = FrameState.InputsFrameState[ID].bUsed;
-	}
-}
-
-/* ~~~~~ Input State ~~~~~ */
-
-void FInputFrameState::ResolveCommand()
-{
-	bUsed = false;
-
-	if (BufferUtility::RawButtonContainer.Contains(ID))
-	{
-		if (BufferUtility::RawButtonContainer[ID]) HoldUp(1.f);
-		else ReleaseHold();
-	}
-	else if (BufferUtility::RawAxisContainer.Contains(ID))
-	{
-		//if (BufferUtility::RawAxisContainer[ID].IsZero()) HoldUp(BufferUtility::RawAxisContainer[ID]);
-	}
-}
-
-// TODO: The condition for HoldTime == 1 is kind of rigid
-bool FInputFrameState::CanExecute()
-{
-	return (HoldTime == 1 && !bUsed);
-}
-
-void FInputFrameState::HoldUp(float Val)
-{
-	Value = Val;
-
-	if (HoldTime < 0) HoldTime = 1;
-	else HoldTime += 1;
-}
-
-void FInputFrameState::ReleaseHold()
-{
-	Value = 0;
-	
-	if (HoldTime > 0)
-	{
-		HoldTime = -1;
-		bUsed = false;
-	}
-	else HoldTime = 0;
-}
-
-
-#pragma endregion Frame States
+// TODO: Rather than messing with gameplay tags and such, we can just directly select the MotionAction and InputAction data assets...
 
 // Sets default values
-ABufferedController::ABufferedController() 
+ABufferedController::ABufferedController() : Super()
 {
-	Super();
-	
 	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
-
-	PrimaryActorTick.TickInterval = BufferUtility::TICK_INTERVAL;
-
 }
 
 // Called when the game starts or when spawned
@@ -153,14 +33,14 @@ void ABufferedController::BeginPlay()
 	Super::BeginPlay();
 	
 	// Pass map to buffer
-	InputBufferObject = FInputBuffer();
+	InputBufferObject = FInputBuffer(BufferSize);
 }
 
 // Called every frame
 void ABufferedController::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-
+	
 	InputBufferObject.UpdateBuffer();
 }
 
@@ -168,35 +48,47 @@ void ABufferedController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
 
+	BufferUtility::InputIDs.Empty();
+	BufferUtility::RawButtonContainer.Empty();
+	BufferUtility::RawAxisContainer.Empty();
+	
+	/* If no input map has been assigned, we return */
+	if (!InputMap) return;
+	
 	/* Initialize ID array */
 	for (auto Mapping : InputMap->GetMappings())
 	{
-		BufferUtility::InputIDs.Add(Mapping.Action.GetFName());
+		if (BufferUtility::InputIDs.Contains(FName(Mapping.Action->ActionDescription.ToString()))) continue;
+		BufferUtility::InputIDs.Add(FName(Mapping.Action->ActionDescription.ToString()));
+		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Blue, Mapping.Action->ActionDescription.ToString());
 	}
 
+	/* Add input map to the EnhancedInput subsystem*/
 	UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer());
 	Subsystem->ClearAllMappings();
 	Subsystem->AddMappingContext(InputMap, 0);
 	
 	UEnhancedInputComponent* PEI = Cast<UEnhancedInputComponent>(InputComponent);
 	auto Mappings = InputMap->GetMappings();
-	
+
+	/* Generate Action Bindings */
 	for (auto ActionMap : Mappings)
 	{
+		const FName ActionName = FName(ActionMap.Action->ActionDescription.ToString());
 		switch (ActionMap.Action->ValueType)
 		{
 			case EInputActionValueType::Boolean:
-				BufferUtility::RawButtonContainer.Add(ActionMap.Action.GetFName(), -1.f);
+				BufferUtility::RawButtonContainer.Add(ActionName, false);
 				break;
 			case EInputActionValueType::Axis2D:
-				BufferUtility::RawAxisContainer.Add(ActionMap.Action.GetFName(), FVector2D::ZeroVector);
+				BufferUtility::RawAxisContainer.Add(ActionName, FVector2D::ZeroVector);
 				break;
 			default:
 				break;
 		}
 		
-		PEI->BindAction(ActionMap.Action, ETriggerEvent::Triggered, this, &ABufferedController::TriggerInput, ActionMap.Action.GetFName());
-		PEI->BindAction(ActionMap.Action, ETriggerEvent::Completed, this, &ABufferedController::CompleteInput, ActionMap.Action.GetFName());
+		PEI->BindAction(ActionMap.Action, ETriggerEvent::Triggered, this, &ABufferedController::TriggerInput, ActionName);
+		PEI->BindAction(ActionMap.Action, ETriggerEvent::Completed, this, &ABufferedController::CompleteInput, ActionName);
 	}
 }
 
@@ -207,7 +99,7 @@ void ABufferedController::TriggerInput(const FInputActionInstance& ActionInstanc
 	switch (Value.GetValueType())
 	{
 		case EInputActionValueType::Boolean:
-			BufferUtility::RawButtonContainer[InputName] = Value.IsNonZero() ? ActionInstance.GetTriggeredTime() : 0.f;
+			BufferUtility::RawButtonContainer[InputName] = Value.Get<bool>();
 			break;
 		case EInputActionValueType::Axis2D:
 			BufferUtility::RawAxisContainer[InputName] = Value.Get<FVector2D>();
@@ -223,7 +115,7 @@ void ABufferedController::CompleteInput(const FInputActionValue& ActionValue, co
 	switch (ActionValue.GetValueType())
 	{
 		case EInputActionValueType::Boolean:
-			BufferUtility::RawButtonContainer[InputName] = 0.f;
+			BufferUtility::RawButtonContainer[InputName] = false;
 			break;
 		case EInputActionValueType::Axis2D:
 			BufferUtility::RawAxisContainer[InputName] = FVector2D::ZeroVector;
@@ -231,4 +123,43 @@ void ABufferedController::CompleteInput(const FInputActionValue& ActionValue, co
 		default:
 			break;
 	}
+}
+
+void ABufferedController::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL,
+	float& YPos)
+{
+
+	FDisplayDebugManager& DisplayDebugManager = Canvas->DisplayDebugManager;
+	DisplayDebugManager.SetDrawColor(FColor::Yellow);
+	const float XOffset = 0.f;
+	
+	if (DebugDisplay.IsDisplayOn(NAME_Input))
+	{
+		DisplayDebugManager.DrawString(TEXT("-----INPUT BUFFER DEBUG-----"));
+		/* Write the input names on the first row */
+		FString InputNames = "";
+		for (auto ID : BufferUtility::InputIDs)
+		{
+			//FText InputName = Mapping.Action->ActionDescription;
+			InputNames += ID.ToString();
+			InputNames += "    "; // Spacing
+		}
+		DisplayDebugManager.DrawString(InputNames);
+		DisplayDebugManager.SetDrawColor(FColor::White);
+		
+		/* Next we iterate through each row of the input buffer, drawing it to the screen */
+		for (int i = 0; i < BufferSize; i++)
+		{
+			auto BufferRow = InputBufferObject.InputBuffer[i].InputsFrameState;
+			FString BufferRowText = "";
+			for (auto InputID : BufferUtility::InputIDs)
+			{
+				BufferRowText += FString::FromInt(BufferRow[InputID].HoldTime);
+				BufferRowText += "            "; // Spacing
+			}
+			DisplayDebugManager.DrawString(BufferRowText);
+		}
+	}
+
+	Super::DisplayDebug(Canvas, DebugDisplay, YL, YPos);
 }
