@@ -30,10 +30,6 @@ void FInputBuffer::UpdateBuffer()
 	NewFrame.InitializeFrame();
 	NewFrame.CopyFrameState(FrontFrame);
 	NewFrame.UpdateFrameState();
-	for (auto ID : BufferUtility::InputIDs)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, ID.ToString() + ": " + FString::FromInt(NewFrame.InputsFrameState[ID].HoldTime));
-	}
 	
 	/* Push newly updated frame to the buffer, and delete oldest frame from heap */
 	InputBuffer.PushFront(NewFrame);
@@ -50,10 +46,16 @@ void FInputBuffer::UpdateBuffer()
 	}
 }
 
-void FInputBuffer::UseInput(const FName InputID)
+bool FInputBuffer::UseInput(const FName InputID)
 {
-	InputBuffer[ButtonOldestValidFrame[InputID]].InputsFrameState[InputID].bUsed = true;
-	ButtonOldestValidFrame[InputID] = -1;
+	if (ButtonOldestValidFrame[InputID] < 0) return false;
+	if (InputBuffer[ButtonOldestValidFrame[InputID]].InputsFrameState[InputID].CanExecute())
+	{
+		InputBuffer[ButtonOldestValidFrame[InputID]].InputsFrameState[InputID].bUsed = true;
+		ButtonOldestValidFrame[InputID] = -1;
+		return true;
+	}
+	return false;
 }
 
 #pragma endregion Input Buffer Core
@@ -77,8 +79,7 @@ void FBufferFrame::UpdateFrameState()
 {
 	for (auto FrameState : InputsFrameState)
 	{
-		FrameState.Value.ResolveCommand();
-		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Blue, FrameState.Key.ToString() + ": " + FString::FromInt(FrameState.Value.HoldTime));
+		InputsFrameState[FrameState.Key].ResolveCommand();
 	}
 }
 

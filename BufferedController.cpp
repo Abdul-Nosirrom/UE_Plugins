@@ -92,6 +92,12 @@ void ABufferedController::SetupInputComponent()
 	}
 }
 
+bool ABufferedController::ConsumeInput(UInputAction* InputAction)
+{
+	return InputBufferObject.UseInput(FName(InputAction->ActionDescription.ToString()));
+}
+
+
 void ABufferedController::TriggerInput(const FInputActionInstance& ActionInstance, const FName InputName)
 {
 	const auto Value = ActionInstance.GetValue();
@@ -133,9 +139,19 @@ void ABufferedController::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo&
 	DisplayDebugManager.SetDrawColor(FColor::Yellow);
 	const float XOffset = 0.f;
 	
-	if (DebugDisplay.IsDisplayOn(NAME_Input))
+	if (DebugDisplay.IsDisplayOn(NAME_Input) || true)
 	{
 		DisplayDebugManager.DrawString(TEXT("-----INPUT BUFFER DEBUG-----"));
+		/* Draw Buffer Oldest Frame Vals*/
+		FString InputFrames = "";
+		for (auto ID : BufferUtility::InputIDs)
+		{
+			InputFrames += FString::FromInt(InputBufferObject.ButtonOldestValidFrame[ID]);
+			InputFrames += "            ";
+		}
+		DisplayDebugManager.SetDrawColor(FColor::Red);
+		DisplayDebugManager.DrawString(InputFrames);
+		DisplayDebugManager.SetDrawColor(FColor::Yellow);
 		/* Write the input names on the first row */
 		FString InputNames = "";
 		for (auto ID : BufferUtility::InputIDs)
@@ -155,6 +171,7 @@ void ABufferedController::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo&
 			for (auto InputID : BufferUtility::InputIDs)
 			{
 				BufferRowText += FString::FromInt(BufferRow[InputID].HoldTime);
+				if (BufferRow[InputID].bUsed) BufferRowText += ">";
 				BufferRowText += "            "; // Spacing
 			}
 			DisplayDebugManager.DrawString(BufferRowText);

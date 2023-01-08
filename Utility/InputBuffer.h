@@ -121,8 +121,9 @@ struct FInputBuffer
 	void UpdateBuffer();
 	
 	/// @brief Registers an input in the buffer as used, setting its current state to (-1) which is maintained until it's released
-	/// @param InputID ID of the input 
-	void UseInput(FName InputID);
+	/// @param InputID ID of the input
+	/// @return True if the input is consumed
+	bool UseInput(FName InputID);
 };
 
 #pragma endregion Input Buffer Core

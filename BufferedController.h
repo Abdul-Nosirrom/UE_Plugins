@@ -44,6 +44,9 @@ public:
 	///			whose goals are to just update a shared list between the controller and Buffer object.
 	virtual void SetupInputComponent() override;
 
+	UFUNCTION(BlueprintCallable)
+	bool ConsumeInput(UInputAction* InputAction);
+
 	/// @brief Event triggered for an input once its been and continues to be triggered
 	/// @param ActionInstance Action Instance From Input Action
 	/// @param InputName FName descriptor of action used to index into Input Maps
