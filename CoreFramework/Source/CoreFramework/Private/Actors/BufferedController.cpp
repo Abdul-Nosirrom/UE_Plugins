@@ -2,18 +2,6 @@
 #include "BufferedController.h"
 #include "CFW_PCH.h"
 
-namespace IBCVars
-{
-	int32 ShowDebugBuffer = 0;
-	FAutoConsoleVariableRef CVarStatInputBufferValues
-	(
-		TEXT("ShowDebug INPUTBUFFER"),
-		ShowDebugBuffer,
-		TEXT("Displays realtime input buffer values. 0: Disable, 1: Enable"),
-		ECVF_Default
-	);
-}
-
 namespace BufferUtility
 {
 	TArray<FName> InputIDs;
