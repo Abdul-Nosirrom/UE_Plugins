@@ -1,14 +1,18 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-
-
+﻿// Copyright 2023 Abdulrahmen Almodaimegh. All Rights Reserved.
 #include "BufferedController.h"
+#include "CFW_PCH.h"
 
-#include "DisplayDebugHelpers.h"
-#include "EnhancedInputComponent.h"
-#include "EnhancedInputSubsystems.h"
-#include "GameplayTagsManager.h"
-#include "InputMappingContext.h"
-#include "Engine/Canvas.h"
+namespace IBCVars
+{
+	int32 ShowDebugBuffer = 0;
+	FAutoConsoleVariableRef CVarStatInputBufferValues
+	(
+		TEXT("ShowDebug INPUTBUFFER"),
+		ShowDebugBuffer,
+		TEXT("Displays realtime input buffer values. 0: Disable, 1: Enable"),
+		ECVF_Default
+	);
+}
 
 namespace BufferUtility
 {
@@ -40,7 +44,7 @@ void ABufferedController::BeginPlay()
 void ABufferedController::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-	
+
 	InputBufferObject.UpdateBuffer();
 }
 
@@ -139,7 +143,7 @@ void ABufferedController::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo&
 	DisplayDebugManager.SetDrawColor(FColor::Yellow);
 	const float XOffset = 0.f;
 	
-	if (DebugDisplay.IsDisplayOn(NAME_Input) || true)
+	if (DebugDisplay.IsDisplayOn(TEXT("INPUTBUFFER")))
 	{
 		DisplayDebugManager.DrawString(TEXT("-----INPUT BUFFER DEBUG-----"));
 		/* Draw Buffer Oldest Frame Vals*/
@@ -178,5 +182,5 @@ void ABufferedController::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo&
 		}
 	}
 
-	Super::DisplayDebug(Canvas, DebugDisplay, YL, YPos);
+	//Super::DisplayDebug(Canvas, DebugDisplay, YL, YPos);
 }

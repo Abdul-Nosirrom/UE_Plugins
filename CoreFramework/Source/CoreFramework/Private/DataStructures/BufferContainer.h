@@ -1,4 +1,6 @@
-﻿#pragma once
+﻿// Copyright 2023 Abdulrahmen Almodaimegh. All Rights Reserved.
+
+#pragma once
 
 /**
  * Implements a lock-free first-in first-out queue using a circular array.

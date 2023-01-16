@@ -1,9 +1,9 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Copyright 2023 Abdulrahmen Almodaimegh. All Rights Reserved.
 
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Utility/InputBuffer.h"
+#include "InputBuffer.h"
 #include "BufferedController.generated.h"
 
 /* Forward Declarations */
@@ -15,7 +15,7 @@ class UInputMappingContext;
 //DECLARE_DELEGATE_OneParam(FRegisterInputDelegate, const int32);
 
 UCLASS()
-class MOVEMENTTESTING_API ABufferedController : public APlayerController
+class COREFRAMEWORK_API ABufferedController : public APlayerController
 {
 	GENERATED_BODY()
 

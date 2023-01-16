@@ -1,10 +1,78 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+// Copyright 2023 Abdulrahmen Almodaimegh. All Rights Reserved.
 #include "CustomMovementComponent.h"
-#include "Components/ShapeComponent.h"
-#include "Engine/ScopedMovementUpdate.h"
-#include "Kismet/KismetMathLibrary.h"
-#include "Kismet/KismetSystemLibrary.h"
-#include "MovementTesting/MovementTestingCharacter.h"
+#include "CFW_PCH.h"
+
+
+#pragma region Profiling & CVars
+/* Core Update Loop */
+DECLARE_CYCLE_STAT(TEXT("Tick Component"), STAT_TickComponent, STATGROUP_RadicalMovementComp)
+DECLARE_CYCLE_STAT(TEXT("On Movement Mode Changed"), STAT_OnMovementModeChanged, STATGROUP_RadicalMovementComp)
+DECLARE_CYCLE_STAT(TEXT("Perform Movement"), STAT_PerformMovement, STATGROUP_RadicalMovementComp)
+DECLARE_CYCLE_STAT(TEXT("Pre Movement Update"), STAT_PreMovementUpdate, STATGROUP_RadicalMovementComp)
+DECLARE_CYCLE_STAT(TEXT("Movement Update"), STAT_MovementUpdate, STATGROUP_RadicalMovementComp)
+
+/* Movement Tick */
+DECLARE_CYCLE_STAT(TEXT("Slide Along Surface"), STAT_SlideAlongSurface, STATGROUP_RadicalMovementComp)
+DECLARE_CYCLE_STAT(TEXT("Two Wall Adjust"), STAT_TwoWallAdjust, STATGROUP_RadicalMovementComp)
+DECLARE_CYCLE_STAT(TEXT("Handle Impact"), STAT_HandleImpact, STATGROUP_RadicalMovementComp)
+DECLARE_CYCLE_STAT(TEXT("Step Up"), STAT_StepUp, STATGROUP_RadicalMovementComp)
+
+/* Hit Queries */
+DECLARE_CYCLE_STAT(TEXT("Resolve Penetration"), STAT_ResolvePenetration, STATGROUP_RadicalMovementComp)
+DECLARE_CYCLE_STAT(TEXT("Probe Ground"), STAT_ProbeGround, STATGROUP_RadicalMovementComp)
+DECLARE_CYCLE_STAT(TEXT("Ground Sweep"), STAT_GroundSweep, STATGROUP_RadicalMovementComp)
+DECLARE_CYCLE_STAT(TEXT("Line Casts"), STAT_LineCasts, STATGROUP_RadicalMovementComp )
+DECLARE_CYCLE_STAT(TEXT("Evaluate Hit Stability"), STAT_EvalHitStability, STATGROUP_RadicalMovementComp)
+
+/* Features */
+DECLARE_CYCLE_STAT(TEXT("Tick Pose"), STAT_TickPose, STATGROUP_RadicalMovementComp)
+DECLARE_CYCLE_STAT(TEXT("Move With Base"), STAT_MoveWithBase, STATGROUP_RadicalMovementComp)
+DECLARE_CYCLE_STAT(TEXT("Physics Interaction"), STAT_PhysicsInteraction, STATGROUP_RadicalMovementComp)
+
+namespace RMCCVars
+{
+#if ALLOW_CONSOLE && !NO_LOGGING
+	int32 ShowMovementVectors = 0;
+	FAutoConsoleVariableRef CVarShowMovementVectors
+	(
+		TEXT("rmc.ShowMovementVectors"),
+		ShowMovementVectors,
+		TEXT("Visualize velocity and acceleration vectors. 0: Disable, 1: Enable"),
+		ECVF_Default
+	);
+	
+	int32 StatMovementValues = 0;
+	FAutoConsoleVariableRef CVarStatMovementValues
+	(
+		TEXT("rmc.StatMovementValues"),
+		StatMovementValues,
+		TEXT("Display Realtime motion values from the movement component. 0: Disable, 1: Enable"),
+		ECVF_Default
+	);
+
+	int32 LogMovementValues = 0;
+	FAutoConsoleVariableRef CVarLogMovementValues
+	(
+		TEXT("rmc.LogMovementValues"),
+		LogMovementValues,
+		TEXT("Log Realtime motion values from the movement component. 0: Disable, 1: Enable"),
+		ECVF_Default
+	);
+
+	int32 ShowGroundSweep = 0;
+	FAutoConsoleVariableRef CVarShowGroundSweep
+	(
+		TEXT("rmc.ShowGroundSweep"),
+		ShowGroundSweep,
+		TEXT("Visualize the result of the ground sweep. 0: Disable, 1: Enable"),
+		ECVF_Default
+	);
+#endif 
+}
+
+#pragma endregion Profiling & CVars
+
+
 
 #define DRAW_LINE(Start, End, Color) DrawDebugLine(GetWorld(), Start, End, Color, false, 3.f, 0, 3.f);
 #define DRAW_POINT(Pos, Color) DrawDebugPoint(GetWorld(), Pos, 3.f, Color, false, 3.f, 0.f);
@@ -93,6 +161,8 @@ void UCustomMovementComponent::SetUpdatedComponent(USceneComponent* NewUpdatedCo
 void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickType,
                                              FActorComponentTickFunction* ThisTickFunction)
 {
+	SCOPE_CYCLE_COUNTER(STAT_TickComponent)
+	
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
 	if (UpdatedComponent->IsSimulatingPhysics() || ShouldSkipUpdate(DeltaTime))
@@ -119,6 +189,7 @@ void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 
 	if (bEnablePhysicsInteraction)
 	{
+		SCOPE_CYCLE_COUNTER(STAT_PhysicsInteraction)
 		//ApplyDownwardForce(DeltaTime);
 		//ApplyRepulsionForce(DeltaTime);
 	}
@@ -133,6 +204,8 @@ void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 		DisableMovement();
 		return;
 	}
+
+	return;
 
 	/* LOG SIMULATION STATE */
 
@@ -178,6 +251,8 @@ void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 
 void UCustomMovementComponent::PerformMovement(float DeltaTime)
 {
+	SCOPE_CYCLE_COUNTER(STAT_PerformMovement)
+	
 	// Perform our ground probing and all that here, get setup for the move
 	PreMovementUpdate(DeltaTime);
 
@@ -222,6 +297,7 @@ void UCustomMovementComponent::PerformMovement(float DeltaTime)
 
 void UCustomMovementComponent::PreMovementUpdate(float DeltaTime)
 {
+	SCOPE_CYCLE_COUNTER(STAT_PreMovementUpdate)
 
 	// TODO: Note, dirty moves/rotations might not be necessary since we don't need to cache them. It does solve for slopes and such though.
 #pragma region Dirty Move Calls
@@ -328,6 +404,8 @@ void UCustomMovementComponent::PreMovementUpdate(float DeltaTime)
 
 void UCustomMovementComponent::MovementUpdate(FVector& MoveVelocity, float DeltaTime)
 {
+	SCOPE_CYCLE_COUNTER(STAT_MovementUpdate)
+
 	if (UpdatedPrimitive->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
 	{
 		MoveUpdatedComponent(MoveVelocity * DeltaTime, UpdatedComponent->GetComponentQuat(), false);
@@ -457,6 +535,8 @@ bool UCustomMovementComponent::MustUnground() const
 // Could this whole thing be made a lot simpler by sweeping with MoveUpdatedComponent?
 void UCustomMovementComponent::ProbeGround(float ProbingDistance, FGroundingReport& OutGroundingReport)
 {
+	SCOPE_CYCLE_COUNTER(STAT_ProbeGround)
+	
 	/* Ensure our probing distance is valid */
 	if (ProbingDistance < MINIMUM_GROUND_PROBING_DISTANCE)
 	{
@@ -553,6 +633,8 @@ void UCustomMovementComponent::ProbeGround(float ProbingDistance, FGroundingRepo
 /* FUNCTIONAL */
 void UCustomMovementComponent::EvaluateHitStability(FHitResult Hit, FVector MoveDelta, FHitStabilityReport& OutStabilityReport)
 {
+	SCOPE_CYCLE_COUNTER(STAT_EvalHitStability)
+	
 	if (!bSolveGrounding)
 	{
 		OutStabilityReport.bIsStable = false;
@@ -625,7 +707,7 @@ void UCustomMovementComponent::EvaluateHitStability(FHitResult Hit, FVector Move
 	}
 }
 
-
+// TODO: Currently Unused
 void UCustomMovementComponent::EvaluateCrease(FVector MoveVelocity, FVector PrevVelocity, FVector CurHitNormal, FVector PrevHitNormal, bool bCurrentHitIsStable, bool bPreviousHitIsStable, bool bCharIsStable, bool& bIsValidCrease, FVector& CreaseDirection)
 {
 	/* Initialize out parameters for safety */
@@ -739,6 +821,8 @@ bool UCustomMovementComponent::IsStableWithSpecialCases(const FHitStabilityRepor
 
 bool UCustomMovementComponent::StepUp(FHitResult StepHit, FVector MoveDelta, FHitResult* OutForwardHit)
 {
+	SCOPE_CYCLE_COUNTER(STAT_StepUp)
+	
 	/* Determine our planar move delta for this iteration */
 	const FVector PawnUp = UpdatedComponent->GetUpVector();
 	const FVector StepLocationDelta = FVector::VectorPlaneProject(MoveDelta, PawnUp);
@@ -904,7 +988,7 @@ bool UCustomMovementComponent::StepUp(FHitResult StepHit, FVector MoveDelta, FHi
 	return true;
 }
 
-
+// TODO: THIS, Need to check step validity which I don't currently do!
 bool UCustomMovementComponent::CheckStepValidity(FHitResult& StepHit, FVector InnerHitDirection)
 {
 	return true;
@@ -918,6 +1002,8 @@ bool UCustomMovementComponent::CheckStepValidity(FHitResult& StepHit, FVector In
 
 void UCustomMovementComponent::HandleImpact(const FHitResult& Hit, float TimeSlice, const FVector& MoveDelta)
 {
+	SCOPE_CYCLE_COUNTER(STAT_HandleImpact)
+	
 	/* Not really important right now for the movement
 	IPathFollowingAgentInterface* PFAgent = GetPathFollowingAgent();
 	if (PFAgent)
@@ -972,6 +1058,8 @@ FHitResult UCustomMovementComponent::SinglePeneterationResolution()
 
 FHitResult UCustomMovementComponent::AutoResolvePenetration()
 {
+	SCOPE_CYCLE_COUNTER(STAT_ResolvePenetration)
+	
 	FHitResult Hit = SinglePeneterationResolution();
 	
 	return Hit;
@@ -1002,6 +1090,8 @@ void UCustomMovementComponent::HandleVelocityProjection(FVector& MoveVelocity, F
 
 float UCustomMovementComponent::SlideAlongSurface(const FVector& Delta, float Time, const FVector& Normal, FHitResult& Hit, bool bHandleImpact)
 {
+	SCOPE_CYCLE_COUNTER(STAT_SlideAlongSurface)
+	
 	if (!Hit.bBlockingHit) return 0.f;
 
 	if (IsStableOnNormal(Normal) && !MustUnground()) return 0.f;
@@ -1022,6 +1112,8 @@ float UCustomMovementComponent::SlideAlongSurface(const FVector& Delta, float Ti
 
 void UCustomMovementComponent::TwoWallAdjust(FVector& Delta, const FHitResult& Hit, const FVector& OldHitNormal) const
 {
+	SCOPE_CYCLE_COUNTER(STAT_TwoWallAdjust)
+	
 	const FVector InDelta = Delta;
 	Super::TwoWallAdjust(Delta, Hit, OldHitNormal);
 
@@ -1047,6 +1139,8 @@ void UCustomMovementComponent::TwoWallAdjust(FVector& Delta, const FHitResult& H
 
 bool UCustomMovementComponent::GroundSweep(FVector Position, FQuat Rotation, FVector Direction, float Distance, FHitResult& OutHit)
 {
+	SCOPE_CYCLE_COUNTER(STAT_GroundSweep)
+	
 	/* Initialize sweep data */
 	const UWorld* World = GetWorld();
 	const FCollisionShape CollisionShape = UpdatedPrimitive->GetCollisionShape();
@@ -1087,6 +1181,8 @@ bool UCustomMovementComponent::GroundSweep(FVector Position, FQuat Rotation, FVe
 
 bool UCustomMovementComponent::CollisionLineCast(FVector StartPoint, FVector Direction, float Distance, FHitResult& OutHit)
 {
+	SCOPE_CYCLE_COUNTER(STAT_LineCasts)
+	
 	const UWorld* World = GetWorld();
 	const TArray<AActor*> ActorsToIgnore = {PawnOwner};
 	const FCollisionQueryParams CollisionQueryParams(FName(__func__), false, GetOwner());
@@ -1194,6 +1290,8 @@ void UCustomMovementComponent::AddImpulse(const FVector& Impulse, const bool bVe
 // TODO (3): Examine CMCs implementation and make use of MovingBaseUtility static class
 void UCustomMovementComponent::MovementBaseUpdate(float DeltaTime)
 {
+	SCOPE_CYCLE_COUNTER(STAT_MoveWithBase)
+	
 	/* REGISTER DEBUG FIELD */
 	DebugSimulationState.bIsMovingWithBase = false;
 	
@@ -1218,14 +1316,13 @@ void UCustomMovementComponent::MovementBaseUpdate(float DeltaTime)
 	/* Cancel out planar velocity upon landing on a valid moving base */
 	if (bBaseChanged)
 	{
-		LOG_SCREEN(-1, 2.f, FColor::Blue, "LANDED ON MOVING BASE")
 		AddVelocity(-FVector::VectorPlaneProject(TmpVelFromCurrentBase, UpdatedComponent->GetUpVector()));
 	}
 
-
+	// TODO: Figure out MovementBaseUtility include
 	if (CurrentMovingBase)
 	{
-		MovementBaseUtility::AddTickDependency(PrimaryComponentTick, CurrentMovingBase);
+		//MovementBaseUtility::AddTickDependency(PrimaryComponentTick, CurrentMovingBase);
 	}	
 	/* Move iteration with base velocity, don't add it to our velocity just move via its delta */
 	if (!TmpVelFromCurrentBase.IsZero())
@@ -1331,6 +1428,8 @@ bool UCustomMovementComponent::ShouldImpartVelocityFromBase(UPrimitiveComponent*
 
 void UCustomMovementComponent::TickPose(float DeltaTime)
 {
+	SCOPE_CYCLE_COUNTER(STAT_TickPose)
+	
 	UAnimMontage* RootMotionMontage = nullptr;
 	float RootMotionMontagePosition = -1.f;
 	if (const auto RootMotionMontageInstance = GetRootMotionMontageInstance())

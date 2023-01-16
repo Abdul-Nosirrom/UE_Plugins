@@ -1,7 +1,16 @@
 ﻿// Fill out your copyright notice in the Description page of Project Settings.
 
+// Copyright 2023 Abdulrahmen Almodaimegh. All Rights Reserved.
 
 #include "InputBuffer.h"
+
+#pragma region Profiling Groups
+
+DECLARE_CYCLE_STAT(TEXT("Update Buffer"), STAT_UpdateBuffer, STATGROUP_InputBuffer)
+DECLARE_CYCLE_STAT(TEXT("Initialize Frame"), STAT_InitializeFrame, STATGROUP_InputBuffer)
+DECLARE_CYCLE_STAT(TEXT("Resolve Frame"), STAT_ResolveFrame, STATGROUP_InputBuffer)
+
+#pragma endregion Profiling Groups
 
 #pragma region Input Buffer Core
 
@@ -24,6 +33,8 @@ FInputBuffer::FInputBuffer(uint8 GivenBufferSize) : BufferSize(GivenBufferSize),
 
 void FInputBuffer::UpdateBuffer()
 {
+	SCOPE_CYCLE_COUNTER(STAT_UpdateBuffer)
+	
 	/* Each frame, push a new list of inputs and their states to the front */
 	FBufferFrame FrontFrame = InputBuffer.Front();
 	FBufferFrame NewFrame = FBufferFrame();
@@ -66,6 +77,8 @@ bool FInputBuffer::UseInput(const FName InputID)
 
 void FBufferFrame::InitializeFrame()
 {
+	SCOPE_CYCLE_COUNTER(STAT_InitializeFrame)
+	
 	InputsFrameState.Empty();
 
 	for (auto ID : BufferUtility::InputIDs)
@@ -77,6 +90,8 @@ void FBufferFrame::InitializeFrame()
 
 void FBufferFrame::UpdateFrameState()
 {
+	SCOPE_CYCLE_COUNTER(STAT_ResolveFrame)
+	
 	for (auto FrameState : InputsFrameState)
 	{
 		InputsFrameState[FrameState.Key].ResolveCommand();

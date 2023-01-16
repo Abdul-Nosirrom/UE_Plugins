@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+// Copyright 2023 Abdulrahmen Almodaimegh. All Rights Reserved.
 
 #pragma once
 
@@ -7,6 +7,10 @@
 #include "CustomMovementComponent.generated.h"
 
 #define CM_DEBUG_BREAK GEngine->DeferredCommands.Add(TEXT("pause"));
+
+/* Profiling */
+DECLARE_STATS_GROUP(TEXT("RadicalMovementComponent_Game"), STATGROUP_RadicalMovementComp, STATCAT_Advanced)
+/* ~~~~~~~~ */
 
 #pragma region Enums
 
@@ -143,7 +147,7 @@ struct FSimulationState
 #pragma endregion Debug & Logging
 
 UCLASS(ClassGroup = "Kinematic Movement", BlueprintType, Blueprintable)
-class MOVEMENTTESTING_API UCustomMovementComponent : public UPawnMovementComponent
+class COREFRAMEWORK_API UCustomMovementComponent : public UPawnMovementComponent
 {
 	GENERATED_BODY()
 

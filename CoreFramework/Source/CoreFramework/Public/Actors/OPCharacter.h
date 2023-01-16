@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Copyright 2023 Abdulrahmen Almodaimegh. All Rights Reserved.
 
 #pragma once
 
@@ -12,13 +12,15 @@ class UCapsuleComponent;
 class UArrowComponent;
 
 UCLASS()
-class MOVEMENTTESTING_API AOPCharacter : public APawn
+class COREFRAMEWORK_API AOPCharacter : public APawn
 {
 	GENERATED_BODY()
 	
 public:
 	// Sets default values for this pawn's properties
 	AOPCharacter();
+
+	virtual void TickActor(float DeltaTime, ELevelTick TickType, FActorTickFunction& ThisTickFunction) override;
 
 #pragma region Primary Components
 

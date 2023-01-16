@@ -1,11 +1,13 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-
+﻿// Copyright 2023 Abdulrahmen Almodaimegh. All Rights Reserved.
 #pragma once
 
 #include "CoreMinimal.h"
 #include "BufferContainer.h"
-#include "InputMappingContext.h"
 #include "InputBuffer.generated.h"
+
+/* Profiling Groups */
+DECLARE_STATS_GROUP(TEXT("InputBuffer_Game"), STATGROUP_InputBuffer, STATCAT_Advanced);
+/* ~~~~~~~~~~~~~~~~ */
 
 #pragma region Global Macros
 

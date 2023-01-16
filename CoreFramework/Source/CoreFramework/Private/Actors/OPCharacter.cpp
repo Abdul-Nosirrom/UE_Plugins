@@ -1,12 +1,9 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-
+﻿// Copyright 2023 Abdulrahmen Almodaimegh. All Rights Reserved.
 
 #include "OPCharacter.h"
-
+#include "CFW_PCH.h"
 #include "CustomMovementComponent.h"
-#include "DisplayDebugHelpers.h"
-#include "Components/CapsuleComponent.h"
-#include "Components/ArrowComponent.h"
+
 
 /* Define default component object names */
 FName AOPCharacter::MeshComponentName(TEXT("Character Mesh"));
@@ -32,6 +29,7 @@ AOPCharacter::AOPCharacter() : Super()
 	
 	// Set this pawn to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.TickInterval = .5f;
 
 	/* ~~~~~ Setup and attach primary components ~~~~~ */
 
@@ -105,6 +103,10 @@ void AOPCharacter::PostLoad()
 void AOPCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+}
+
+void AOPCharacter::TickActor(float DeltaTime, ELevelTick TickType, FActorTickFunction& ThisTickFunction)
+{
 }
 
 // TODO: This
@@ -209,7 +211,9 @@ float AOPCharacter::GetDefaultHalfHeight() const
 // TODO: This
 void AOPCharacter::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL, float& YPos)
 {
+	
 	Super::DisplayDebug(Canvas, DebugDisplay, YL, YPos);
+
 }
 
 void AOPCharacter::RecalculateBaseEyeHeight()
