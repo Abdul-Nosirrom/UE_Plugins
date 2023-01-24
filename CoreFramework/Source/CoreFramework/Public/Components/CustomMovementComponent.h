@@ -309,24 +309,41 @@ public:
 
 #pragma region Exposed Calls
 protected:
+
+	/* Physics State Parameters */
+	UPROPERTY()
+	FVector Acceleration;
+
+	//UPROPERTY()
+	//float Mass; Exists under Physics interaction, should I move it here?
+
+	/* ~~~~~~~~~~~~~~~~~~~~~~~ */
+	
+	/* Interface Handling Parameters */
 	/// @brief Whether SetVelocity has been called externally
 	//uint8 bSetVelocity			: 1		{false};
 	
 	/// @brief  Whether a direct call to MoveCharacter has been made
+	UPROPERTY()
 	bool bMovePositionDirty{false};
 
 	/// @brief  Whether a direct call to RotateCharacter has been made
+	UPROPERTY()
 	bool bMoveRotationDirty{false};
 
 	/// @brief  The target of a direct call to MoveCharacter
+	UPROPERTY()
 	FVector MovePositionTarget;
 	
 	/// @brief  The target of a direct call to RotateCharacter
+	UPROPERTY()
 	FQuat MoveRotationTarget;
 
 	/// @brief Accumulated velocity through AddVelocity between update ticks
 	//FVector VelocityToAdd;
 
+	/* ~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
+	
 public:
 	
 	void HaltMovement();
@@ -360,7 +377,7 @@ public:
 	void ApplyState(FMotorState StateToApply);
 	
 	UFUNCTION(BlueprintCallable, Category="Physics State")
-	FVector GetVelocity() const;
+	FORCEINLINE FVector GetVelocity() const { return Velocity; }
 
 	UFUNCTION(BlueprintCallable, Category="Physics State")
 	void SetVelocity(const FVector& NewVelocity);
@@ -446,7 +463,6 @@ public:
 protected:
 	
 	/// @brief	Returns the currently playing root motion montage instance (if any)
-	/// @param	Mesh Skeletal mesh of the owning pawn
 	/// @return Current root motion montage instance or nullptr if none is currently playing
 	FAnimMontageInstance* GetRootMotionMontageInstance() const;
 	
@@ -660,11 +676,6 @@ FORCEINLINE FVector UCustomMovementComponent::GetDirectionTangentToSurface(const
 {
 	const FVector DirectionRight = Direction ^ UpdatedComponent->GetUpVector();
 	return (SurfaceNormal ^ DirectionRight).GetSafeNormal();
-}
-
-FORCEINLINE FVector UCustomMovementComponent::GetVelocity() const
-{
-	return Velocity;
 }
 
 FORCEINLINE float UCustomMovementComponent::GetAnimRootMotionTranslationScale() const

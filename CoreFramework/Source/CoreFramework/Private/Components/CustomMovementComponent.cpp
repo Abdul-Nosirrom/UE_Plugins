@@ -182,6 +182,9 @@ void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 	/* Perform our move */
 	PerformMovement(DeltaTime);
 
+	/* Equivalent To Set UpdatedComponent Velocity (I think? Where was it again? PhysicsSimulationToggle is in GMC btw)*/
+	UpdatedComponent->ComponentVelocity = Velocity;
+	
 	//if (ShouldComputeAvoidance())
 	//{
 	//	AvoidanceLockTimer = FMath::Clamp(AvoidanceLockTimer - DeltaTime, 0.f, BIG_NUMBER);
