@@ -16,7 +16,7 @@ void UOPMovementComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 
 void UOPMovementComponent::SubsteppedTick(FVector& CurrentVelocity, float DeltaTime)
 {
-	if (GroundingStatus.bFoundAnyGround)
+	if (GroundingStatus.bIsStableOnGround)
 	{
 		// Imitate PhysWalking
 		if (!bHasAnimRootMotion)

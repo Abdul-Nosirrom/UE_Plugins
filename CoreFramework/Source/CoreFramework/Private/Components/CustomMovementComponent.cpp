@@ -450,55 +450,31 @@ void UCustomMovementComponent::MovementUpdate(FVector& MoveVelocity, float Delta
 		if (CurrentHitResult.bStartPenetrating)
 		{
 			HandleImpact(CurrentHitResult);
-			SlideAlongSurface(RemainingMoveDelta, 1.f, CurrentHitResult.ImpactNormal, CurrentHitResult, true);
+			Super::SlideAlongSurface(RemainingMoveDelta, 1.f, CurrentHitResult.ImpactNormal, CurrentHitResult, true);
+			if (CurrentHitResult.bStartPenetrating)
+			{
+				// Stuck in geometry
+			}
+			GEngine->AddOnScreenDebugMessage(-1, 1.f, FColor::Purple, "Started in penetration...");
 		}
 		else if (CurrentHitResult.IsValidBlockingHit()) 
 		{
-			/* Setup hit stability evaluation */
 			FHitStabilityReport MoveHitStabilityReport;
-			EvaluateHitStability(CurrentHitResult, MoveVelocity, MoveHitStabilityReport); // Steps movement is done here
+			EvaluateHitStability(CurrentHitResult, MoveVelocity, MoveHitStabilityReport);
 			FVector HitNormal = CurrentHitResult.ImpactNormal;
-
-			/* First we check for steps as that could be what we hit, so the move is valid and needs manual override */
-			bool bFoundValidStepHit = false;
-			if (bSolveGrounding && StepHandling != EStepHandlingMethod::None) //&& MoveHitStabilityReport.bValidStepDetected)
+			
+			FVector StepForwardDirection = FVector::VectorPlaneProject(-HitNormal, UpdatedComponent->GetUpVector());
+			FHitResult OutForwardHit{};
+			if (StepHandling != EStepHandlingMethod::None && !StepUp(CurrentHitResult, StepForwardDirection * RemainingMoveDistance, &OutForwardHit))
 			{
-				float ObstructionCorrelation = FMath::Abs(HitNormal | UpdatedComponent->GetUpVector());
-
-				if (ObstructionCorrelation <= CORRELATION_FOR_VERTICAL_OBSTRUCTION)
-				{
-					FVector StepForwardDirection = FVector::VectorPlaneProject(-HitNormal, UpdatedComponent->GetUpVector()).GetSafeNormal();
-					FHitResult OutForwardHit;
-					bFoundValidStepHit = StepUp(CurrentHitResult, StepForwardDirection * RemainingMoveDistance, &OutForwardHit);
-					MoveHitStabilityReport.bValidStepDetected = bFoundValidStepHit;
-
-					if (bFoundValidStepHit)
-					{
-						RemainingMoveDistance *= (1.f - OutForwardHit.Time);
-					}
-
-					/* REGISTER DEBUG FIELD */
-					DebugSimulationState.bValidatedSteps = bFoundValidStepHit;
-				}
+				HandleImpact(OutForwardHit);
+				Super::SlideAlongSurface(RemainingMoveDelta, 1.f - OutForwardHit.Time, OutForwardHit.ImpactNormal, OutForwardHit, true);
 			}
-
-			/* If no steps were found, this is just a blocking hit so project against it and handle impact */
-			if (!bFoundValidStepHit)
+			else
 			{
-				/* Were we stable when we hit this? */
-				// For a crease, this would be false (I think), HitStabilityReport would give us false earlier for bStableOnHit
-				bool bStableOnHit = MoveHitStabilityReport.bIsStable && !MustUnground();
-				FVector ObstructionNormal = GetObstructionNormal(CurrentHitResult.ImpactNormal, bStableOnHit);
 				HandleImpact(CurrentHitResult);
-				//HandleVelocityProjection(MoveVelocity, ObstructionNormal, bStableOnHit); // TODO: THIS IS CONFLICTING WITH SLIDE ALONG SURFACE SO HOW DO WE HANDLE BOTH????
+				Super::SlideAlongSurface(RemainingMoveDelta, 1.f - CurrentHitResult.Time, CurrentHitResult.ImpactNormal, CurrentHitResult, true);
 
-				if (!bStableOnHit)
-				{
-					float t = 1.f - Super::SlideAlongSurface(RemainingMoveDelta, 1.f - CurrentHitResult.Time, CurrentHitResult.Normal, CurrentHitResult, true);
-					RemainingMoveDistance *= t;
-				}
-
-				RemainingMoveDirection = MoveVelocity.GetSafeNormal();
 			}
 		}
 		else
@@ -844,7 +820,7 @@ bool UCustomMovementComponent::StepUp(FHitResult StepHit, FVector MoveDelta, FHi
 	/* Skip negligible deltas or if step height is 0 (or invalid) */
 	if (MaxStepHeight <= 0.f || StepLocationDelta.IsNearlyZero())
 	{
-		LOG_SCREEN(-1, 1.f, FColor::Red, "Aborting, Step Delta Near Zero...");
+		//LOG_SCREEN(-1, 1.f, FColor::Red, "Aborting, Step Delta Near Zero...");
 		return false;
 	}
 	
@@ -1073,7 +1049,7 @@ FHitResult UCustomMovementComponent::SinglePeneterationResolution()
 FHitResult UCustomMovementComponent::AutoResolvePenetration()
 {
 	SCOPE_CYCLE_COUNTER(STAT_ResolvePenetration)
-	
+	return FHitResult{0};
 	FHitResult Hit = SinglePeneterationResolution();
 	
 	return Hit;
