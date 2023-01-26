@@ -171,6 +171,7 @@ void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 		return;
 	}
 
+
 	//if (IsAIControlled())
 	//{
 	//	CheckAvoidance();
@@ -183,7 +184,7 @@ void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 	PerformMovement(DeltaTime);
 
 	/* Equivalent To Set UpdatedComponent Velocity (I think? Where was it again? PhysicsSimulationToggle is in GMC btw)*/
-	UpdatedComponent->ComponentVelocity = Velocity;
+	//UpdatedComponent->ComponentVelocity = Velocity;
 	
 	//if (ShouldComputeAvoidance())
 	//{
@@ -208,7 +209,7 @@ void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 		return;
 	}
 
-	return;
+//	return;
 
 	/* LOG SIMULATION STATE */
 
@@ -278,7 +279,10 @@ void UCustomMovementComponent::PerformMovement(float DeltaTime)
 	UpdatedComponent->ComponentVelocity = Velocity;
 	
 	// We call these events before getting root motion, as root motion should override them. A separate event to override root motion is provided.
-	//UpdateRotation(UpdatedComponent->GetComponentQuat(), DeltaTime);
+	FQuat TargetRot = UpdatedComponent->GetComponentQuat();
+	UpdateRotation(TargetRot, DeltaTime);
+	//MoveUpdatedComponent(FVector::ZeroVector, TargetRot, false);
+	
 	UpdateVelocity(Velocity, DeltaTime);
 	
 	// Internal Character Move - looking at CMC, it applies UpdateVelocity, RootMotion, etc... before the character move...
@@ -417,25 +421,32 @@ void UCustomMovementComponent::MovementUpdate(FVector& MoveVelocity, float Delta
 	
 	/* Ensure a valid delta time*/
 	if (DeltaTime <= 0) return;
-
+	
 	/* Initialize sweep iteration data */
 	FVector RemainingMoveDirection = MoveVelocity.GetSafeNormal();
 	float RemainingMoveDistance = MoveVelocity.Size() * DeltaTime;
+	float MaxSimulationTimeStep = 0.05f; // Under Advanced tab of CMC!!!!
 
 	int SweepsMade = 0;
 	bool bHitSomethingThisSweepIteration = true;
 	FHitResult CurrentHitResult(NoInit);
 
 	// TODO: In KCC, they first project the move against all current overlaps before doing the sweeps. I'm unsure if we need to do that. If we store them in RootCollisionTouched though then maybe?
-
-	while (RemainingMoveDistance > 0.f && (SweepsMade < MaxMovementIterations) && bHitSomethingThisSweepIteration)
+	SubsteppedTick(MoveVelocity, DeltaTime);
+	while (/*RemainingMoveDistance > 0.f &&*/ (SweepsMade < MaxMovementIterations) && bHitSomethingThisSweepIteration)
 	{
+		// TODO: (NEW): If anything breaks, its possibly due to recalculating movement direction everytime [heads up]
+		/* Event to inject sub-stepped velocity calculations */
+		SubsteppedTick(MoveVelocity, MaxSimulationTimeStep);
+
 		/* First sweep with the full current delta which will give us the first blocking hit */
+		// TODO: Maybe rather than having distance, use RemainingTime instead. That way we can update the velocity mag while being consistent.
+		RemainingMoveDirection = MoveVelocity.GetSafeNormal();
 		SafeMoveUpdatedComponent(RemainingMoveDirection * RemainingMoveDistance, UpdatedComponent->GetComponentQuat(), true, CurrentHitResult);
 		RemainingMoveDistance *= 1.f - CurrentHitResult.Time;
 		FVector RemainingMoveDelta = RemainingMoveDistance * RemainingMoveDirection;
+		
 		/* Update movement by the movement amount */
-
 		if (CurrentHitResult.bStartPenetrating)
 		{
 			HandleImpact(CurrentHitResult);
@@ -479,7 +490,7 @@ void UCustomMovementComponent::MovementUpdate(FVector& MoveVelocity, float Delta
 				bool bStableOnHit = MoveHitStabilityReport.bIsStable && !MustUnground();
 				FVector ObstructionNormal = GetObstructionNormal(CurrentHitResult.ImpactNormal, bStableOnHit);
 				HandleImpact(CurrentHitResult);
-				HandleVelocityProjection(MoveVelocity, ObstructionNormal, bStableOnHit);
+				//HandleVelocityProjection(MoveVelocity, ObstructionNormal, bStableOnHit); // TODO: THIS IS CONFLICTING WITH SLIDE ALONG SURFACE SO HOW DO WE HANDLE BOTH????
 
 				if (!bStableOnHit)
 				{

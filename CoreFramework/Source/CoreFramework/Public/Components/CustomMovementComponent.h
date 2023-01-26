@@ -393,17 +393,21 @@ public:
 	/// @brief Entry point for gameplay manipulation of rotation via blueprints or child class
 	/// @param CurrentRotation Reference to current rotation to modify
 	/// @param DeltaTime Current sub-step delta time
-	UFUNCTION(BlueprintNativeEvent, Category="Movement Controller")
-	void UpdateRotation(FQuat& CurrentRotation, float DeltaTime);
-	virtual void UpdateRotation_Implementation(FQuat& CurrentRotation, float DeltaTime) {return;};
+	//UFUNCTION(BlueprintNativeEvent, Category="Movement Controller")
+	virtual void UpdateRotation(FQuat& CurrentRotation, float DeltaTime) {};
+	//virtual void UpdateRotation_Implementation(FQuat& CurrentRotation, float DeltaTime) {return;};
 
 	/// @brief	Entry point for gameplay manipulation of velocity via blueprints or child class
 	///			Velocity should only be modified through here as the order is important to what updates come after
 	/// @param	CurrentVelocity Reference to current velocity to modify
 	/// @param	DeltaTime Current sub-step delta time
-	UFUNCTION(BlueprintNativeEvent, Category="Movement Controller")
-	void UpdateVelocity(FVector& CurrentVelocity, float DeltaTime);
-	virtual void UpdateVelocity_Implementation(FVector& CurrentVelocity, float DeltaTime) {return;};
+	//UFUNCTION(BlueprintNativeEvent, Category="Movement Controller")
+	virtual void UpdateVelocity(FVector& CurrentVelocity, float DeltaTime) {};
+	//virtual void UpdateVelocity_Implementation(FVector& CurrentVelocity, float DeltaTime) {return;};
+
+	//UFUNCTION(BlueprintNativeEvent, Category="Movement Controller")
+	virtual void SubsteppedTick(FVector& CurrentVelocity, float DeltaTime) {};
+	//virtual void SubsteppedTick_Implementation(FVector& CurrentVelocity, float DeltaTime) {return;};
 
 #pragma endregion Events
 
@@ -415,9 +419,9 @@ public:
 
 	void PerformMovement(float DeltaTime);
 	
-	void PreMovementUpdate(float DeltaTime);
+	virtual void PreMovementUpdate(float DeltaTime);
 	void MovementUpdate(FVector& MoveVelocity, float DeltaTime);
-	void PostMovementUpdate(float DeltaTime);
+	virtual void PostMovementUpdate(float DeltaTime);
 
 
 #pragma endregion Core Update Loop

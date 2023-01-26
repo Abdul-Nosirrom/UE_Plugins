@@ -7,8 +7,9 @@
 #include "GameFramework/SpringArmComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "Template/OPMovementComponent.h"
 
-ATOPCharacter::ATOPCharacter()
+ATOPCharacter::ATOPCharacter() 
 {
 	// Set size for collision capsule
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
@@ -19,16 +20,17 @@ ATOPCharacter::ATOPCharacter()
 	bUseControllerRotationRoll = false;
 
 	// Configure character movement
-	//GetCharacterMovement()->bOrientRotationToMovement = true; // Character moves in the direction of input...	
-	//GetCharacterMovement()->RotationRate = FRotator(0.0f, 500.0f, 0.0f); // ...at this rotation rate
-
+	GetCharacterMovement()->CharacterOwner = this;
+	GetCharacterMovement()->bOrientRotationToMovement = true; // Character moves in the direction of input...	
+	GetCharacterMovement()->RotationRate = FRotator(0.0f, 500.0f, 0.0f); // ...at this rotation rate
+	
 	// Note: For faster iteration times these variables, and many more, can be tweaked in the Character Blueprint
 	// instead of recompiling to adjust them
-	//GetCharacterMovement()->JumpZVelocity = 700.f;
-	//GetCharacterMovement()->AirControl = 0.35f;
-	//GetCharacterMovement()->MaxWalkSpeed = 500.f;
-	//GetCharacterMovement()->MinAnalogWalkSpeed = 20.f;
-	//GetCharacterMovement()->BrakingDecelerationWalking = 2000.f;
+	GetCharacterMovement()->JumpZVelocity = 700.f;
+	GetCharacterMovement()->AirControl = 0.35f;
+	GetCharacterMovement()->MaxWalkSpeed = 500.f;
+	GetCharacterMovement()->MinAnalogWalkSpeed = 20.f;
+	GetCharacterMovement()->BrakingDecelerationGround = 2000.f;
 
 	// Create a camera boom (pulls in towards the player if there is a collision)
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
@@ -43,6 +45,11 @@ ATOPCharacter::ATOPCharacter()
 
 	// Note: The skeletal mesh and anim blueprint references on the Mesh component (inherited from Character) 
 	// are set in the derived blueprint asset named ThirdPersonCharacter (to avoid direct content references in C++)
+}
+
+void ATOPCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 }
 
 void ATOPCharacter::BeginPlay()
@@ -82,6 +89,153 @@ void ATOPCharacter::SetupPlayerInputComponent(class UInputComponent* PlayerInput
 
 }
 
+#pragma region Jump Backend
+
+void ATOPCharacter::ResetJumpState()
+{
+	bPressedJump = false;
+	bWasJumping = false;
+	JumpKeyHoldTime = 0.f;
+	JumpForceTimeRemaining = 0.f;
+
+	if (GetCharacterMovement() && GetCharacterMovement()->GroundingStatus.bIsStableOnGround)
+	{
+		JumpCurrentCount = 0;
+		JumpCurrentCountPreJump = 0;
+	}
+}
+
+
+bool ATOPCharacter::CanJump() const
+{
+	return CanJumpInternal();
+}
+
+bool ATOPCharacter::CanJumpInternal_Implementation() const
+{
+	return JumpIsAllowedInternal();
+}
+
+bool ATOPCharacter::JumpIsAllowedInternal() const
+{
+	const UOPMovementComponent* OPMovementComp = Cast<UOPMovementComponent>(GetCharacterMovement());
+
+	// Ensure CharacterMovement state is valid
+	bool bJumpIsAllowed = OPMovementComp->CanAttemptJump();
+
+	if (bJumpIsAllowed)
+	{
+		// Ensure JumpHoldTime and JumpCount are valid
+		if (!bWasJumping || GetJumpMaxHoldTime() <= 0.f)
+		{
+			if (JumpCurrentCount == 0 && !OPMovementComp->GroundingStatus.bIsStableOnGround)
+			{
+				bJumpIsAllowed = JumpCurrentCount + 1 < JumpMaxCount;
+			}
+			else
+			{
+				bJumpIsAllowed = JumpCurrentCount < JumpMaxCount;
+			}
+		}
+		else
+		{
+			// Only consider JumpKeyHoldTime as long as:
+			// A) The jump limit hasn't been met OR
+			// B) The jump limit has been met AND we were already jumping
+			const bool bJumpKeyHeld = (bPressedJump && JumpKeyHoldTime < GetJumpMaxHoldTime());
+			bJumpIsAllowed = bJumpKeyHeld &&
+				((JumpCurrentCount < JumpMaxCount) || (bWasJumping && JumpCurrentCount == JumpMaxCount));
+		}
+	}
+
+	return bJumpIsAllowed;
+}
+
+bool ATOPCharacter::IsJumpProvidingForce() const
+{
+	return JumpForceTimeRemaining > 0.f;
+}
+
+void ATOPCharacter::LaunchCharacter(FVector LaunchVelocity, bool bXYOverride, bool bZOverride)
+{
+	UOPMovementComponent* OPMovementComponent = Cast<UOPMovementComponent>(GetCharacterMovement());
+
+	if (OPMovementComponent)
+	{
+		FVector FinalVel = LaunchVelocity;
+		const FVector Velocity = GetVelocity();
+
+		if (!bXYOverride)
+		{
+			FinalVel.X += Velocity.X;
+			FinalVel.Y += Velocity.Y;
+		}
+		if (!bZOverride)
+		{
+			FinalVel.Z += Velocity.Z;
+		}
+		OPMovementComponent->Launch(FinalVel);
+	}
+}
+
+void ATOPCharacter::CheckJumpInput(float DeltaTime)
+{
+	JumpCurrentCountPreJump = JumpCurrentCount;
+
+
+	if (bPressedJump)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 1.f, FColor::Purple, "About to DoJump()");
+		// If this is the first jump and we're already falling, then increment the count to compensate
+		const bool bFirstJump = JumpCurrentCount == 0;
+		if (bFirstJump && GetCharacterMovement()->GroundingStatus.bIsStableOnGround)
+		{
+			JumpCurrentCount++;
+		}
+
+		const bool bDidJump = CanJump() && GetCharacterMovement()->DoJump();
+		if (bDidJump)
+		{
+			// Transition from not actively jumping to jumping
+			if (!bWasJumping)
+			{
+				JumpCurrentCount++;
+				JumpForceTimeRemaining = GetJumpMaxHoldTime();
+			}
+		}
+			bWasJumping = bDidJump;
+		}
+	
+}
+
+void ATOPCharacter::ClearJumpInput(float DeltaTime)
+{
+	if (bPressedJump)
+	{
+		JumpKeyHoldTime += DeltaTime;
+
+		// Don't disable bPressedJump right away if it's still held
+		// Don't modify JumpForceTimeRemaining because a frame of update may be remaining
+		if (JumpKeyHoldTime >= GetJumpMaxHoldTime())
+		{
+			bPressedJump = false;
+		}
+	}
+	else
+	{
+		JumpForceTimeRemaining = 0.f;
+		bWasJumping = false;
+	}
+}
+
+float ATOPCharacter::GetJumpMaxHoldTime() const
+{
+	return JumpMaxHoldTime;
+}
+
+
+#pragma endregion Jump Backend
+
 void ATOPCharacter::Move(const FInputActionValue& Value)
 {
 	// input is a Vector2D
@@ -120,9 +274,14 @@ void ATOPCharacter::Look(const FInputActionValue& Value)
 
 void ATOPCharacter::Jump(const FInputActionValue& Value)
 {
+	GEngine->AddOnScreenDebugMessage(-1, 1.f, FColor::Purple, "JUMP REGISTERED!");
+	bPressedJump = true;
+	JumpKeyHoldTime = 0.f;
 }
 
 void ATOPCharacter::StopJumping(const FInputActionValue& Value)
 {
+	bPressedJump = false;
+	ResetJumpState();
 }
 

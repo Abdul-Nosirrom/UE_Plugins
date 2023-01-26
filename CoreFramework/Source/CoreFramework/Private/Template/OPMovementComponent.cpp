@@ -8,16 +8,87 @@ UOPMovementComponent::UOPMovementComponent()
 {
 }
 
-void UOPMovementComponent::UpdateVelocity_Implementation(FVector& CurrentVelocity, float DeltaTime)
+void UOPMovementComponent::TickComponent(float DeltaTime, ELevelTick TickType,
+	FActorComponentTickFunction* ThisTickFunction)
 {
-	Super::UpdateVelocity_Implementation(CurrentVelocity, DeltaTime);
-
-	CalcVelocity(DeltaTime, GroundFriction, BrakingDecelerationGen);
+	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 }
 
-void UOPMovementComponent::UpdateRotation_Implementation(FQuat& CurrentRotation, float DeltaTime)
+void UOPMovementComponent::SubsteppedTick(FVector& CurrentVelocity, float DeltaTime)
 {
-	Super::UpdateRotation_Implementation(CurrentRotation, DeltaTime);
+	if (GroundingStatus.bFoundAnyGround)
+	{
+		// Imitate PhysWalking
+		if (!bHasAnimRootMotion)
+		{
+			CalcVelocity(DeltaTime, GroundFriction, BrakingDecelerationGround);
+		}
+	}
+	else
+	{
+		// Imitate PhysFalling
+		if (!bHasAnimRootMotion)
+		{
+			const float zVel = Velocity.Z;
+			Velocity.Z = 0;
+			CalcVelocity(DeltaTime, FallingLateralFriction, BrakingDecelerationAir);
+			Velocity.Z = zVel;
+		}
+		/* Jump Code Found In PhysFalling */
+
+		// If jump is providing force, gravity may be affected.
+		bool bEndingJumpForce = false;
+		float GravityTime = DeltaTime;
+
+		if (CharacterOwner->JumpForceTimeRemaining > 0.0f)
+		{
+			// Consume some of the force time. Only the remaining time (if any) is affected by gravity when bApplyGravityWhileJumping=false.
+			const float JumpForceTime = FMath::Min(CharacterOwner->JumpForceTimeRemaining, DeltaTime);
+			GravityTime = bApplyGravityWhileJumping ? DeltaTime : FMath::Max(0.0f, DeltaTime - JumpForceTime);
+			
+			// Update Character state
+			CharacterOwner->JumpForceTimeRemaining -= JumpForceTime;
+			if (CharacterOwner->JumpForceTimeRemaining <= 0.0f)
+			{
+				CharacterOwner->ResetJumpState();
+				bEndingJumpForce = true;
+			}
+		}
+		
+		/* Apply Gravity As Found In PhysFalling */
+		CurrentVelocity = NewFallVelocity(CurrentVelocity, GetGravityZ() * FVector::UpVector, GravityTime);
+
+		/* Portion here maybe (CMC Line 4498) */
+		
+
+		/* Limit air control */
+		//FVector FallAcceleration = GetFallingLateralAcceleration(DeltaTime);
+		//FallAcceleration.Z = 0.f;
+		//const bool bHasLimitedAirControl = ShouldLimitAirControl(DeltaTime, FallAcceleration);
+	}
+}
+
+
+void UOPMovementComponent::UpdateVelocity(FVector& CurrentVelocity, float DeltaTime)
+{
+	//Super::UpdateVelocity_Implementation(CurrentVelocity, DeltaTime);
+
+	/* Calc Velocity applies the input acceleration */
+
+	/* Lots of things embedded in PhysFalling so worth taking a look there, unsure if necessary but educational */
+	// (Ex: Checking ValidLandingSpot to transition to landing, it also resets the physics when movement modes change,
+	// CalcVel & JumpApex stuff verified there too) //
+
+	/* ControlledCharacterMove */
+	const FVector InputVector = ConsumeInputVector();
+	CharacterOwner->CheckJumpInput(DeltaTime);
+	Acceleration = ScaleInputAcceleration(ConstrainInputAcceleration(InputVector));
+	AnalogInputModifier = ComputeAnalogInputModifier();
+}
+
+void UOPMovementComponent::UpdateRotation(FQuat& CurrentRotation, float DeltaTime)
+{
+	//Super::UpdateRotation_Implementation(CurrentRotation, DeltaTime);
 
 	PhysicsRotation(DeltaTime);
 }
@@ -112,6 +183,30 @@ void UOPMovementComponent::CalcVelocity(float DeltaTime, float Friction, float B
 	//}
 }
 
+FVector UOPMovementComponent::NewFallVelocity(const FVector& InitialVelocity, const FVector& Gravity, float DeltaTime) const
+{
+	FVector Result = InitialVelocity;
+
+	if (DeltaTime > 0.f)
+	{
+		// Apply Gravity
+		Result += Gravity * DeltaTime;
+
+		// Don't exceed terminal velocity
+		const float TerminalLimit = FMath::Abs(GetPhysicsVolume()->TerminalVelocity);
+		if (Result.SizeSquared() > FMath::Square(TerminalLimit))
+		{
+			const FVector GravityDir = Gravity.GetSafeNormal();
+			if ((Result | GravityDir) > TerminalLimit)
+			{
+				Result = FVector::PointPlaneProject(Result, FVector::ZeroVector, GravityDir) + GravityDir * TerminalLimit;
+			}
+		}
+	}
+
+	return Result;
+}
+
 void UOPMovementComponent::ApplyVelocityBraking(float DeltaTime, float Friction, float BrakingDeceleration)
 {
 	static constexpr float MIN_TICK_TIME = 1e-6f;
@@ -178,10 +273,10 @@ void UOPMovementComponent::PhysicsRotation(float DeltaTime)
 		return;
 	}
 	
-	if (!CharacterOwner->Controller)
-	{
-		return;
-	}
+	//if (!CharacterOwner->Controller)
+	//{
+	//	return;
+	//}
 
 	FRotator CurrentRotation = UpdatedComponent->GetComponentRotation(); // Normalized
 	
@@ -284,15 +379,78 @@ bool UOPMovementComponent::ShouldRemainVertical() const
 
 bool UOPMovementComponent::DoJump()
 {
+	GEngine->AddOnScreenDebugMessage(-1, 1.f, FColor::Red, "DoJump()");
 	if (CharacterOwner && CharacterOwner->CanJump())
 	{
 		// Don't jump if we can't move up/down
 		if (!bConstrainToPlane || FMath::Abs(PlaneConstraintNormal.Z) != 1.f)
 		{
+			GEngine->AddOnScreenDebugMessage(-1, 1.f, FColor::Red, "ExecutingJump()");
 			ForceUnground();
 			Velocity.Z = FMath::Max<FVector::FReal>(Velocity.Z, JumpZVelocity);
 			return true;
 		}
 	}
 	return false;
+}
+
+bool UOPMovementComponent::CanAttemptJump() const
+{
+	return IsJumpAllowed();
+}
+
+void UOPMovementComponent::Launch(FVector const& LaunchVel)
+{
+	PendingLaunchVelocity = LaunchVel;
+}
+
+bool UOPMovementComponent::HandlePendingLaunch()
+{
+	if (!PendingLaunchVelocity.IsZero())
+	{
+		Velocity = PendingLaunchVelocity;
+		PendingLaunchVelocity = FVector::ZeroVector;
+		if (Velocity.Z > 0)
+			ForceUnground();
+		return true;
+	}
+	return false;
+}
+
+void UOPMovementComponent::NotifyJumpApex()
+{
+	if (CharacterOwner)
+	{
+		//CharacterOwner->NotifyJumpApex();
+	}
+}
+
+float UOPMovementComponent::GetMaxJumpHeight() const
+{
+	const float Gravity = GetGravityZ();
+	if (FMath::Abs(Gravity) > UE_KINDA_SMALL_NUMBER)
+	{
+		return FMath::Square(JumpZVelocity) / (-2.f * Gravity);
+	}
+	else
+	{
+		return 0.f;
+	}
+}
+
+float UOPMovementComponent::GetMaxJumpHeightWithJumpTime() const
+{
+	const float MaxJumpHeight = GetMaxJumpHeight();
+
+	if (CharacterOwner)
+	{
+		// When bApplyGravityWhileJumping is true, the actual max height will be lower than this.
+		// However, it will also be dependent on framerate (and substep iterations) so just return this
+		// to avoid expensive calculations.
+
+		// This can be imagined as the character being displaced to some height, then jumping from that height.
+		return (CharacterOwner->JumpMaxHoldTime * JumpZVelocity) + MaxJumpHeight;
+	}
+
+	return MaxJumpHeight;
 }

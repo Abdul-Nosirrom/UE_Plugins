@@ -10,6 +10,7 @@
 class UCustomMovementComponent;
 class UCapsuleComponent;
 class UArrowComponent;
+class UOPMovementComponent;
 
 UCLASS()
 class COREFRAMEWORK_API AOPCharacter : public APawn
@@ -24,7 +25,7 @@ public:
 
 #pragma region Primary Components
 
-private:
+protected:
 	/// @brief Main skeletal mesh associated with this Character
 	UPROPERTY(Category=Character, VisibleAnywhere, BlueprintReadOnly, meta=(AllowPrivateAccess="true"))
 	TObjectPtr<USkeletalMeshComponent> Mesh;
@@ -34,7 +35,7 @@ private:
 	
 	/// @brief Movement component used for movement logic, containing all movement handling logic
 	UPROPERTY(Category=Character, VisibleAnywhere, BlueprintReadOnly, meta=(AllowPrivateAccess="true"))
-	TObjectPtr<UCustomMovementComponent> CustomMovement;
+	TObjectPtr<UOPMovementComponent> CustomMovement; // TODO: NOTE, temporarily swapped to the child class for testing purposes
 
 	/// @brief Name of the movement component used when creating the subobject 
 	static FName CustomMovementComponentName;
@@ -60,7 +61,7 @@ public:
 	FORCEINLINE USkeletalMeshComponent* GetMesh() const { return Mesh; }
 
 	/// @brief Getter for characters movement component
-	FORCEINLINE UCustomMovementComponent* GetCustomMovement() const { return CustomMovement; }
+	FORCEINLINE UOPMovementComponent* GetCharacterMovement() const { return CustomMovement; } // TODO: NOTE, also swapped this
 	
 	/// @brief Getter for characters capsule component
 	FORCEINLINE UCapsuleComponent* GetCapsuleComponent() const { return CapsuleComponent; }

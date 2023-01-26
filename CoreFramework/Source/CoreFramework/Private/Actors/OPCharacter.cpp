@@ -3,6 +3,7 @@
 #include "OPCharacter.h"
 #include "CFW_PCH.h"
 #include "CustomMovementComponent.h"
+#include "Template/OPMovementComponent.h"
 
 
 /* Define default component object names */
@@ -59,14 +60,16 @@ AOPCharacter::AOPCharacter() : Super()
 	}
 #endif // WITH_EDITORONLY_DATA
 
+	
 	// Movement Component
-	CustomMovement = CreateDefaultSubobject<UCustomMovementComponent>(AOPCharacter::CustomMovementComponentName);
+	CustomMovement = CreateDefaultSubobject<UOPMovementComponent>(AOPCharacter::CustomMovementComponentName);
 	if (CustomMovement)
 	{
 		CustomMovement->UpdatedComponent = CapsuleComponent;
 		CustomMovement->SetSkeletalMeshReference(Mesh);
 	}
-
+	
+	
 	// Mesh Component
 	Mesh = CreateOptionalDefaultSubobject<USkeletalMeshComponent>(AOPCharacter::MeshComponentName);
 	if (Mesh)

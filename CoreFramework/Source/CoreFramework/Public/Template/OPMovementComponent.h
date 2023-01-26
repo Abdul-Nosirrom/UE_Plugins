@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "CustomMovementComponent.h"
-#include "OPCharacter.h"
+#include "Template/TOPCharacter.h"
 #include "Components/ActorComponent.h"
 #include "OPMovementComponent.generated.h"
 
@@ -17,7 +17,20 @@ class COREFRAMEWORK_API UOPMovementComponent : public UCustomMovementComponent
 public:
 	// Sets default values for this component's properties
 	UOPMovementComponent();
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+#pragma region Event Overrides
+protected:
 
+	/* Hey friend, when you're back from your walk, be sure to check the advanced tab of CharacterMovement (General Settings) :3 */
+
+	virtual void UpdateVelocity(FVector& CurrentVelocity, float DeltaTime) override;
+
+	virtual void UpdateRotation(FQuat& CurrentRotation, float DeltaTime) override;
+
+	virtual void SubsteppedTick(FVector& CurrentVelocity, float DeltaTime) override;
+
+#pragma endregion Event Overrides
+	
 public:
 
 #pragma region Gameplay Parameters
@@ -78,9 +91,12 @@ public:
 	* Deceleration when walking and not applying acceleration. This is a constant opposing force that directly lowers velocity by a constant value.
 	* @see GroundFriction, MaxAcceleration
 	 */
-	UPROPERTY(Category="Character Movement (General Settings)", EditAnywhere, BlueprintReadWrite, meta=(ClampMin="0", UIMin="0"))
-	float BrakingDecelerationGen;
+	UPROPERTY(Category="Character Movement: Walking", EditAnywhere, BlueprintReadWrite, meta=(ClampMin="0", UIMin="0"))
+	float BrakingDecelerationGround;
 
+	UPROPERTY(Category="Character Movement: Walking", EditAnywhere, BlueprintReadWrite, meta=(ClampMin="0", UIMin="0"))
+	float BrakingDecelerationAir;
+	
 	/** Initial velocity (instantaneous vertical acceleration) when jumping. */
 	UPROPERTY(Category="Character Movement: Jumping / Falling", EditAnywhere, BlueprintReadWrite, meta=(DisplayName="Jump Z Velocity", ClampMin="0", UIMin="0", ForceUnits="cm/s"))
 	float JumpZVelocity;
@@ -174,72 +190,88 @@ public:
 #pragma endregion Gameplay Parameters
 
 	UPROPERTY()
-	TObjectPtr<AOPCharacter> CharacterOwner;
-	
-protected:
-
-	/* Hey friend, when you're back from your walk, be sure to check the advanced tab of CharacterMovement (General Settings) :3 */
-
-	virtual void UpdateVelocity_Implementation(FVector& CurrentVelocity, float DeltaTime) override;
-
-	virtual void UpdateRotation_Implementation(FQuat& CurrentRotation, float DeltaTime) override;
+	TObjectPtr<ATOPCharacter> CharacterOwner;
 
 #pragma region General Locomotion
 protected:
+	FORCEINLINE FVector ConstrainInputAcceleration(const FVector& InputAcceleration) const
+	{
+		if (InputAcceleration.Z != 0.f)
+		{
+			return FVector(InputAcceleration.X, InputAcceleration.Y, 0.f);
+		}
+		return InputAcceleration;
+	}
 
+	FORCEINLINE FVector ScaleInputAcceleration(const FVector& InputAcceleration) const
+	{
+		return MaxAcceleration * InputAcceleration.GetClampedToMaxSize(1.f);
+	}
+
+	FORCEINLINE float ComputeAnalogInputModifier() const
+	{
+		const float MaxAccel = MaxAcceleration;
+		if (Acceleration.SizeSquared() > 0.f && MaxAccel > UE_SMALL_NUMBER)
+		{
+			return FMath::Clamp<FVector::FReal>(Acceleration.Size() / MaxAccel, 0.f, 1.f);
+		}
+
+		return 0.f;
+	}
 public:
+	
+	/* Called in the Phys methods each while loop iteration / sub-stepped */
 	void CalcVelocity(float DeltaTime, float Friction, float BrakingDeceleration);
 
+	/* Called in the PhysFalling method each while loop iteration / sub-stepped (Applies Gravity) */
+	FVector NewFallVelocity(const FVector& InitialVelocity, const FVector& Gravity, float DeltaTime) const;
+
+	/* Called in CalcVelocity */
 	void ApplyVelocityBraking(float DeltaTime, float Friction, float BrakingDeceleration);
 
+	/* Called in PerformMovement after the Phys method call. Preliminary root motion checks prior */
 	void PhysicsRotation(float DeltaTime);
 
+	/* Called in PhysicsRotation */
 	FRotator GetDeltaRotation(float DeltaTime) const;
 
+	/* Called in GetDeltaRotation */
 	float GetAxisDeltaRotation(float InAxisRotationRate, float DeltaTime) const;
 
+	/* Called in PhysicsRotation if the bOrientToMovement flag is set */
 	FRotator ComputeOrientToMovementRotation(FRotator CurrentRotation, float DeltaTime, FRotator DesiredRotation) const;
 
+	/* Called in PhysicsRotation, returns true if on ground or in air (changes only for Custom Movement Modes) */
 	bool ShouldRemainVertical() const;
 
 #pragma endregion General Locomotion
 
 #pragma region Jump Stuff
 protected:
-	
+	UPROPERTY()
+	FVector PendingLaunchVelocity{0};	
 public:
-	/**
-	* Perform jump. Called by Character when a jump has been detected because Character->bPressedJump was true. Checks Character->CanJump().
-	* Note that you should usually trigger a jump through Character::Jump() instead.
-	* @return	True if the jump was triggered successfully.
-	*/
+	
+	/* Called in Character.cpp within CheckJumpInput */
 	virtual bool DoJump();
 
-	/**
-	* Returns true if current movement state allows an attempt at jumping. Used by Character::CanJump().
-	*/
+	/* Called in Character.cpp within JumpIsAllowedInternal (called by CanJump) */
 	virtual bool CanAttemptJump() const;
 
-	/** Queue a pending launch with velocity LaunchVel. */
+	/* General interface call. Called in Character.cpp within LaunchCharacter which is BlueprintCallable */
 	virtual void Launch(FVector const& LaunchVel);
 
-	/** Handle a pending launch during an update. Returns true if the launch was triggered. */
+	/* Called in PerformMovement before the movement tick is done */
 	virtual bool HandlePendingLaunch();
 
-	/** Called if bNotifyApex is true and character has just passed the apex of its jump. */
+	/* Called in PhysFalling in the while loop, subsequently calls the Character version*/
 	virtual void NotifyJumpApex();
 
-	/**
-	*	Compute the max jump height based on the JumpZVelocity velocity and gravity.
-	*	This does not take into account the CharacterOwner's MaxJumpHoldTime.
-	*/
+	/* Just an interface call */
 	UFUNCTION(BlueprintCallable, Category="Pawn|Components|CharacterMovement")
 	virtual float GetMaxJumpHeight() const;
 
-	/**
-	 *	Compute the max jump height based on the JumpZVelocity velocity and gravity.
-	 *	This does take into account the CharacterOwner's MaxJumpHoldTime.
-	 */
+	/* Just an interface call */
 	UFUNCTION(BlueprintCallable, Category="Pawn|Components|CharacterMovement")
 	virtual float GetMaxJumpHeightWithJumpTime() const;
 
