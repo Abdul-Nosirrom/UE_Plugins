@@ -1,6 +1,7 @@
 // Copyright 2023 Abdulrahmen Almodaimegh. All Rights Reserved.
 #include "CustomMovementComponent.h"
 #include "CFW_PCH.h"
+#include "GameFramework/Character.h"
 
 
 #pragma region Profiling & CVars
@@ -176,10 +177,7 @@ void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 	//{
 	//	CheckAvoidance();
 	//}
-
-	/* Resolve penetrations that could've been caused from our previous movements or other actor movements */
-	AutoResolvePenetration();
-
+	
 	/* Perform our move */
 	PerformMovement(DeltaTime);
 
@@ -256,6 +254,11 @@ void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 void UCustomMovementComponent::PerformMovement(float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_PerformMovement)
+
+	const UWorld* World = GetWorld();
+	if (World == nullptr) return;
+
+	bTeleportedSinceLastUpdate = UpdatedComponent->GetComponentLocation() != LastUpdateLocation;
 	
 	// Perform our ground probing and all that here, get setup for the move
 	PreMovementUpdate(DeltaTime);
@@ -266,28 +269,30 @@ void UCustomMovementComponent::PerformMovement(float DeltaTime)
 		HaltMovement();
 		return;
 	}
-
-	// Store our input vector, we might want to do this earlier however. So long as we do it before the UpdateVelocity call we're good
-	//InputVector = ConsumeInputVector();
-
-	if (GroundingStatus.bIsStableOnGround)
-	{
-		const float VelMag = Velocity.Size();
-		SetVelocity(GetDirectionTangentToSurface(Velocity, GroundingStatus.GroundNormal).GetSafeNormal() * VelMag);
-	}
-	// Tell the updated component what velocity it should have stored after the velocity has been adjusted for sweeps
-	UpdatedComponent->ComponentVelocity = Velocity;
-	
-	// We call these events before getting root motion, as root motion should override them. A separate event to override root motion is provided.
-	FQuat TargetRot = UpdatedComponent->GetComponentQuat();
-	UpdateRotation(TargetRot, DeltaTime);
-	//MoveUpdatedComponent(FVector::ZeroVector, TargetRot, false);
-	
-	UpdateVelocity(Velocity, DeltaTime);
 	
 	// Internal Character Move - looking at CMC, it applies UpdateVelocity, RootMotion, etc... before the character move...
-	// TODO: CMC mentions scoped is good for performance when there are multiple MoveUpdatedComp calls...
-	MovementUpdate(Velocity, DeltaTime);
+	{
+		FScopedMovementUpdate ScopedMovementUpdate(UpdatedComponent, bEnableScopedMovementUpdates ? EScopedUpdate::DeferredUpdates : EScopedUpdate::ImmediateUpdates);
+		
+		// Update BasedMovement
+
+		// Apply Root Motion (Prepare then apply)
+
+		// Handle accumulated forces from gameplay calls
+		if (GroundingStatus.bIsStableOnGround)
+		{
+			const float VelMag = Velocity.Size();
+			SetVelocity(GetDirectionTangentToSurface(Velocity, GroundingStatus.GroundNormal).GetSafeNormal() * VelMag);
+		}
+		UpdateVelocity(Velocity, DeltaTime);
+		
+		MovementUpdate(DeltaTime);
+
+		if (!bHasAnimRootMotion)
+		{
+			UpdateRotation(TargetRot, DeltaTime);
+		}
+	}
 	
 	// Might also want to make a flag whether we have a skeletal mesh or not in InitializeComponent or something such that we can keep this whole thing general
 	const bool bIsPlayingRootMotionMontage = static_cast<bool>(GetRootMotionMontageInstance());
@@ -306,49 +311,6 @@ void UCustomMovementComponent::PreMovementUpdate(float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_PreMovementUpdate)
 
-	// TODO: Note, dirty moves/rotations might not be necessary since we don't need to cache them. It does solve for slopes and such though.
-#pragma region Dirty Move Calls
-	/* First handle previous calls to MovePosition to get us up to date with our target position */
-	// Should we also handle Rotation calls here too?
-	if (bMovePositionDirty)
-	{
-		FVector MoveVelocity = GetVelocityFromMovement(MovePositionTarget - UpdatedComponent->GetComponentLocation(), DeltaTime);
-		if (UpdatedPrimitive->GetCollisionEnabled() != ECollisionEnabled::NoCollision)
-		{
-			MovementUpdate(MoveVelocity, DeltaTime);
-		}
-		else
-		{
-			MoveUpdatedComponent(MoveVelocity * DeltaTime, UpdatedComponent->GetComponentQuat(), false);
-		}
-
-		bMovePositionDirty = false;
-	}
-	if (bMoveRotationDirty)
-	{
-		// We use moveupdatedcomponent for the sweep and dispatches. Maybe SetRotation would do that too since it has a sweep option
-		if (UpdatedPrimitive->GetCollisionEnabled() != ECollisionEnabled::NoCollision)
-		{
-			// Do we wanna sweep here? Probably yes right? We don't care about the results though since we'll solve it later
-			MoveUpdatedComponent(FVector::ZeroVector, MoveRotationTarget, true);
-		}
-		else
-		{
-			MoveUpdatedComponent(FVector::ZeroVector, MoveRotationTarget, false);
-		}
-		bMoveRotationDirty = false;
-	}
-#pragma endregion Dirty Move Calls
-	
-	// Equivalent to the Decollision iterations in KCC (sort of, depending on how we do implement the below)
-	// What we could do is use our TestMoveUpdatedComp and get our own custom ResolutionDirection and stability reports,
-	// or use SafeMoveUpdatedComponent which solves it using the internal implementation... might go with this for now
-	/* Resolve penetrations that could've been caused from our previous movements or other actor movements */
-	if (UpdatedPrimitive->GetCollisionEnabled() != ECollisionEnabled::NoCollision)
-	{
-		AutoResolvePenetration(); // This would've been called twice without anything in between if bMovePosDirt, might as well just do it here
-	}
-
 	// Copy over previous grounding status
 	LastGroundingStatus.CopyFrom(GroundingStatus);
 
@@ -360,144 +322,365 @@ void UCustomMovementComponent::PreMovementUpdate(float DeltaTime)
 		if (MustUnground())
 		{
 			// Might get away with enabling sweep, its such a small distance thats mainly for stopping to detect the ground i dont think it matters
-			MoveUpdatedComponent(UpdatedComponent->GetUpVector() * (MINIMUM_GROUND_PROBING_DISTANCE * 1.5f), UpdatedComponent->GetComponentQuat(), false);
+			MoveUpdatedComponent(UpdatedComponent->GetUpVector() * (MAX_FLOOR_DIST), UpdatedComponent->GetComponentQuat(), false);
 		}
 		else
 		{
-			// Choose probing distance
-			float SelectedGroundProbingDistance = MINIMUM_GROUND_PROBING_DISTANCE;
-
-			if (!LastGroundingStatus.bSnappingPrevented && (LastGroundingStatus.bIsStableOnGround || bLastMovementIterationFoundAnyGround))
-			{
-				if (StepHandling != EStepHandlingMethod::None)
-				{
-					SelectedGroundProbingDistance = FMath::Max(UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius(), MaxStepHeight);
-				}
-				else
-				{
-					SelectedGroundProbingDistance = UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius();
-				}
-
-				SelectedGroundProbingDistance += GroundDetectionExtraDistance;
-			}
-
-			// Now that we've setup our ground probing distance, we're ready to actually do the probing (and snapping, there's one call
-			// to MoveUpdatedComp to handle the snapping)
-			ProbeGround(SelectedGroundProbingDistance, GroundingStatus);
-
-			// Handle projecting our velocity if we just landed this frame
-			if (!LastGroundingStatus.bIsStableOnGround && GroundingStatus.bIsStableOnGround)
-			{
-				/* EVENT: On Landed */
-				FVector LandedVelocity = FVector::VectorPlaneProject(Velocity, GroundingStatus.GroundNormal);
-				LandedVelocity = GetDirectionTangentToSurface(LandedVelocity, GroundingStatus.GroundNormal) * LandedVelocity.Size();
-				SetVelocity(LandedVelocity);
-			}
-		}
-
-		// Handle Leaving/Landing On Moving Base
-		// We can maybe place it outside of bSolveGrounding. It would implicitly imply that this whole thing wouldn't run
-		// if bSolveGrounding is false since we wouldn't be able to get the components of the ground in that case
-		// TODO: Also worth considering where this would fit in with root motion. Since we're not adding velocity and just
-		// doing a MovementUpdate with the base velocity, I'm assuming it could fit fine either before or after
-		if (bMoveWithBase)
-		{
-			MovementBaseUpdate(DeltaTime);
 		}
 	}
 	bMustUnground = false;
-	
 }
 
-void UCustomMovementComponent::MovementUpdate(FVector& MoveVelocity, float DeltaTime)
+void UCustomMovementComponent::MovementUpdate(float DeltaTime, uint32 Iterations)
 {
 	SCOPE_CYCLE_COUNTER(STAT_MovementUpdate)
 
-	if (UpdatedPrimitive->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
+	/* Validate everything before doing anything */
+	if (DeltaTime < MIN_TICK_TIME)
 	{
-		MoveUpdatedComponent(MoveVelocity * DeltaTime, UpdatedComponent->GetComponentQuat(), false);
 		return;
 	}
-	
-	/* Ensure a valid delta time*/
-	if (DeltaTime <= 0) return;
-	
-	/* Initialize sweep iteration data */
-	FVector RemainingMoveDirection = MoveVelocity.GetSafeNormal();
-	float RemainingMoveDistance = MoveVelocity.Size() * DeltaTime;
-	float MaxSimulationTimeStep = 0.05f; // Under Advanced tab of CMC!!!!
 
-	int SweepsMade = 0;
-	bool bHitSomethingThisSweepIteration = true;
-	FHitResult CurrentHitResult(NoInit);
-
-	// TODO: In KCC, they first project the move against all current overlaps before doing the sweeps. I'm unsure if we need to do that. If we store them in RootCollisionTouched though then maybe?
-	SubsteppedTick(MoveVelocity, DeltaTime);
-	while (/*RemainingMoveDistance > 0.f &&*/ (SweepsMade < MaxMovementIterations) && bHitSomethingThisSweepIteration)
+	if (!UpdatedComponent->IsQueryCollisionEnabled())
 	{
-		// TODO: (NEW): If anything breaks, its possibly due to recalculating movement direction everytime [heads up]
-		/* Event to inject sub-stepped velocity calculations */
-		SubsteppedTick(MoveVelocity, MaxSimulationTimeStep);
+		// Here they set movement mode to walking? In the physwalking method???
+		return;
+	}
 
-		/* First sweep with the full current delta which will give us the first blocking hit */
-		// TODO: Maybe rather than having distance, use RemainingTime instead. That way we can update the velocity mag while being consistent.
-		RemainingMoveDirection = MoveVelocity.GetSafeNormal();
-		SafeMoveUpdatedComponent(RemainingMoveDirection * RemainingMoveDistance, UpdatedComponent->GetComponentQuat(), true, CurrentHitResult);
-		RemainingMoveDistance *= 1.f - CurrentHitResult.Time;
-		FVector RemainingMoveDelta = RemainingMoveDistance * RemainingMoveDirection;
-		
-		/* Update movement by the movement amount */
-		if (CurrentHitResult.bStartPenetrating)
-		{
-			HandleImpact(CurrentHitResult);
-			Super::SlideAlongSurface(RemainingMoveDelta, 1.f, CurrentHitResult.ImpactNormal, CurrentHitResult, true);
-			if (CurrentHitResult.bStartPenetrating)
-			{
-				// Stuck in geometry
-			}
-			GEngine->AddOnScreenDebugMessage(-1, 1.f, FColor::Purple, "Started in penetration...");
-		}
-		else if (CurrentHitResult.IsValidBlockingHit()) 
-		{
-			FHitStabilityReport MoveHitStabilityReport;
-			EvaluateHitStability(CurrentHitResult, MoveVelocity, MoveHitStabilityReport);
-			FVector HitNormal = CurrentHitResult.ImpactNormal;
-			
-			FVector StepForwardDirection = FVector::VectorPlaneProject(-HitNormal, UpdatedComponent->GetUpVector());
-			FHitResult OutForwardHit{};
-			if (StepHandling != EStepHandlingMethod::None && !StepUp(CurrentHitResult, StepForwardDirection * RemainingMoveDistance, &OutForwardHit))
-			{
-				HandleImpact(OutForwardHit);
-				Super::SlideAlongSurface(RemainingMoveDelta, 1.f - OutForwardHit.Time, OutForwardHit.ImpactNormal, OutForwardHit, true);
-			}
-			else
-			{
-				HandleImpact(CurrentHitResult);
-				Super::SlideAlongSurface(RemainingMoveDelta, 1.f - CurrentHitResult.Time, CurrentHitResult.ImpactNormal, CurrentHitResult, true);
+	bJustTeleported = false;
+	bool bCheckedFall = false;
+	bool bTriedLedgeMove = false;
+	float RemainingTime = DeltaTime;
+	
 
-			}
+	while ((RemainingTime >= MIN_TICK_TIME) && (Iterations < MaxSimulationIterations))
+	{
+		/* Setup current move iteration */
+		Iterations++;
+		bJustTeleported = false;
+		const float IterTick = GetSimulationTimeStep(RemainingTime, Iterations);
+
+		/* Cache current values */
+		UPrimitiveComponent* const OldBase = GetMovementBase();
+		const FVector PreviousBaseLocation = (OldBase != NULL) ? OldBase->GetComponentLocation() : FVector::ZeroVector;
+		const FVector OldLocation = UpdatedComponent->GetComponentLocation();
+		const FGroundingStatus OldFloor = CurrentFloor;
+
+		/* Rootmotion and gameplay stuff */
+
+		/* Compute move parameters */
+		const FVector MoveVelocity = Velocity;
+		const FVector Delta = MoveVelocity * IterTick;
+		const bool bZeroDelta = Delta.IsNearlyZero();
+		FStepDownResult StepDownResult;
+
+		/* Exit if the delta is zero, no movement should happen anyways */
+		if (bZeroDelta)
+		{
+			RemainingTime = 0.f;
+		} // Zero delta
+		else
+		{
+			MoveIteration(MoveVelocity, IterTick, &StepDownResult);
+		} // Non-zero delta
+
+		/* Update Floor */
+		if (StepDownResult.bComputedFloor)
+		{
+			CurrentFloor = StepDownResult.FloorResult;
 		}
 		else
 		{
-			bHitSomethingThisSweepIteration = false;
+			FindFloor(UpdatedComponent->GetComponentLocation(), CurrentFloor, bZeroDelta, NULL);
 		}
-		
-		SweepsMade++;
-		if (SweepsMade > MaxMovementIterations)
+
+		/* Check for ledges here */
+		const bool bCheckLedges = !CanWalkOffLedges();
+		if (bCheckLedges && !CurrentFloor.IsWalkableFloor())
 		{
-			if (bKillRemainingMovementWhenExceedMovementIterations) RemainingMoveDistance = 0.f;
-			if (bKillVelocityWhenExceedMaxMovementIterations) MoveVelocity = FVector::ZeroVector;
+			// Calculate possible alternate movement
+			
+		} // Check for ledge movement, preventing walking off ledges
+		else
+		{
+			/* Validate the floor check */
+			if (CurrentFloor.IsWalkableFloor())
+			{
+				/* Check denivelation angle */
+				if (ShouldCatchAir(OldFloor, CurrentFloor))
+				{
+					// TODO: Events and swtiching to walking
+					return;
+				}
+
+				/* Otherwise snap to ground */
+				AdjustFloorHeight();
+				SetBase(CurrentFloor.HitResult.Component.Get(), CurrentFloor.HitResult.BoneName);
+			} // Current floor is walkable
+			else if (CurrentFloor.HitResult.bStartPenetrating && RemainingTime <= 0.f)
+			{
+				// The floor check failed because it started in penetration, we do not want to try to move downward
+				// because the downward sweep failed. Try to pop out the floor instead.
+				FHitResult Hit(CurrentFloor.HitResult);
+				Hit.TraceEnd = Hit.TraceStart + UpdatedComponent->GetUpVector() * MAX_FLOOR_DIST;
+				const FVector RequestedAdjustment = GetPenetrationAdjustment(Hit);
+				ResolvePenetration(RequestedAdjustment, Hit, UpdatedComponent->GetComponentQuat());
+				bForceNextFloorCheck = true; // Force us to sweep for a floor next time
+				
+			} // Floor penetration or consumed all time
+
+			/* Check if we need to start falling */
+			if (!CurrentFloor.IsWalkableFloor() && !CurrentFloor.HitResult.bStartPenetrating)
+			{
+				
+			}
+			
+		} // Don't check for ledges
+
+		/* Allow overlap events to change physics state and velocity */
+		if (IsMovingOnGround())
+		{
+			/* Make velocity reflect actual move */
+			if (!bJustTeleported && !HasAnimRootMotion() && !CurrentRootMotion.HasOverrideVelocity() && IterTick >= MIN_TICK_TIME)
+			{
+				Velocity = (UpdatedComponent->GetComponentLocation() - OldLocation) / IterTick;
+				MaintainHorizontalGroundVelocity();
+			}
+		}
+
+		/* If we didn't move at all, abort */
+		if (UpdatedComponent->GetComponentLocation() == OldLocation)
+		{
+			RemainingTime = 0.f;
+			break;
 		}
 	}
 
-	MoveUpdatedComponent(RemainingMoveDirection * (RemainingMoveDistance + COLLISION_OFFSET), UpdatedComponent->GetComponentQuat(), false);
+	if (IsMovingOnGround())
+	{
+		MaintainHorizontalGroundVelocity(); // TODO: Would we project velocity to the ground here
+	}
+}
 
+void UCustomMovementComponent::AirMovementUpdate(float DeltaTime, uint32 Iterations)
+{
+	SCOPE_CYCLE_COUNTER(STAT_MovementUpdate)
+
+	/* Validate everything before doing anything */
+	if (DeltaTime < MIN_TICK_TIME)
+	{
+		return;	
+	}
+
+	if (!UpdatedComponent->IsQueryCollisionEnabled())
+	{
+		return;
+	}
+
+	bJustTeleported = false;
+	bool bCheckedFall = false;
+	bool bTriedLedgeMove = false;
+	float RemainingTime = DeltaTime;
+
+	while ((RemainingTime >= MIN_TICK_TIME) && (Iterations < MaxSimulationIterations))
+	{
+		/* Setup current move iteration */
+		Iterations++;
+		bJustTeleported = false;
+		const float IterTick = GetSimulationTimeStep(RemainingTime, Iterations);
+		RemainingTime -= IterTick;
+
+		/* Cache current values */
+		const FVector OldLocation = UpdatedComponent->GetComponentLocation();
+		const FQuat PawnRotation = UpdatedComponent->GetComponentQuat();
+		const FVector OldVelocity = Velocity;
+
+		/* Compute move parameters */
+		const FVector MoveVelocity = Velocity;
+		FVector Delta = MoveVelocity * IterTick;
+		const bool bZeroDelta = Delta.IsNearlyZero();
+		
+		/* Gameplay stuff like applying gravity */
+
+		/* Applying root motion to velocity & Decaying former base velocity */
+
+		/* Perform the move */
+		FHitResult Hit(1.f);
+		SafeMoveUpdatedComponent(Delta, PawnRotation, true, Hit);
+
+		/* Account for time of the move */
+		float LastMoveTimeSlice = IterTick;
+		float SubTimeTickRemaining = IterTick * (1.f - Hit.Time);
+
+		/* Evaluate the hit */
+		if (Hit.bBlockingHit)
+		{
+			/* Hit could be the floor, so check if we can land */
+			if (IsValidLandingSpot(UpdatedComponent->GetComponentLocation(), Hit))
+			{
+				RemainingTime += SubTimeTickRemaining;
+				ProcessLanded(Hit, RemainingTime, Iterations); // Swap to grounded move update
+				return;
+			} // Valid Landing Spot
+			else 
+			{
+				/* Check if we can convert a normally invalid landing spot to a valid one */
+				if (!Hit.bStartPenetrating && ShouldCheckForValidLandingSpot(Hit))
+				{
+					const FVector PawnLocation = UpdatedComponent->GetComponentLocation();
+					FGroundingStatus FloorResult;
+					FindFloor(PawnLocation, FloorResult, false);
+					if (FloorResult.IsWalkableFloor() && IsValidLandingSpot(PawnLocation, FloorResult.HitResult))
+					{
+						RemainingTime += SubTimeTickRemaining;
+						ProcessLanded(Hit, RemainingTime, Iterations); // Swap to grounded move update
+						return;
+					}
+				}
+
+				/* Hit could not be interpreted as a floor, adjust accordingly */
+				HandleImpact(Hit, LastMoveTimeSlice, Delta);
+
+				/* Adjust delta based on hit */
+				const FVector OldHitNormal = Hit.Normal;
+				const FVector OldHitImpactNormal = Hit.ImpactNormal;
+				FVector AdjustedDelta = ComputeSlideVector(Delta, 1.f - Hit.Time, OldHitNormal, Hit);
+
+				/* Compute the velocity after the deflection */
+				const UPrimitiveComponent* HitComponent = Hit.GetComponent();
+				// TODO: Stuff here regarding recalculating the velocity based on the delta and managing it w/ root motion or a moving base
+
+				/* Perform a move in the deflected direction and solve accordingly */
+				if (SubTimeTickRemaining > UE_KINDA_SMALL_NUMBER && (AdjustedDelta | Delta) > 0.f)
+				{
+					SafeMoveUpdatedComponent(AdjustedDelta, PawnRotation, true, Hit);
+
+					/* Hit a second wall */
+					if (Hit.bBlockingHit)
+					{
+						LastMoveTimeSlice = SubTimeTickRemaining;
+						SubTimeTickRemaining *= (1.f - Hit.Time);
+
+						if (IsValidLandingSpot(UpdatedComponent->GetComponentLocation(), Hit))
+						{
+							RemainingTime += SubTimeTickRemaining;
+							ProcessLanded(Hit, RemainingTime, Iterations); // Swap to grounded move update
+							return;
+						} // Valid Landing Spot
+
+						HandleImpact(Hit, LastMoveTimeSlice, Delta);
+
+						/* Compute new deflection using old velocity */
+						if (CONDITION)
+						{
+							const FVector LastMoveDelta = OldVelocity * LastMoveTimeSlice;
+							AdjustedDelta = ComputeSlideVector(LastMoveDelta, 1.f, OldHitNormal, Hit);
+						}
+
+						FVector PreTwoWallDelta = AdjustedDelta;
+						TwoWallAdjust(AdjustedDelta, Hit, OldHitNormal);
+
+						/* Confused as to how to incorporate the stuff w/ the bHasLimitedAirControl condition */
+						// TODO: Figure that out, skipping it for now
+
+						/* Compute velocity after deflection */
+						if (SubTimeTickRemaining > UE_KINDA_SMALL_NUMBER && !bJustTeleported)
+						{
+							const FVector NewVelocity = (AdjustedDelta / SubTimeTickRemaining);
+							/* Might move this to an event for PostProcessRootMotion Velocity because we don't want to make assumptions */
+							Velocity = HasAnimRootMotion() ? FVector::VectorPlaneProject(Velocity, PawnRotation.GetUpVector()) + NewVelocity.ProjectOnToNormal(PawnRotation.GetUpVector()): NewVelocity;
+						}
+
+						/* bDitch = true means the pawn is straddling between two slopes neither of which it can stand on */
+						bool bDitch = ((MATH));
+						SafeMoveUpdatedComponent(AdjustedDelta, PawnRotation, true, Hit);
+						if (Hit.Time == 0.f)
+						{
+							/* If we're stuck, try to side step */
+							FVector SideDelta = (MATH);
+							if (SideDelta.IsNearlyZero())
+							{
+								SideDelta = FVector(MATH);
+							}
+							SafeMoveUpdatedComponent(SideDelta, PawnRotation, true, Hit);
+						}
+
+						if (bDitch || IsValidLandingSpot(UpdatedComponent->GetComponentLocation(), Hit) || Hit.Time == 0.f)
+						{
+							RemainingTime = 0.f;
+							ProcessLanded(Hit, RemainingTime, Iterations);
+							return;
+						}
+						/* Final check is for a very rare situation, worth skipping for now */
+					}
+				}
+
+				
+			} // Not a landing spot, solve for hit adjustment
+		}
+	}
 }
 
 
+void UCustomMovementComponent::MoveIteration(const FVector& InVelocity, float DeltaTime, FStepDownResult* OutStepDownResult)
+{
+	/* Move along the current Delta */
+	FHitResult Hit(1.f);
+	FVector Delta = InVelocity * DeltaTime; // TODO: Maybe project this to the player plane (passed to SlideAlongSurface)
+	FVector ProjectedDelta; // TODO: And use this for 3D base
+	SafeMoveUpdatedComponent(Delta, UpdatedComponent->GetComponentQuat(), true, Hit);
+	float LastMoveTimeSlice = DeltaTime;
+
+	/* Check the hit result of the move and respond appropriately */
+	if (Hit.bStartPenetrating)
+	{
+		// Allow this hit to be used as an impact we can deflect off, otherwise we do nothing the rest of the update and appear to hitch
+		HandleImpact(Hit);
+		SlideAlongSurface(Delta, 1.f, Hit.Normal, Hit, true);
+
+		/* If still in penetration, we're stuck */
+		if (Hit.bStartPenetrating)
+		{
+			bStuckInGeometry = true;
+		}
+	} // Was in penetration
+	else if (Hit.IsValidBlockingHit())
+	{
+		float PercentTimeApplied = Hit.Time;
+		/* Could be a walkable floor or ramp, unsure if that would be the case because we prep the velocity for this beforehand */
+		
+		/* Impacted a barrier, check if we can use it as stairs */
+		if (CanStepUp(Hit) || IS_MOVEMENT_BASE)
+		{
+			const FVector PreStepUpLocation = UpdatedComponent->GetComponentLocation();
+			if (!StepUp(Hit, Delta * (1.f - PercentTimeApplied), OutStepDownResult))
+			{
+				/* Step up failed, handle impact */
+				HandleImpact(Hit, LastMoveTimeSlice, Delta);
+				SlideAlongSurface(Delta, 1.f - PercentTimeApplied, Hit.Normal, Hit, true);
+			} // Step up failed
+			else
+			{
+				
+			} // Step up succeeded
+			
+		} // Can step up
+		else if (Hit.Component.IsValid() && !Hit.Component.Get()->CanCharacterStepUp(GetPawnOwner()))
+		{
+			HandleImpact(Hit, LastMoveTimeSlice, Delta);
+			SlideAlongSurface(Delta, 1.f - PercentTimeApplied, Hit.Normal, Hit, true);
+		} // Can't step up
+		
+	} // Was valid blocking hit
+}
+
 void UCustomMovementComponent::PostMovementUpdate(float DeltaTime)
 {
+	UpdateComponentVelocity();
 	
+	LastUpdateLocation = UpdatedComponent ? UpdatedComponent->GetComponentLocation() : FVector::ZeroVector;
+	LastUpdateRotation = UpdatedComponent ? UpdatedComponent->GetComponentQuat() : FQuat::Identity;
+	LastUpdateVelocity = Velocity;
 }
 
 #pragma endregion Core Update Loop
@@ -505,9 +688,8 @@ void UCustomMovementComponent::PostMovementUpdate(float DeltaTime)
 #pragma region Stability Evaluations
 
 /* FUNCTIONAL */
-bool UCustomMovementComponent::CanMove()
+bool UCustomMovementComponent::CanMove() const
 {
-	return true;
 	if (!UpdatedComponent || !PawnOwner) return false;
 	if (UpdatedComponent->Mobility != EComponentMobility::Movable) return false;
 	if (bStuckInGeometry) return false;
@@ -521,301 +703,17 @@ bool UCustomMovementComponent::MustUnground() const
 	return bMustUnground;
 }
 
-/* FUNCTIONAL */
-// Could this whole thing be made a lot simpler by sweeping with MoveUpdatedComponent?
-void UCustomMovementComponent::ProbeGround(float ProbingDistance, FGroundingReport& OutGroundingReport)
-{
-	SCOPE_CYCLE_COUNTER(STAT_ProbeGround)
-	
-	/* Ensure our probing distance is valid */
-	if (ProbingDistance < MINIMUM_GROUND_PROBING_DISTANCE)
-	{
-		ProbingDistance = MINIMUM_GROUND_PROBING_DISTANCE;
-	}
-	
-	/* Initialize ground sweep data */
-	int GroundSweepsMade = 0;
-	FHitResult GroundSweepHit(NoInit);
-	bool bGroundSweepIsOver = false;
-	FVector GroundSweepPosition = UpdatedComponent->GetComponentLocation();
-	FVector GroundSweepDirection = -UpdatedComponent->GetUpVector(); // Ground sweeps relative to character orientation
-	float GroundProbeDistanceRemaining = ProbingDistance;
 
-	FScopedMovementUpdate GroundSweepScopedUpdate(UpdatedComponent, EScopedUpdate::DeferredUpdates);
-	
-	/* Begin performing sweep iterations */
-	while (GroundProbeDistanceRemaining > 0 && (GroundSweepsMade <= MAX_GROUND_SWEEP_ITERATIONS) && !bGroundSweepIsOver)
-	{
-		if (GroundSweep(GroundSweepPosition, UpdatedComponent->GetComponentQuat(), GroundSweepDirection, GroundProbeDistanceRemaining, GroundSweepHit))
-		{
-			
-			/* Evaluate stability of the ground hit */
-			// Don't sweep, we just want the hit stability result to have up-to-date information about our location post sweep (target position)
-			FVector TargetPosition = GroundSweepPosition + (GroundSweepDirection * GroundSweepHit.Distance);
-			FVector SweepDelta = TargetPosition - UpdatedComponent->GetComponentLocation();
-			
-			MoveUpdatedComponent(SweepDelta, UpdatedComponent->GetComponentQuat(), false);
-			FHitStabilityReport GroundHitStabilityReport;
-			EvaluateHitStability(GroundSweepHit, Velocity, GroundHitStabilityReport);
-
-			/* Fill out ground information from hit stability report */
-			OutGroundingReport.bFoundAnyGround = true;
-			OutGroundingReport.GroundNormal = GroundSweepHit.ImpactNormal;
-			OutGroundingReport.InnerGroundNormal = GroundHitStabilityReport.InnerNormal;
-			OutGroundingReport.OuterGroundNormal = GroundHitStabilityReport.OuterNormal;
-			OutGroundingReport.GroundPoint = GroundSweepHit.ImpactPoint;
-			OutGroundingReport.GroundHit = GroundSweepHit;
-			OutGroundingReport.bSnappingPrevented = false;
-
-			/* Evaluate the stability of the ground */
-			if (GroundHitStabilityReport.bIsStable)
-			{
-				/* Revert the moves we used for sweeps and perform the actual snapping (or not)*/
-				GroundSweepScopedUpdate.RevertMove();
-				
-				/* Find all scenarios where snapping should be cancelled */
-				OutGroundingReport.bSnappingPrevented = !IsStableWithSpecialCases(GroundHitStabilityReport, Velocity);
-				OutGroundingReport.bIsStableOnGround = true;
-
-				/* Snap us to the ground */
-				if (!OutGroundingReport.bSnappingPrevented)
-				{
-					FHitResult DummyHit;
-					if (!LastGroundingStatus.bFoundAnyGround)
-					{
-						DRAW_SPHERE(UpdatedPrimitive->GetComponentLocation(), FColor::Red);
-						DRAW_SPHERE(UpdatedPrimitive->GetComponentLocation() + GroundSweepDirection * (GroundSweepHit.Distance - COLLISION_OFFSET), FColor::Green);
-					}
-					SafeMoveUpdatedComponent(GroundSweepDirection * (GroundSweepHit.Distance - COLLISION_OFFSET), UpdatedComponent->GetComponentQuat(), true, DummyHit);
-					// Log snapping distance if we were aerial previously
-					/* REGISTER DEBUG FIELD */
-					if (!LastGroundingStatus.bIsStableOnGround && !DebugSimulationState.bFoundLedge)
-						DebugSimulationState.LastGroundSnappingDistance = GroundSweepHit.Distance - COLLISION_OFFSET;
-				}
-
-				bGroundSweepIsOver = true;
-				return;
-			}
-			else
-			{
-				/* Calculate movement from this iteration and advance position*/
-				FVector SweepMovement = (GroundSweepDirection * GroundSweepHit.Distance) + UpdatedComponent->GetUpVector() * FMath::Max(COLLISION_OFFSET, GroundSweepHit.Distance);
-
-				/* Set remaining distance */
-				GroundProbeDistanceRemaining = FMath::Min(GROUND_PROBING_REBOUND_DISTANCE, FMath::Max(GroundProbeDistanceRemaining - SweepMovement.Size(), 0.f));
-
-				/* Reorient direction */
-				GroundSweepDirection = FVector::VectorPlaneProject(GroundSweepDirection, GroundSweepHit.ImpactNormal);
-			}
-		}
-		else
-		{
-			bGroundSweepIsOver = true;
-		}
-
-		GroundSweepsMade++;
-	}
-
-	/* No ground found, revert the move regardless */
-	GroundSweepScopedUpdate.RevertMove();
-}
-
-/* FUNCTIONAL */
-void UCustomMovementComponent::EvaluateHitStability(FHitResult Hit, FVector MoveDelta, FHitStabilityReport& OutStabilityReport)
-{
-	SCOPE_CYCLE_COUNTER(STAT_EvalHitStability)
-	
-	if (!bSolveGrounding)
-	{
-		OutStabilityReport.bIsStable = false;
-		return;
-	}
-
-	/* Doing everything relative to character up so get that */
-	FVector PawnUp = UpdatedComponent->GetUpVector(); // This will be up to date I think so no need to get the AtCharRotation (unless we're evaluating stability of a rotation?)
-	const FVector HitNormal = Hit.ImpactNormal;
-	FVector InnerHitDirection = FVector::VectorPlaneProject(-HitNormal, PawnUp);
-
-	/* Initialize the stability report */
-
-	OutStabilityReport.bIsStable = IsStableOnNormal(HitNormal);
-	OutStabilityReport.bFoundInnerNormal = false;
-	OutStabilityReport.bFoundOuterNormal = false;
-	OutStabilityReport.InnerNormal = HitNormal;
-	OutStabilityReport.OuterNormal = HitNormal;
-
-	/* Only really useful for Ledge and Denivelation Handling*/
-	if (bLedgeAndDenivelationHandling)
-	{
-		/* Setup our raycast information */
-		float LedgeCheckHeight = MIN_DISTANCE_FOR_LEDGE;
-		if (StepHandling != EStepHandlingMethod::None)
-		{
-			LedgeCheckHeight = MaxStepHeight;
-		}
-
-		FVector InnerStart = Hit.ImpactPoint + (PawnUp * SECONDARY_PROBES_VERTICAL) + (InnerHitDirection * SECONDARY_PROBES_HORIZONTAL);
-		FVector OuterStart = Hit.ImpactPoint + (PawnUp * SECONDARY_PROBES_VERTICAL) + (-InnerHitDirection * SECONDARY_PROBES_HORIZONTAL);
-
-		FHitResult CastHit;
-		bool bStableLedgeInner = false;
-		bool bStableLedgeOuter = false;
-
-		/* Cast for ledge, slightly offset in each case such that if one hits and one doesn't, its a ledge */
-		if (CollisionLineCast(InnerStart, -PawnUp, LedgeCheckHeight + SECONDARY_PROBES_VERTICAL, CastHit))
-		{
-			FVector InnerLedgeNormal = CastHit.ImpactNormal;
-			OutStabilityReport.InnerNormal = InnerLedgeNormal;
-			OutStabilityReport.bFoundInnerNormal = true;
-			bStableLedgeInner = IsStableOnNormal(InnerLedgeNormal);
-		}
-		if (CollisionLineCast(OuterStart, -PawnUp, LedgeCheckHeight + SECONDARY_PROBES_VERTICAL, CastHit))
-		{
-			FVector OuterLedgeNormal = CastHit.ImpactNormal;
-			OutStabilityReport.OuterNormal = OuterLedgeNormal;
-			OutStabilityReport.bFoundOuterNormal = true;
-			bStableLedgeOuter = IsStableOnNormal(OuterLedgeNormal);
-		}
-
-		/* With both ledge cast information, evaluate whether it is a ledge and fill info accordingly */
-		OutStabilityReport.bLedgeDetected = (bStableLedgeInner != bStableLedgeOuter);
-
-		/* REGISTER DEBUG FIELD */
-		DebugSimulationState.bFoundLedge = OutStabilityReport.bLedgeDetected;
-		DebugSimulationState.GroundAngle = FMath::RadiansToDegrees(FMath::Acos(FVector::UpVector | HitNormal));
-
-		if (OutStabilityReport.bLedgeDetected)
-		{
-			// fill out information, leaving for later because i wanna understand the math
-			OutStabilityReport.bIsOnEmptySideOfLedge = bStableLedgeOuter && !bStableLedgeInner;
-			OutStabilityReport.LedgeGroundNormal = bStableLedgeOuter ? OutStabilityReport.OuterNormal : OutStabilityReport.InnerNormal;
-			OutStabilityReport.LedgeRightDirection = (HitNormal ^ OutStabilityReport.LedgeGroundNormal).GetSafeNormal();
-			OutStabilityReport.LedgeFacingDirection = FVector::VectorPlaneProject((OutStabilityReport.LedgeGroundNormal ^ OutStabilityReport.LedgeFacingDirection).GetSafeNormal(), PawnUp).GetSafeNormal();
-			OutStabilityReport.DistanceFromLedge = FVector::VectorPlaneProject(Hit.ImpactPoint + (UpdatedComponent->GetComponentLocation() - UpdatedComponent->GetUpVector() * UpdatedPrimitive->GetCollisionShape().GetCapsuleHalfHeight()), UpdatedComponent->GetUpVector()).Length();
-			OutStabilityReport.bIsMovingTowardsEmptySideOfLedge = (MoveDelta.GetSafeNormal() | OutStabilityReport.LedgeFacingDirection) > 0.f;
-		}
-	}
-}
-
-// TODO: Currently Unused
-void UCustomMovementComponent::EvaluateCrease(FVector MoveVelocity, FVector PrevVelocity, FVector CurHitNormal, FVector PrevHitNormal, bool bCurrentHitIsStable, bool bPreviousHitIsStable, bool bCharIsStable, bool& bIsValidCrease, FVector& CreaseDirection)
-{
-	/* Initialize out parameters for safety */
-	bIsValidCrease = false;
-	CreaseDirection = FVector::ZeroVector;
-
-	// bCharIsStable is a bad name, if we're actually evaluating a crease it would be false and we'd enter this check. Look at how EvaluateHitStability sets bStableOnHit which is what is actually passed in here
-	// If bPrevHitStable and bCharHitIsStable are both false, then this is a likely candidate to check for a crease - two obstructions basically is what it's saying...
-	if (!bCharIsStable || !bCurrentHitIsStable || !bPreviousHitIsStable)
-	{
-		FVector BlockingCreaseDirection = (CurHitNormal ^ PrevHitNormal).GetSafeNormal();
-		const float DotPlanes = CurHitNormal | PrevHitNormal; // Assuming they're normalized
-		bool bIsVelocityConstrainedByCrease = false;
-
-		/* Avoid calculations if the two planes are the same */
-		if (DotPlanes < 0.999f)
-		{
-			/* Get the blocking hit normals projected onto the plane defined by the blocking crease direction */
-			const FVector NormalAOnCreasePlane = FVector::VectorPlaneProject(CurHitNormal, BlockingCreaseDirection).GetSafeNormal();
-			const FVector NormalBOnCreasePlane = FVector::VectorPlaneProject(PrevHitNormal, BlockingCreaseDirection).GetSafeNormal();
-			const float DotPlanesOnCreasePlane = NormalAOnCreasePlane | NormalBOnCreasePlane;
-
-			/* Our velocity during the hit projected onto the plane defined by the crease direction */
-			const FVector EnteringVelocityDirectionOnCreasePlane = FVector::VectorPlaneProject(PrevVelocity, BlockingCreaseDirection).GetSafeNormal();
-
-			/*
-			 * If our velocity points inwards towards the crease basically - so if the crease was -v-, this check would pass if our velocity
-			 * was pointed towards the inside of the (v). Done by comparing the dot product of the two normals defining each one side of (v), with their dot product
-			 * with our velocity. If our entering velocity is constrained, that means it points inside the (v)
-			 */
-			if (DotPlanesOnCreasePlane <= (((-EnteringVelocityDirectionOnCreasePlane) | NormalAOnCreasePlane) + 0.001f) &&
-				DotPlanesOnCreasePlane <= (((-EnteringVelocityDirectionOnCreasePlane) | NormalBOnCreasePlane) + 0.01f))
-			{
-				bIsVelocityConstrainedByCrease = true;
-			}
-		}
-
-		if (bIsVelocityConstrainedByCrease)
-		{
-			/* Flip the crease direction to make it representative of the real direction our velocity would be projected to */
-			if ((BlockingCreaseDirection | MoveVelocity) < 0.f)
-			{
-				BlockingCreaseDirection = -BlockingCreaseDirection;
-			}
-
-			bIsValidCrease = true;
-			CreaseDirection = BlockingCreaseDirection;
-		}
-	}
-}
-
-/* FUNCTIONAL */
-bool UCustomMovementComponent::IsStableOnNormal(FVector Normal) const
-{
-	float angle = FMath::RadiansToDegrees(FMath::Acos(UpdatedComponent->GetUpVector() | Normal));
-	
-	return angle <= MaxStableSlopeAngle;
-}
-
-/* FUNCTIONAL */
-bool UCustomMovementComponent::IsStableWithSpecialCases(const FHitStabilityReport& StabilityReport, FVector CharVelocity)
-{
-	/* Only check for special cases if this is enabled, otherwise this method returns true by default */
-	if (bLedgeAndDenivelationHandling)
-	{
-		if (StabilityReport.bLedgeDetected)
-		{
-			if (StabilityReport.bIsMovingTowardsEmptySideOfLedge)
-			{
-				const FVector VelocityOnLedgeNormal = CharVelocity.ProjectOnTo(StabilityReport.LedgeFacingDirection);
-				if (VelocityOnLedgeNormal.Size() >= MaxVelocityForLedgeSnap)
-				{
-					return false;
-				}
-			}
-
-			if (StabilityReport.bIsOnEmptySideOfLedge && StabilityReport.DistanceFromLedge > MaxStableDistanceFromLedge)
-			{
-				return false;
-			}
-		}
-
-		if (LastGroundingStatus.bFoundAnyGround && StabilityReport.InnerNormal.SizeSquared() != 0.f && StabilityReport.OuterNormal.SizeSquared() != 0.f)
-		{
-			float DenivelationAngle = FMath::RadiansToDegrees(FMath::Acos(StabilityReport.InnerNormal.GetSafeNormal() | StabilityReport.OuterNormal.GetSafeNormal()));
-			if (DenivelationAngle > MaxStableDenivelationAngle)
-			{
-				/* REGISTER DEBUG FIELD */
-				DebugSimulationState.LastExceededDenivelationAngle = DenivelationAngle;
-				
-				return false;
-			}
-			else
-			{
-				DenivelationAngle = FMath::RadiansToDegrees(FMath::Acos(LastGroundingStatus.InnerGroundNormal.GetSafeNormal() | StabilityReport.OuterNormal.GetSafeNormal()));
-				if (DenivelationAngle > MaxStableDenivelationAngle)
-				{
-					/* REGISTER DEBUG FIELD */
-					DebugSimulationState.LastExceededDenivelationAngle = DenivelationAngle;
-					
-					return false;
-				}
-			}
-		}
-	}
-
-	return true;
-}
 
 /* ===== Steps ===== */
 
-bool UCustomMovementComponent::StepUp(FHitResult StepHit, FVector MoveDelta, FHitResult* OutForwardHit)
+bool UCustomMovementComponent::StepUp(const FHitResult& StepHit, const FVector& Delta, FStepDownResult* OutStepDownResult)
 {
 	SCOPE_CYCLE_COUNTER(STAT_StepUp)
 	
 	/* Determine our planar move delta for this iteration */
 	const FVector PawnUp = UpdatedComponent->GetUpVector();
-	const FVector StepLocationDelta = FVector::VectorPlaneProject(MoveDelta, PawnUp);
+	const FVector StepLocationDelta = FVector::VectorPlaneProject(Delta, PawnUp);
 
 	/* Skip negligible deltas or if step height is 0 (or invalid) */
 	if (MaxStepHeight <= 0.f || StepLocationDelta.IsNearlyZero())
@@ -848,7 +746,7 @@ bool UCustomMovementComponent::StepUp(FHitResult StepHit, FVector MoveDelta, FHi
 	FVector StartFloorPoint = StartLocation - PawnUp * PawnHalfHeight; // Character lower hemisphere center (Center is Z=0 again...)
 	float StartDistanceToFloor = 0.f;
 
-	if (IsStableOnNormal(StepHit.Normal) && !MustUnground())
+	if (IsWalkable(StepHit) && !MustUnground())
 	{
 		StartDistanceToFloor = FMath::Abs((GroundingStatus.GroundHit.Location - StartLocation) | PawnUp);
 		// Double because we go up first, then we go down(?)
@@ -978,13 +876,37 @@ bool UCustomMovementComponent::StepUp(FHitResult StepHit, FVector MoveDelta, FHi
 	return true;
 }
 
-// TODO: THIS, Need to check step validity which I don't currently do!
-bool UCustomMovementComponent::CheckStepValidity(FHitResult& StepHit, FVector InnerHitDirection)
+bool UCustomMovementComponent::CanStepUp(const FHitResult& StepHit) const
 {
+	if (!StepHit.IsValidBlockingHit())
+	{
+		return false;
+	}
+
+	const UPrimitiveComponent* HitComponent = StepHit.Component.Get();
+	if (!HitComponent)
+	{
+		return true;
+	}
+
+	if (!HitComponent->CanCharacterStepUp(GetPawnOwner()))
+	{
+		return false;
+	}
+
+	if (!StepHit.HitObjectHandle.IsValid())
+	{
+		return true;
+	}
+
+	const AActor* HitActor = StepHit.HitObjectHandle.GetManagingActor();
+	if (!HitActor->CanBeBaseForCharacter(GetPawnOwner()))
+	{
+		return false;
+	}
+
 	return true;
 }
-
-
 
 #pragma endregion Stability Evaluations
 
@@ -1010,71 +932,30 @@ void UCustomMovementComponent::HandleImpact(const FHitResult& Hit, float TimeSli
 	}
 }
 
-FHitResult UCustomMovementComponent::SinglePeneterationResolution()
+FVector UCustomMovementComponent::GetPenetrationAdjustment(const FHitResult& Hit) const
 {
-	const FQuat CurrentRotation = UpdatedComponent->GetComponentQuat();
-	const FVector TestDelta = {0.01f, 0.01f, 0.01f};
-	FHitResult Hit;
+	FVector Result = Super::GetPenetrationAdjustment(Hit);
 
-	const auto TestMove = [&](const FVector& Delta) {
-		FScopedMovementUpdate ScopedMovement(UpdatedComponent, EScopedUpdate::DeferredUpdates);
-
-		// Check for penetrations by applying a small location delta.
-		MoveUpdatedComponent(Delta, CurrentRotation, true, &Hit);
-
-		// Revert the movement again afterwards, we are only interested in the hit result.
-		ScopedMovement.RevertMove();
-	};
-
-	TestMove(TestDelta);
-
-	if (!Hit.bBlockingHit || Hit.IsValidBlockingHit())
-	{
-		// Apply the test delta in the opposite direction.
-		TestMove(-TestDelta);
-
-		if (!Hit.bBlockingHit || Hit.IsValidBlockingHit())
-		{
-			// The pawn is not in penetration, no action is needed.
-			return Hit;
-		}
-	}
+	const float MaxDepenetrationWithGeometry = 500.f;
+	const float MaxDepenetrationWithPawn = 100.f;
 	
-	SafeMoveUpdatedComponent(TestDelta, CurrentRotation, true, Hit);
-	SafeMoveUpdatedComponent(-TestDelta, CurrentRotation, true, Hit);
+	float MaxDistance = MaxDepenetrationWithGeometry;
+	if (Hit.HitObjectHandle.DoesRepresentClass(APawn::StaticClass()))
+	{
+		MaxDistance = MaxDepenetrationWithPawn;
+	}
 
-	return Hit;
+	Result = Result.GetClampedToMaxSize(MaxDistance);
+
+	return Result;
 }
 
-FHitResult UCustomMovementComponent::AutoResolvePenetration()
+bool UCustomMovementComponent::ResolvePenetrationImpl(const FVector& Adjustment, const FHitResult& Hit, const FQuat& NewRotation)
 {
-	SCOPE_CYCLE_COUNTER(STAT_ResolvePenetration)
-	return FHitResult{0};
-	FHitResult Hit = SinglePeneterationResolution();
-	
-	return Hit;
-}
-
-/* FUNCTIONAL */
-void UCustomMovementComponent::HandleVelocityProjection(FVector& MoveVelocity, FVector ObstructionNormal, bool bStableOnHit)
-{
-	if (bStableOnHit) bLastMovementIterationFoundAnyGround = true;
-	
-	if (GroundingStatus.bIsStableOnGround && !MustUnground())
-	{
-		if (bStableOnHit)
-		{
-			MoveVelocity = GetDirectionTangentToSurface(MoveVelocity, ObstructionNormal) * MoveVelocity.Size();
-		}
-		else
-		{
-			MoveVelocity = FVector::VectorPlaneProject(MoveVelocity, ObstructionNormal);
-		}
-	}
-	else
-	{
-		MoveVelocity = FVector::VectorPlaneProject(MoveVelocity, ObstructionNormal);
-	}
+	// If movement occurs, mark that we teleported so we don't incorrectly adjust velocity based on potentially very different movement than ours
+	//bJustTeleported |= Super::ResolvePenetrationImpl(Adjustment, Hit, NewRotation);
+	//return bJustTeleported;
+	return Super::ResolvePenetrationImpl(Adjustment, Hit, NewRotation);
 }
 
 
@@ -1120,296 +1001,16 @@ void UCustomMovementComponent::TwoWallAdjust(FVector& Delta, const FHitResult& H
 	}
 }
 
-
-
 #pragma endregion Collision Adjustments
 
 
 #pragma region Collision Checks
 
-bool UCustomMovementComponent::GroundSweep(FVector Position, FQuat Rotation, FVector Direction, float Distance, FHitResult& OutHit)
-{
-	SCOPE_CYCLE_COUNTER(STAT_GroundSweep)
-	
-	/* Initialize sweep data */
-	const UWorld* World = GetWorld();
-	const FCollisionShape CollisionShape = UpdatedPrimitive->GetCollisionShape();
-	const FCollisionQueryParams CollisionQueryParams(FName(__func__), false, GetOwner());
-	const ECollisionChannel CollisionChannel = UpdatedComponent->GetCollisionObjectType();
-	
-	const FVector TraceStart = Position;
-	const FVector TraceEnd = Position + Direction * (Distance + GROUND_PROBING_BACKSTEP_DISTANCE);
-	const FQuat TraceRotation = UpdatedComponent->GetComponentQuat();
-	
-	const bool bHit = World->SweepSingleByChannel(
-											OutHit,
-											TraceStart,
-											TraceEnd,
-											TraceRotation,
-											CollisionChannel,
-											CollisionShape,
-											CollisionQueryParams);
-	
-	if (bDebugGroundSweep)
-	{
-		/* ===== Draw Debug ===== */
-		DRAW_CAPSULE(TraceStart, TraceRotation, CollisionShape.GetCapsuleHalfHeight(), CollisionShape.GetCapsuleRadius(), GroundSweepDebugColor);
-
-		if (bHit)
-		{
-			DRAW_CAPSULE(OutHit.Location, TraceRotation, CollisionShape.GetCapsuleHalfHeight(), CollisionShape.GetCapsuleRadius(), GroundSweepHitDebugColor);
-		}
-		else
-		{
-			DRAW_CAPSULE(TraceEnd, TraceRotation, CollisionShape.GetCapsuleHalfHeight(), CollisionShape.GetCapsuleRadius(), FColor::Purple);
-		}
-	}
-
-	return bHit;
-}
-
-
-bool UCustomMovementComponent::CollisionLineCast(FVector StartPoint, FVector Direction, float Distance, FHitResult& OutHit)
-{
-	SCOPE_CYCLE_COUNTER(STAT_LineCasts)
-	
-	const UWorld* World = GetWorld();
-	const TArray<AActor*> ActorsToIgnore = {PawnOwner};
-	const FCollisionQueryParams CollisionQueryParams(FName(__func__), false, GetOwner());
-	const ECollisionChannel CollisionChannel = UpdatedComponent->GetCollisionObjectType();
-	
-	const FVector TraceStart = StartPoint;
-	const FVector TraceEnd = StartPoint + Direction * Distance;
-
-	const bool bHit = World->LineTraceSingleByChannel(
-											OutHit,
-											TraceStart,
-											TraceEnd,
-											CollisionChannel,
-											CollisionQueryParams);
-
-	if (bDebugLineTrace)
-	{
-		//Draw Line
-		DRAW_LINE(TraceStart, bHit ? OutHit.ImpactPoint : TraceEnd, bHit ? LineTraceHitDebugColor : LineTraceDebugColor);
-	}
-
-	return bHit;
-}
 
 #pragma endregion Collision Checks
 
-#pragma region Exposed Calls
-
-void UCustomMovementComponent::HaltMovement()
-{
-	
-}
-
-void UCustomMovementComponent::DisableMovement()
-{
-	
-}
-
-void UCustomMovementComponent::EnableMovement()
-{
-	
-}
-
-
-void UCustomMovementComponent::ForceUnground()
-{
-	bMustUnground = true;
-}
-
-void UCustomMovementComponent::MoveCharacter(FVector ToPosition)
-{
-	
-}
-
-void UCustomMovementComponent::RotateCharacter(FQuat ToRotation)
-{
-	
-}
-
-void UCustomMovementComponent::ApplyState(FMotorState StateToApply)
-{
-	
-}
-
-
-FVector UCustomMovementComponent::GetVelocityFromMovement(FVector MoveDelta, float DeltaTime)
-{
-	if (DeltaTime <= 0.f) return FVector::ZeroVector;
-
-	return MoveDelta / DeltaTime;
-}
-
-
-void UCustomMovementComponent::SetVelocity(const FVector& NewVelocity)
-{
-	Velocity = NewVelocity;
-}
-
-void UCustomMovementComponent::AddVelocity(const FVector& AddVelocity)
-{
-	Velocity += AddVelocity;
-}
-
-void UCustomMovementComponent::AddImpulse(const FVector& Impulse, const bool bVelChange)
-{
-	if (!Impulse.IsZero())
-	{
-		if (!bVelChange)
-		{
-			AddVelocity(Impulse / FMath::Max(Mass, KINDA_SMALL_NUMBER));
-		}
-		else
-		{
-			// No scaling by mass i.e. mass is assumed to be 1 kg.
-			AddVelocity(Impulse);
-		}
-	}
-}
-
-#pragma endregion Exposed Calls
 
 #pragma region Moving Base
-// TODO (1): Figure out comparisons between two UPrimitiveComponents
-// TODO (2): Figure out why there's a centrifugal force on rotating bases
-// TODO (3): Examine CMCs implementation and make use of MovingBaseUtility static class
-void UCustomMovementComponent::MovementBaseUpdate(float DeltaTime)
-{
-	SCOPE_CYCLE_COUNTER(STAT_MoveWithBase)
-	
-	/* REGISTER DEBUG FIELD */
-	DebugSimulationState.bIsMovingWithBase = false;
-	
-	// Get last moving base
-	const auto LastMovingBase = LastGroundingStatus.GroundHit.GetComponent();
-	const auto CurrentMovingBase = MovementBaseOverride != nullptr ? MovementBaseOverride : GroundingStatus.GroundHit.GetComponent();
-	
-	const FVector TmpVelFromCurrentBase = ComputeBaseVelocity(CurrentMovingBase);
-
-	const bool bBaseChanged = !LastGroundingStatus.bFoundAnyGround && (CurrentMovingBase || !IsValidMovementBase(CurrentMovingBase));
-	
-	/* Conserve momentum when de-stabilized from a moving base */
-	if (bImpartBaseVelocity && bBaseChanged && IsValidMovementBase(LastMovingBase))
-	{
-		// TODO: Finish this, I don't think we want to focus on our current new moving base, instead we probably
-		// want to just add velocity from leaving it. Leaving the moving with base to MovementUpdate (might not matter actually)
-		const FVector VelocityFromPrevBase = ComputeBaseVelocity(LastMovingBase);
-		AddVelocity(VelocityFromPrevBase - TmpVelFromCurrentBase);
-		
-	}
-
-	/* Cancel out planar velocity upon landing on a valid moving base */
-	if (bBaseChanged)
-	{
-		AddVelocity(-FVector::VectorPlaneProject(TmpVelFromCurrentBase, UpdatedComponent->GetUpVector()));
-	}
-
-	// TODO: Figure out MovementBaseUtility include
-	if (CurrentMovingBase)
-	{
-		//MovementBaseUtility::AddTickDependency(PrimaryComponentTick, CurrentMovingBase);
-	}	
-	/* Move iteration with base velocity, don't add it to our velocity just move via its delta */
-	if (!TmpVelFromCurrentBase.IsZero())
-	{
-		// Don't sweep because the base may have moved inside the pawn
-		MoveUpdatedComponent(TmpVelFromCurrentBase * DeltaTime, ComputeBaseRotation(CurrentMovingBase, DeltaTime), false);
-		ProbeGround(MINIMUM_GROUND_PROBING_DISTANCE + FMath::Max(UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius(), MaxStepHeight), GroundingStatus);
-		/* REGISTER DEBUG FIELD */
-		DebugSimulationState.bIsMovingWithBase = true;
-		DebugSimulationState.MovingBaseVelocity = TmpVelFromCurrentBase;
-	}
-
-}
-
-FVector UCustomMovementComponent::ComputeBaseVelocity(UPrimitiveComponent* MovementBase) const
-{
-	/* We assume, if here, we've already checked the validity of the moving base */
-	
-	if (!MovementBase) return FVector{0}; // Null base
-
-	/*===== Linear Velocity =====*/
-	FVector BaseVelocity;
-
-	if (const auto PawnMovementBase = Cast<APawn>(MovementBase->GetOwner()))
-	{
-		// Current moving base is another pawn
-		BaseVelocity = PawnMovementBase->GetVelocity();
-	}
-	else
-	{
-		// Current moving base is some form of geometry
-		const auto Owner = MovementBase->GetOwner();
-
-		// Check if component has a velocity
-		BaseVelocity = MovementBase->GetComponentVelocity();
-		if (!BaseVelocity.IsZero()) return BaseVelocity;
-
-		// Check if owners root component has a velocity
-		if (Owner)
-		{
-			BaseVelocity = Owner->GetVelocity();
-			if (!BaseVelocity.IsZero()) return BaseVelocity;
-		}
-
-		// Check if component has a physics velocity
-		if (const auto BodyInstance = MovementBase->GetBodyInstance())
-		{
-			BaseVelocity = BodyInstance->GetUnrealWorldVelocity();
-
-			/*===== Tangent Velocity =====*/
-			const FVector AngularVelocity = BodyInstance->GetUnrealWorldAngularVelocityInRadians();
-			if (!AngularVelocity.IsNearlyZero())
-			{
-				const FVector Location = MovementBase->GetComponentLocation();
-				const FVector PawnLowerBound = UpdatedComponent->GetComponentLocation() - UpdatedComponent->GetUpVector() * UpdatedPrimitive->GetCollisionShape().GetCapsuleHalfHeight();
-				const FVector RadialDistanceToComponent = PawnLowerBound - Location;
-				const FVector TangentialVelocity = AngularVelocity ^ RadialDistanceToComponent;
-				BaseVelocity += TangentialVelocity;
-			}
-		}
-	}
-	
-	return BaseVelocity;
-}
-
-FQuat UCustomMovementComponent::ComputeBaseRotation(UPrimitiveComponent* MovementBase, float DeltaTime) const
-{
-	const FQuat PlayerRotation = UpdatedComponent->GetComponentQuat();
-	
-	if (!MovementBase) return PlayerRotation;
-	
-	if (const auto BodyInstance = MovementBase->GetBodyInstance())
-	{
-		const FVector AngularVelocity = BodyInstance->GetUnrealWorldAngularVelocityInRadians();
-
-		if (!AngularVelocity.IsNearlyZero())
-		{
-			const FQuat DeltaRot = FQuat::MakeFromEuler(FMath::RadiansToDegrees(AngularVelocity * DeltaTime));
-			const FVector NewForward = FVector::VectorPlaneProject(DeltaRot * UpdatedComponent->GetForwardVector(), UpdatedComponent->GetUpVector()).GetSafeNormal();
-			const FQuat TargetRotation = UKismetMathLibrary::MakeRotFromXZ(NewForward, UpdatedComponent->GetUpVector()).Quaternion();
-			return TargetRotation;
-		}
-	}
-	return PlayerRotation;
-}
-
-
-
-bool UCustomMovementComponent::IsValidMovementBase(UPrimitiveComponent* MovementBase) const
-{
-	return MovementBase && MovementBase->Mobility == EComponentMobility::Movable;
-}
-
-bool UCustomMovementComponent::ShouldImpartVelocityFromBase(UPrimitiveComponent* MovementBase) const
-{
-	return bMoveWithBase && IsValidMovementBase(MovementBase) && !MovementBase->IsSimulatingPhysics();
-}
 
 
 #pragma endregion Moving Base 
@@ -1572,6 +1173,11 @@ bool UCustomMovementComponent::IsPlayingRootMotion() const
 
 void UCustomMovementComponent::RootCollisionTouched(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
+	if (!bEnablePhysicsInteraction)
+	{
+		return;
+	}
+	
 	/* Ensure the component we've touched is a physics body */
 	if (!OtherComponent || !OtherComponent->IsAnySimulatingPhysics())
 	{
@@ -1613,3 +1219,510 @@ void UCustomMovementComponent::RootCollisionTouched(UPrimitiveComponent* Overlap
 }
 
 #pragma endregion Physics Interactions
+
+#pragma region CMC Copies
+
+// TODO
+bool UCustomMovementComponent::ShouldCatchAir(const FGroundingStatus& OldFloor, const FGroundingStatus& NewFloor)
+{
+}
+
+
+// DONE
+void UCustomMovementComponent::UpdateFloorFromAdjustment()
+{
+	if (CurrentFloor.bWalkableFloor)
+	{
+		FindFloor(UpdatedComponent->GetComponentLocation(), CurrentFloor, false);
+	}
+	else
+	{
+		CurrentFloor.Clear();
+	}
+}
+
+
+// DONE
+void UCustomMovementComponent::AdjustFloorHeight()
+{
+	// If we have a floor check that hasn't hit anything, don't adjust height.
+	if (!CurrentFloor.IsWalkableFloor())
+	{
+		return;
+	}
+
+	float OldFloorDist = CurrentFloor.FloorDist;
+	if (CurrentFloor.bLineTrace)
+	{
+		/* This would cause us to scale unwalkable walls*/
+		if (OldFloorDist < MIN_FLOOR_DIST && CurrentFloor.LineDist >= MIN_FLOOR_DIST)
+		{
+			return;
+		}
+		
+		/* Fall back to a line trace means the sweep was unwalkable. Use the line distance for vertical adjustments */
+		OldFloorDist = CurrentFloor.LineDist;
+	}
+
+	/* Move up or down to maintain consistent floor height */
+	if (OldFloorDist < MIN_FLOOR_DIST || OldFloorDist > MAX_FLOOR_DIST)
+	{
+		FHitResult AdjustHit(1.f);
+		const float InitialHeight = UpdatedComponent->GetComponentLocation() | UpdatedComponent->GetUpVector();
+		const float AvgFloorDist = (MIN_FLOOR_DIST + MAX_FLOOR_DIST) * 0.5f;
+
+		/* Move dist such that if we're above MAX, it'll move us down - below MIN, it'll move us up. Relative to the average of the two thresholds */
+		const float MoveDist = AvgFloorDist - OldFloorDist;
+
+		SafeMoveUpdatedComponent(UpdatedComponent->GetUpVector() * MoveDist, UpdatedComponent->GetComponentQuat(), true, AdjustHit);
+
+		/* Check if the snapping resulted in a valid hit */
+		if (!AdjustHit.IsValidBlockingHit())
+		{
+			CurrentFloor.FloorDist += MoveDist; 
+		} // Invalid blocking hit, adjust our cached floor dist for next next
+		else if (MoveDist > 0.f)
+		{
+			const float CurrentHeight = UpdatedComponent->GetComponentLocation() | UpdatedComponent->GetUpVector();
+			CurrentFloor.FloorDist += CurrentHeight - InitialHeight;
+		} // Below MIN_FLOOR_DIST
+		else
+		{
+			const float CurrentHeight = UpdatedComponent->GetComponentLocation() | UpdatedComponent->GetUpVector();
+			CurrentFloor.FloorDist = CurrentHeight - (AdjustHit.Location | UpdatedComponent->GetUpVector());
+			if (IsWalkable(AdjustHit))
+			{
+				CurrentFloor.SetFromSweep(AdjustHit, CurrentFloor.FloorDist, true);
+			}
+		} // Above MAX_FLOOR_DIST, could be a new floor value so we set that if its walkable
+
+		/* Don't recalculate velocity based on snapping, also avoid if we moved out of penetration */
+		bJustTeleported |= (OldFloorDist < 0.f); // TODO: This could affect projection if we don't do it manually
+
+		/* If something caused us to adjust our height (especially a depenetration), we should ensure another check next frame or we will keep a stale result */
+		bForceNextFloorCheck = true;
+	}
+}
+
+// DONE
+bool UCustomMovementComponent::IsWithinEdgeTolerance(const FVector& CapsuleLocation, const FVector& TestImpactPoint,
+	const float CapsuleRadius) const
+{
+	const float DistFromCenterSq = FVector::VectorPlaneProject(TestImpactPoint - CapsuleLocation, UpdatedComponent->GetUpVector()).SizeSquared();
+	const float ReducedRadiusSq = FMath::Square(FMath::Max(SWEEP_EDGE_REJECT_DISTANCE + UE_KINDA_SMALL_NUMBER, CapsuleRadius - SWEEP_EDGE_REJECT_DISTANCE));
+	return DistFromCenterSq < ReducedRadiusSq;
+}
+
+// DONE
+void UCustomMovementComponent::ComputeFloorDist(const FVector& CapsuleLocation, float LineDistance, float SweepDistance,
+	FGroundingStatus& OutFloorResult, float SweepRadius, const FHitResult* DownwardSweepResult) const
+{
+	OutFloorResult.Clear();
+
+	float PawnRadius = UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius();
+	float PawnHalfHeight = UpdatedPrimitive->GetCollisionShape().GetCapsuleHalfHeight();
+	
+	bool bSkipSweep = false;
+	if (DownwardSweepResult != nullptr && DownwardSweepResult->IsValidBlockingHit())
+	{
+		/* Accept it only if the supplied sweep was vertical and downwards relative to character orientation */
+		float TraceStartHeight = DownwardSweepResult->TraceStart | UpdatedComponent->GetUpVector();
+		float TraceEndHeight = DownwardSweepResult->TraceEnd | UpdatedComponent->GetUpVector();
+		float TracePlaneProjection = FVector::VectorPlaneProject(DownwardSweepResult->TraceStart - DownwardSweepResult->TraceStart, UpdatedComponent->GetUpVector()).SizeSquared();
+
+		if ((TraceStartHeight > TraceEndHeight) && (TracePlaneProjection <= UE_KINDA_SMALL_NUMBER))
+		{
+			/* Reject hits that are barely on the cusp of the radius of the capsule */
+			if (IsWithinEdgeTolerance(DownwardSweepResult->Location, DownwardSweepResult->ImpactPoint, PawnRadius))
+			{
+				/* Don't try a redundant sweep, regardless of whether this sweep is usable */
+				bSkipSweep = true;
+
+				const bool bIsWalkable = IsWalkable(DownwardSweepResult);
+				const float FloorDist = (CapsuleLocation - DownwardSweepResult->Location) | UpdatedComponent->GetUpVector();
+				OutFloorResult.SetFromSweep(*DownwardSweepResult, FloorDist, bIsWalkable);
+
+				if (bIsWalkable)
+				{
+					/* Use the supplied downward sweep as the floor hit result */
+					return;
+				}
+			}
+		}
+	}
+
+	/* Require sweep distance >= line distance, otherwise the HitResult can't be interpreted as the sweep result */
+	if (SweepDistance < LineDistance)
+	{
+		ensure(SweepDistance >= LineDistance);
+		return;
+	}
+
+	/* Prep for sweep */
+	bool bBlockingHit = false;
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(ComputeFloorDist), false, GetPawnOwner());
+	FCollisionResponseParams ResponseParam;
+	InitCollisionParams(QueryParams, ResponseParam);
+	const ECollisionChannel CollisionChannel = UpdatedComponent->GetCollisionObjectType();
+
+	/* Perform sweep */
+	if (!bSkipSweep && SweepDistance > 0.f && SweepRadius > 0.f)
+	{
+		/* Use a shorter height to avoid weeps giving weird results if we start on a surface. Allows us to also adjust out of penetrations */
+		// Basically, sweeping with a shrunk capsule will let us "catch' penetrations, in this case within the last 10% of our capsule size
+		const float ShrinkScale = 0.9f;
+		const float ShrinkScaleOverlap = 0.1f;
+		float ShrinkHeight = (PawnHalfHeight - PawnRadius) * (1.f - ShrinkScale);
+		float TraceDist = SweepDistance + ShrinkHeight;
+		FCollisionShape CapsuleShape = FCollisionShape::MakeCapsule(SweepRadius, PawnHalfHeight - ShrinkHeight);
+
+		/* ~~~~~~~~~~~~~~~~~~~ */
+		/* Perform Shape Trace */
+		FHitResult Hit(1.f);
+		bBlockingHit = FloorSweepTest(Hit, CapsuleLocation, CapsuleLocation - UpdatedComponent->GetUpVector() * TraceDist, CollisionChannel, CapsuleShape, QueryParams, ResponseParam);
+
+		if (bBlockingHit)
+		{
+			/* Reject hits that are adjacent to us. We only care about hits on the bottom hemisphere of the capsule so check the 2D distance to impact point */
+			if (Hit.bStartPenetrating || !IsWithinEdgeTolerance(CapsuleLocation, Hit.ImpactPoint, CapsuleShape.Capsule.Radius))
+			{
+				/* Use a capsule with a slightly smaller radius and shorter height to avoid the adjacent object */
+				CapsuleShape.Capsule.Radius = FMath::Max(0.f, CapsuleShape.Capsule.Radius - SWEEP_EDGE_REJECT_DISTANCE - UE_KINDA_SMALL_NUMBER);
+				if (!CapsuleShape.IsNearlyZero())
+				{
+					ShrinkHeight = (PawnHalfHeight - PawnRadius) * (1.f - ShrinkScaleOverlap);
+					TraceDist = SweepDistance + ShrinkHeight;
+					CapsuleShape.Capsule.HalfHeight = FMath::Max(PawnHalfHeight - ShrinkHeight, CapsuleShape.Capsule.Radius);
+					Hit.Reset(1.f, false);
+
+					bBlockingHit = FloorSweepTest(Hit, CapsuleLocation, CapsuleLocation - UpdatedComponent->GetUpVector() * TraceDist, CollisionChannel, CapsuleShape, QueryParams, ResponseParam);
+				}
+			}
+
+			/* Reduce the hit distance by ShrinkHeight because we shrank the capsule for the trace */
+			/* Also allow negative distances here, because this allows us to pull out of penetration */
+			const float MaxPenetrationAdjust = FMath::Max(MAX_FLOOR_DIST, PawnRadius);
+			const float SweepResult = FMath::Max(-MaxPenetrationAdjust, Hit.Time * TraceDist - ShrinkHeight);
+
+			OutFloorResult.SetFromSweep(Hit, SweepResult, false);
+			if (Hit.IsValidBlockingHit() && IsWalkable(Hit))
+			{
+				if (SweepResult <= SweepDistance)
+				{
+					OutFloorResult.bWalkableFloor = true;
+					return;
+				}
+			}
+		}
+	}
+	
+	/* Since we require a longer sweep than line trace, we don't want to run the line trace if the sweep missed everything */
+	/* We do however want to try a line trace if the sweep was stuck in penetration */
+	if (!OutFloorResult.bBlockingHit && !OutFloorResult.HitResult.bStartPenetrating)
+	{
+		OutFloorResult.FloorDist = SweepDistance;
+		return;
+	}
+	
+	/* ~~~~~~~~~~~~~~~~~~~ */
+
+	/* Perform Line Trace*/
+	if (LineDistance > 0.f)
+	{
+		const float ShrinkHeight = PawnHalfHeight;
+		const FVector LineTraceStart = CapsuleLocation;
+		const float TraceDist = LineDistance + ShrinkHeight;
+		const FVector Down = -UpdatedComponent->GetUpVector() * TraceDist;
+		QueryParams.TraceTag = SCENE_QUERY_STAT_NAME_ONLY(FloorLineTrace);
+
+		FHitResult Hit(1.f);
+		bBlockingHit = GetWorld()->LineTraceSingleByChannel(Hit, LineTraceStart, LineTraceStart + Down, CollisionChannel, QueryParams, ResponseParam);
+
+		if (bBlockingHit)
+		{
+			if (Hit.Time > 0.f)
+			{
+				/* Reduce the hit distance by the shrink height because we started the trace higher than the base */
+				/* Also allow negative distances here, because this allows us to pull out of penetration */
+				const float MaxPenetrationAdjust = FMath::Max(MAX_FLOOR_DIST, PawnRadius);
+				const float LineResult = FMath::Max(-MaxPenetrationAdjust, Hit.Time * TraceDist - ShrinkHeight);
+
+				OutFloorResult.bBlockingHit = true;
+				if (LineResult <= LineDistance && IsWalkable(Hit))
+				{
+					OutFloorResult.SetFromLineTrace(Hit, OutFloorResult.FloorDist, LineResult, true);
+					return;
+				}
+			}
+		}
+	}
+
+	/* If we're here, that means no hits were acceptable */
+	OutFloorResult.bWalkableFloor = false;
+}
+
+// DONE
+void UCustomMovementComponent::FindFloor(const FVector& CapsuleLocation, FGroundingStatus& OutFloorResult,
+	bool bCanUseCachedLocation, const FHitResult* DownwardSweepResult) const
+{
+	SCOPE_CYCLE_COUNTER(STAT_ProbeGround)
+
+	/* If collision is not enabled, or bSolveGrounding is not set, we don't care */
+	if (!bSolveGrounding || !UpdatedComponent->IsQueryCollisionEnabled())
+	{
+		OutFloorResult.Clear();
+		return;
+	}
+
+	/* Increase height check slightly if currently groudned to prevent ground snapping height from later invalidating the floor result */
+	const float HeightCheckAdjust = (IsMovingOnGround() ? MAX_FLOOR_DIST + UE_KINDA_SMALL_NUMBER : -MAX_FLOOR_DIST);
+
+	/* Setup sweep distances */
+	float FloorSweepTraceDist = FMath::Max(MAX_FLOOR_DIST, MaxStepHeight + HeightCheckAdjust);
+	float FloorLineTraceDist = FloorSweepTraceDist;
+	bool bNeedToValidateFloor =  true;
+
+	/* Perform sweep */
+	if (FloorLineTraceDist > 0.f || FloorSweepTraceDist > 0.f)
+	{
+		if (bAlwaysCheckFloor || !bCanUseCachedLocation || bForceNextFloorCheck || bJustTeleported)
+		{
+			ComputeFloorDist(CapsuleLocation, FloorLineTraceDist, FloorSweepTraceDist, OutFloorResult, CapsuleRadius, DownwardSweepResult);
+		} // Force floor sweep
+		else
+		{
+			/* Force Floor Check if base has collision disabled or if it does not block us*/
+			UPrimitiveComponent* MovementBase = GetMovementBase();
+			const AActor* BaseActor = MovementBase ? MovementBase->GetOwner() : nullptr;
+			const ECollisionChannel CollisionChannel = UpdatedComponent->GetCollisionObjectType();
+
+			if (MovementBase != nullptr)
+			{
+				bForceNextFloorCheck = !MovementBase->IsQueryCollisionEnabled()
+				|| MovementBase->GetCollisionResponseToChannel(CollisionChannel) != ECR_BLOCK
+				|| MovementBaseUtility::IsDynamicBase(MovementBase);
+			}
+
+			const bool bActorBasePendingKill = BaseActor && !IsValid(BaseActor);
+
+			if (!bForceNextFloorCheck && !bActorBasePendingKill && MovementBase)
+			{
+				OutFloorResult = CurrentFloor;
+				bNeedToValidateFloor = false;
+			} // Don't need to perform a sweep, continue with current floor value
+			else
+			{
+				ComputeFloorDist(CapsuleLocation, FloorLineTraceDist, FloorSweepTraceDist, OutFloorResult, CapsuleRadius, DownwardSweepResult);
+			} // Explicitly perform a sweep test
+		} // Check conditions before performing a floor sweep
+	}
+
+	/* Check ledge perching result on the compute floor (only if floor computed from shape trace) */
+	if (bNeedToValidateFloor && OutFloorResult.bBlockingHit && !OutFloorResult.bLineTrace)
+	{
+		if (ShouldComputePerchResult(OutFloorResult.HitResult))
+		{
+			float MaxPerchFloorDist = FMath::Max(MAX_FLOOR_DIST, MaxStepHeight + HeightCheckAdjust);
+			if (IsMovingOnGround())
+			{
+				MaxPerchFloorDist += FMath::Max(0.f, PerchAdditionalHeight);
+			}
+
+			FGroundingStatus PerchFloorResult;
+			if (ComputePerchResult(GetValidPerchRadius(), OutFloorResult.HitResult, MaxPerchFloorDist, PerchFloorResult))
+			{
+				/* Don't allow the floor distance adjustment to push us up too high or we'll move beyond the perch distance and fall next time */
+				const float AvgFloorDist = (MIN_FLOOR_DIST  + MAX_FLOOR_DIST) * 0.5f;
+				const float MoveUpDist = (AvgFloorDist - OutFloorResult.FloorDist);
+				if (MoveUpDist + PerchFloorResult.FloorDist >= MaxPerchFloorDist)
+				{
+					OutFloorResult.FloorDist = AvgFloorDist;
+				}
+
+				/* If the regular capsule is on an unwalkable surface, but the perched one would allow us to stand, override the normal with the walkable one  */
+				if (!OutFloorResult.bWalkableFloor)
+				{
+					OutFloorResult.SetFromLineTrace(PerchFloorResult.HitResult, OutFloorResult.FloorDist, FMath::Max(OutFloorResult.FloorDist, MIN_FLOOR_DIST), true);
+				}
+			}
+			else
+			{
+				/* Had no floor or an unwalkable floor and couldn't perch there. So invalidate it to move us to falling */
+				OutFloorResult.bWalkableFloor = false;
+			}
+		}
+	}
+}
+
+// DONE
+bool UCustomMovementComponent::FloorSweepTest(FHitResult& OutHit, const FVector& Start, const FVector& End,
+	ECollisionChannel TraceChannel, const FCollisionShape& CollisionShape, const FCollisionQueryParams& Params,
+	const FCollisionResponseParams& ResponseParams) const
+{
+	bool bBlockingHit = false;
+
+	if (!bUseFlatBaseForFloorChecks)
+	{
+		bBlockingHit = GetWorld()->SweepSingleByChannel(OutHit, Start, End, UpdatedComponent->GetComponentQuat(), TraceChannel, CollisionShape, Params, ResponseParams);
+	} // Don't use flat base for sweep
+	else
+	{
+		/* Test with a box that is enclosed by the capsule */
+		const float CapsuleRadius = CollisionShape.GetCapsuleRadius();
+		const float CapsuleHeight = CollisionShape.GetCapsuleHalfHeight();
+		const FCollisionShape BoxShape = FCollisionShape::MakeBox(FVector(CapsuleRadius * 0.707f, CapsuleRadius * 0.707f, CapsuleHeight));
+
+		/* First test with a box rotates so the corners are along the major axes (ie rotated 45 Degrees) */
+		bBlockingHit = GetWorld()->SweepSingleByChannel(OutHit, Start, End, FQuat(-1.f * UpdatedComponent->GetUpVector(), UE_PI * 0.25f), TraceChannel, BoxShape, Params, ResponseParams);
+
+		/* If no hit, check again but without a rotated capsule */
+		if (!bBlockingHit)
+		{
+			OutHit.Reset(1.f, false);
+			bBlockingHit = GetWorld()->SweepSingleByChannel(OutHit, Start, End, UpdatedComponent->GetComponentQuat(), TraceChannel, BoxShape, Params, ResponseParams);
+		}
+	} // Use flat base for sweep
+
+	return bBlockingHit;
+}
+
+// TODO
+bool UCustomMovementComponent::IsValidLandingSpot(const FVector& CapsuleLocation, const FHitResult& Hit) const
+{
+	if (!Hit.bBlockingHit)
+	{
+		return false;
+	}
+
+	/* Skip some checks if penetrating. Penetration will be handled by FindFloor call (using a smaller capsule) */
+	if (!Hit.bStartPenetrating)
+	{
+		/* Reject unwalkable floor normals */
+		if (!IsWalkable(Hit))
+		{
+			return false;
+		}
+
+		float PawnRadius = UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius();
+		float PawnHalfHeight = UpdatedPrimitive->GetCollisionShape().GetCapsuleHalfHeight();
+
+		/* Reject hits that are above our lower hemisphere (can happen when sliding down a vertical surface) */
+		const float HitImpactHeight = (Hit.ImpactPoint | UpdatedComponent->GetUpVector());
+		const float LowerHemisphereHeight = (Hit.Location | UpdatedComponent->GetUpVector()) - PawnHalfHeight + PawnRadius;
+		if (HitImpactHeight >= LowerHemisphereHeight)
+		{
+			return false;
+		}
+
+		/* Reject hits that are barely on the cusp of the radius of the capsule */
+		if (!IsWithinEdgeTolerance(Hit.Location, Hit.ImpactPoint, PawnRadius))
+		{
+			return false;
+		}
+	} // Not in penetration
+	else
+	{
+		// TODO: Verify the below isn't contradictory. We'd never really need a max slope angle of >= 90 relative to the pawn
+		/* Normal is nearly horizontal or downward, that's a penetration adjustment next to a vertical or overhanging wall. Don't pop to the floor */
+		if ((Hit.Normal | UpdatedComponent->GetUpVector()) < UE_KINDA_SMALL_NUMBER)
+		{
+			return false;
+		}
+	} // In Penetration
+
+	FGroundingStatus FloorResult;
+	FindFloor(CapsuleLocation, FloorResult, false, &Hit);
+
+	if (!FloorResult.IsWalkableFloor())
+	{
+		return false;
+	}
+
+	return true;
+}
+
+// TODO
+bool UCustomMovementComponent::ShouldCheckForValidLandingSpot(const FHitResult& Hit) const
+{
+	return false;
+}
+
+// Done
+float UCustomMovementComponent::GetPerchRadiusThreshold() const
+{
+	return FMath::Max(0.f, PerchRadiusThreshold);
+}
+
+// Done
+float UCustomMovementComponent::GetValidPerchRadius() const
+{
+	const float PawnRadius = UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius();
+	return FMath::Clamp(PawnRadius - GetPerchRadiusThreshold(), 0.11f, PawnRadius);
+}
+
+// Done
+bool UCustomMovementComponent::ShouldComputePerchResult(const FHitResult& InHit, bool bCheckRadius) const
+{
+	if (!InHit.IsValidBlockingHit())
+	{
+		return false;
+	}
+
+	/* Don't attempt perch if the edge radius is very small */
+	if (GetPerchRadiusThreshold() <= SWEEP_EDGE_REJECT_DISTANCE)
+	{
+		return false;
+	}
+
+	if (bCheckRadius)
+	{
+		const float DistFromCenterSq = FVector::VectorPlaneProject(InHit.ImpactPoint - InHit.Location, UpdatedComponent->GetUpVector()).SizeSquared();
+		const float StandOnEdgeRadius = GetValidPerchRadius();
+		if (DistFromCenterSq <= FMath::Square(StandOnEdgeRadius))
+		{
+			/* Already within perch radius */
+			return false;
+		}
+	}
+
+	return true;
+}
+
+// TODO
+bool UCustomMovementComponent::ComputePerchResult(const float TestRadius, const FHitResult& InHit,
+	const float InMaxFloorDist, FGroundingStatus& OutPerchFloorResult) const
+{
+	if (InMaxFloorDist <= 0.f)
+	{
+		return false;
+	}
+
+	/* Sweep further than the actual requested distance, because a reduced capsule radius means we could miss some hits the normal radius would catch */
+	float PawnRadius = UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius();
+	float PawnHalfHeight = UpdatedPrimitive->GetCollisionShape().GetCapsuleHalfHeight();
+
+	const FVector CapsuleLocation = (bUseFlatBaseForFloorChecks ? InHit.TraceStart : InHit.Location);
+
+	// TODO: Maths
+	const float InHitAboveBase;
+	const float PerchLineDist;
+	const float PerchSweepDist;
+
+	const float ActualSweepDist = PerchSweepDist + PawnRadius;
+	ComputeFloorDist(CapsuleLocation, PerchLineDist, ActualSweepDist, OutPerchFloorResult, TestRadius);
+
+	if (!OutPerchFloorResult.IsWalkableFloor())
+	{
+		return false;
+	}
+	else if (InHitAboveBase + OutPerchFloorResult.FloorDist > InMaxFloorDist)
+	{
+		/* Hit something past max distance */
+		OutPerchFloorResult.bWalkableFloor = false;
+		return false;
+	}
+
+	return false;
+}
+
+#pragma endregion CMC Copies
