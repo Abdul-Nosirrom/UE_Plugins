@@ -73,17 +73,6 @@ namespace RMCCVars
 
 #pragma endregion Profiling & CVars
 
-
-
-#define DRAW_LINE(Start, End, Color) DrawDebugLine(GetWorld(), Start, End, Color, false, 3.f, 0, 3.f);
-#define DRAW_POINT(Pos, Color) DrawDebugPoint(GetWorld(), Pos, 3.f, Color, false, 3.f, 0.f);
-#define DRAW_SPHERE(Pos, Color) DrawDebugSphere(GetWorld(), Pos, 10.f, 5, Color, false, 3.f);
-#define DRAW_CAPSULE(Pos, Rot, HalfHeight, Radius, Color) DrawDebugCapsule(GetWorld(), Pos, HalfHeight, Radius, Rot, Color, false, 0.f, 0, 3.f);
-
-#define LOG_SCREEN(Key, Time, Color, Msg) GEngine->AddOnScreenDebugMessage(Key, Time, Color, Msg, false);
-#define BOOL_STR(Val) (Val ? FString("True") : FString("False"))
-#define VECTOR_STR(Val) FString("(" + FString::SanitizeFloat(Val.X) + ", " + FString::SanitizeFloat(Val.Y) + ", " + FString::SanitizeFloat(Val.Z) + ")")
-
 // Sets default values for this component's properties
 UCustomMovementComponent::UCustomMovementComponent()
 {
@@ -159,93 +148,53 @@ void UCustomMovementComponent::SetUpdatedComponent(USceneComponent* NewUpdatedCo
 
 
 /* FUNCTIONAL */
-void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickType,
-                                             FActorComponentTickFunction* ThisTickFunction)
+void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	SCOPE_CYCLE_COUNTER(STAT_TickComponent)
-	
-	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	if (UpdatedComponent->IsSimulatingPhysics() || ShouldSkipUpdate(DeltaTime))
+	const FVector InputVector = ConsumeInputVector();
+
+	if (ShouldSkipUpdate(DeltaTime))
 	{
-		DisableMovement();
 		return;
 	}
 
+	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	//if (IsAIControlled())
-	//{
-	//	CheckAvoidance();
-	//}
-	
-	/* Perform our move */
+	/* Don't update if simulating physics (e.g ragdolls) */
+	if (UpdatedComponent->IsSimulatingPhysics())
+	{
+		/* This is from GMC but idk if its necessary since we're setting root component vel in Perform Movement*/
+		if (const auto BodyInstance = UpdatedPrimitive->GetBodyInstance())
+		{
+			BodyInstance->SetLinearVelocity(GetVelocity(), false);
+		}
+		ClearAccumulatedForces(); // Maybe
+		return;
+	}
+
+	/* Update avoidance parameter */
+	AvoidanceLockTimer -= DeltaTime;
+
+	/* Perform Move */
 	PerformMovement(DeltaTime);
 
-	/* Equivalent To Set UpdatedComponent Velocity (I think? Where was it again? PhysicsSimulationToggle is in GMC btw)*/
-	//UpdatedComponent->ComponentVelocity = Velocity;
-	
-	//if (ShouldComputeAvoidance())
-	//{
-	//	AvoidanceLockTimer = FMath::Clamp(AvoidanceLockTimer - DeltaTime, 0.f, BIG_NUMBER);
-	//}
+	/* Avoidance update post move */
+	if (bUseRVOAvoidance)
+	{
+		UpdateDefaultAvoidance();
+	}
 
+	/* Physics interactions updates */
 	if (bEnablePhysicsInteraction)
 	{
 		SCOPE_CYCLE_COUNTER(STAT_PhysicsInteraction)
-		//ApplyDownwardForce(DeltaTime);
-		//ApplyRepulsionForce(DeltaTime);
+		ApplyDownwardForce(DeltaTime);
+		ApplyRepulsionForce(DeltaTime);
 	}
 
-	//if (ShouldComputeAvoidance())
-	//{
-	//	UpdateAvoidance();
-	//}
-
-	if (UpdatedComponent->IsSimulatingPhysics())
-	{
-		DisableMovement();
-		return;
-	}
-
-//	return;
-
-	/* LOG SIMULATION STATE */
-
-	LOG_SCREEN(0, 2.f, FColor::Yellow, "-----Locomotion Status-----");
-	LOG_SCREEN(1, 2.f, GroundingStatus.bIsStableOnGround ? FColor::Green: FColor::Red, "Grounding Status: " + (GroundingStatus.bFoundAnyGround ? (GroundingStatus.bIsStableOnGround ? FString("(STABLE)") : FString("(NOT STABLE)")) : FString("(NONE)")));
-	LOG_SCREEN(2, 2.f, DebugSimulationState.bValidatedSteps ? FColor::Green : FColor::Red, "Valid Steps: " + (DebugSimulationState.bValidatedSteps ? FString("(VALID)") : FString("(INVALID)")));
-	LOG_SCREEN(3, 2.f, DebugSimulationState.bIsMovingWithBase ? FColor::Green : FColor::Red, "Moving Base: " + (DebugSimulationState.bIsMovingWithBase ? FString("(VALID)") : FString("(INVALID)")));
-	LOG_SCREEN(4, 2.f, DebugSimulationState.bIsMovingWithBase ? FColor::Green : FColor::Red, "Base Velocity = " + (DebugSimulationState.bIsMovingWithBase ? VECTOR_STR(DebugSimulationState.MovingBaseVelocity) : FString("X")));
-	if (DebugSimulationState.bFoundLedge)
-	{
-		LOG_SCREEN(5, 2.f, FColor::Green, "Ledge Detected, Drawing Debug Point...");
-		DRAW_SPHERE(GroundingStatus.GroundPoint, FColor::Purple);
-		DebugSimulationState.bFoundLedge = false;
-	}
-	else
-	{
-		LOG_SCREEN(5, 2.f, FColor::Red, "No Ledge Detected...");
-	}
+	/* Nice extra debug visualizer should add eventually from CMC */
 	
-	LOG_SCREEN(6, 2.f, FColor::White, "Ground Angle = " + FString::SanitizeFloat(DebugSimulationState.GroundAngle));
-
-	LOG_SCREEN(7, 2.f, FColor::White, "Speed = " + FString::SanitizeFloat(Velocity.Length() / 100.f) + " m/s");
-
-	LOG_SCREEN(10, 2.f, DebugSimulationState.bSnappingPrevented ? FColor::Green : FColor::Red, "Snapping Prevented? " + BOOL_STR(DebugSimulationState.bSnappingPrevented));
-	LOG_SCREEN(11, 2.f, FColor::White, "Last Ground Snapping Distance = " + FString::SanitizeFloat(DebugSimulationState.LastGroundSnappingDistance))
-	LOG_SCREEN(12, 2.f, FColor::White, "Last Exceeded Denivelation Angle = " + FString::SanitizeFloat(DebugSimulationState.LastExceededDenivelationAngle));
-	LOG_SCREEN(13, 2.f, FColor::White, "Last Successful Step Up Height = " + FString::SanitizeFloat(DebugSimulationState.LastSuccessfulStepHeight));
-
-	LOG_SCREEN(14, 2.f, FColor::Blue, "===== ANIMATION =====");
-	LOG_SCREEN(15, 2.f, DebugSimulationState.bIsPlayingRM ? FColor::Green : FColor::Red, "Playing Root Motion: " + BOOL_STR(DebugSimulationState.bIsPlayingRM));
-	LOG_SCREEN(16, 2.f, SkeletalMesh ? FColor::Green : FColor::Red, "Valid Skeletal Mesh: " + (SkeletalMesh ? FString("(VALID)") : FString("(INVALID)")));
-	if (DebugSimulationState.bIsPlayingRM)
-	{
-		LOG_SCREEN(17, 2.f, FColor::White, "Root Motion Velocity = " + VECTOR_STR(DebugSimulationState.RootMotionVelocity));
-		LOG_SCREEN(18, 2.f, FColor::White, "Root Motion Position = " + FString::SanitizeFloat(DebugSimulationState.MontagePosition));
-	}
-	
-	LOG_SCREEN(19, 2.f, FColor::Yellow, "---------------------------");
 }
 
 
@@ -254,84 +203,126 @@ void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 void UCustomMovementComponent::PerformMovement(float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_PerformMovement)
-
-	const UWorld* World = GetWorld();
-	if (World == nullptr) return;
-
-	bTeleportedSinceLastUpdate = UpdatedComponent->GetComponentLocation() != LastUpdateLocation;
 	
-	// Perform our ground probing and all that here, get setup for the move
-	PreMovementUpdate(DeltaTime);
-
-	if (!CanMove())
+	// Setup movement, and do not progress if setup fails
+	if (!PreMovementUpdate(DeltaTime))
 	{
-		BlockSkeletalMeshPoseTick();
-		HaltMovement();
 		return;
 	}
+
+	FVector OldVelocity;
+	FVector OldLocation;
 	
 	// Internal Character Move - looking at CMC, it applies UpdateVelocity, RootMotion, etc... before the character move...
 	{
 		FScopedMovementUpdate ScopedMovementUpdate(UpdatedComponent, bEnableScopedMovementUpdates ? EScopedUpdate::DeferredUpdates : EScopedUpdate::ImmediateUpdates);
 		
-		// Update BasedMovement
+		/* Update Based Movement */
+		TryUpdateBasedMovement(DeltaTime);
 
 		// Apply Root Motion (Prepare then apply)
 
-		// Handle accumulated forces from gameplay calls
-		if (GroundingStatus.bIsStableOnGround)
+		/* Cache previous values for processing later */
+		OldVelocity = Velocity;
+		OldLocation = UpdatedComponent->GetComponentLocation();
+		
+		/* Trigger gameplay event for velocity modification & apply pending impulses and forces*/
+		ApplyAccumulatedForces(DeltaTime); // TODO: Here's where we'd also check for bMustUnground
+		HandlePendingLaunch(); // TODO: This would auto-unground
+		ClearAccumulatedForces();
+		
+		if (CurrentFloor.bWalkableFloor)
 		{
 			const float VelMag = Velocity.Size();
-			SetVelocity(GetDirectionTangentToSurface(Velocity, GroundingStatus.GroundNormal).GetSafeNormal() * VelMag);
+			SetVelocity(GetDirectionTangentToSurface(Velocity, CurrentFloor.HitResult.Normal).GetSafeNormal() * VelMag);
 		}
 		UpdateVelocity(Velocity, DeltaTime);
-		
-		MovementUpdate(DeltaTime);
 
-		if (!bHasAnimRootMotion)
+		// Might also want to make a flag whether we have a skeletal mesh or not in InitializeComponent or something such that we can keep this whole thing general
+		/* Apply root motion after any direct velocity modifications have been made because RM would override it */
+		if (const bool bIsPlayingRootMotion = static_cast<bool>(GetRootMotionMontageInstance()))
+		{
+			// Will update vel & rot based on root motion
+			TickPose(DeltaTime);
+
+			// TODO: There's a bit more we can do here...
+
+			/* Trigger event to allow for manual adjustment of root motion velocity & rotation */
+			if (HasAnimRootMotion())
+			{
+				PostProcessAnimRootMotionVelocity(Velocity, DeltaTime);
+			}
+		}
+
+		/* Perform actual move */
+		StartMovementTick(DeltaTime, 0);
+
+		if (!HasAnimRootMotion())
 		{
 			UpdateRotation(TargetRot, DeltaTime);
 		}
+
+		/* Consume path following requested velocity */
+		LastUpdateRequestedVelocity = bHasRequestedVelocity ? RequestedVelocity : FVector::ZeroVector;
+		bHasRequestedVelocity = false;
 	}
 	
-	// Might also want to make a flag whether we have a skeletal mesh or not in InitializeComponent or something such that we can keep this whole thing general
-	const bool bIsPlayingRootMotionMontage = static_cast<bool>(GetRootMotionMontageInstance());
-	/* REGISTER DEBUG FIELD */
-	DebugSimulationState.bIsPlayingRM = bIsPlayingRootMotionMontage;
-	if (bIsPlayingRootMotionMontage && SkeletalMesh->ShouldTickPose())
-	{
-		// This will update velocity and rotation based on the root motion
-		TickPose(DeltaTime);
-	}
-
 	PostMovementUpdate(DeltaTime);
 }
 
-void UCustomMovementComponent::PreMovementUpdate(float DeltaTime)
+bool UCustomMovementComponent::PreMovementUpdate(float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_PreMovementUpdate)
 
-	// Copy over previous grounding status
-	LastGroundingStatus.CopyFrom(GroundingStatus);
-
-	GroundingStatus = FGroundingReport();
-	GroundingStatus.GroundNormal = UpdatedComponent->GetUpVector();
-	
-	if (bSolveGrounding)
+	const UWorld* World = GetWorld();
+	if (World == nullptr)
 	{
-		if (MustUnground())
-		{
-			// Might get away with enabling sweep, its such a small distance thats mainly for stopping to detect the ground i dont think it matters
-			MoveUpdatedComponent(UpdatedComponent->GetUpVector() * (MAX_FLOOR_DIST), UpdatedComponent->GetComponentQuat(), false);
-		}
-		else
-		{
-		}
+		return false;
 	}
-	bMustUnground = false;
+
+	bTeleportedSinceLastUpdate = UpdatedComponent->GetComponentLocation() != LastUpdateLocation;
+	
+	if (!CanMove() || UpdatedComponent->IsSimulatingPhysics())
+	{
+		/* Consume root motion */
+
+		/* Clear pending physics forces*/
+
+		return false;
+	}
+
+	/* Setup */
+	bForceNextFloorCHeck |= (IsMovingOnGround() && bTeleportedSinceLastUpdate);
+	
+	return true;
 }
 
-void UCustomMovementComponent::MovementUpdate(float DeltaTime, uint32 Iterations)
+#pragma region Actual Movement Ticks
+
+void UCustomMovementComponent::StartMovementTick(float DeltaTime, uint32 Iterations)
+{
+	if ((DeltaTime < MIN_TICK_TIME) || (Iterations >= MaxSimulationIterations))
+	{
+		return;
+	}
+
+	if (UpdatedComponent->IsSimulatingPhysics())
+	{
+		return;
+	}
+
+	if (CurrentFloor.bWalkableFloor)
+	{
+		GroundMovementTick(DeltaTime, Iterations);
+	}
+	else
+	{
+		AirMovementTick(DeltaTime, Iterations);
+	}
+}
+
+
+void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterations)
 {
 	SCOPE_CYCLE_COUNTER(STAT_MovementUpdate)
 
@@ -373,7 +364,7 @@ void UCustomMovementComponent::MovementUpdate(float DeltaTime, uint32 Iterations
 		const FVector Delta = MoveVelocity * IterTick;
 		const bool bZeroDelta = Delta.IsNearlyZero();
 		FStepDownResult StepDownResult;
-
+		
 		/* Exit if the delta is zero, no movement should happen anyways */
 		if (bZeroDelta)
 		{
@@ -381,7 +372,14 @@ void UCustomMovementComponent::MovementUpdate(float DeltaTime, uint32 Iterations
 		} // Zero delta
 		else
 		{
-			MoveIteration(MoveVelocity, IterTick, &StepDownResult);
+			MoveAlongFloor(MoveVelocity, IterTick, &StepDownResult);
+
+			/* Worth keeping this here if we wanna put the CalcVelocity event after MoveIteration */
+			if (IsFalling())
+			{
+				StartMovementTick(RemainingTime, Iterations);
+				return;
+			}
 		} // Non-zero delta
 
 		/* Update Floor */
@@ -391,7 +389,7 @@ void UCustomMovementComponent::MovementUpdate(float DeltaTime, uint32 Iterations
 		}
 		else
 		{
-			FindFloor(UpdatedComponent->GetComponentLocation(), CurrentFloor, bZeroDelta, NULL);
+			FindFloor(UpdatedComponent->GetComponentLocation(), CurrentFloor, bZeroDelta, nullptr);
 		}
 
 		/* Check for ledges here */
@@ -409,7 +407,12 @@ void UCustomMovementComponent::MovementUpdate(float DeltaTime, uint32 Iterations
 				/* Check denivelation angle */
 				if (ShouldCatchAir(OldFloor, CurrentFloor))
 				{
-					// TODO: Events and swtiching to walking
+					// TODO: Events and swtiching to falling
+					HandleWalkingOffLedge();
+					if (IsMovingOnGround())
+					{
+						StartFalling();
+					}
 					return;
 				}
 
@@ -462,7 +465,8 @@ void UCustomMovementComponent::MovementUpdate(float DeltaTime, uint32 Iterations
 	}
 }
 
-void UCustomMovementComponent::AirMovementUpdate(float DeltaTime, uint32 Iterations)
+
+void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iterations)
 {
 	SCOPE_CYCLE_COUNTER(STAT_MovementUpdate)
 
@@ -605,6 +609,8 @@ void UCustomMovementComponent::AirMovementUpdate(float DeltaTime, uint32 Iterati
 							SafeMoveUpdatedComponent(SideDelta, PawnRotation, true, Hit);
 						}
 
+						bool noBToHoldMeBack = true;
+
 						if (bDitch || IsValidLandingSpot(UpdatedComponent->GetComponentLocation(), Hit) || Hit.Time == 0.f)
 						{
 							RemainingTime = 0.f;
@@ -622,8 +628,17 @@ void UCustomMovementComponent::AirMovementUpdate(float DeltaTime, uint32 Iterati
 }
 
 
-void UCustomMovementComponent::MoveIteration(const FVector& InVelocity, float DeltaTime, FStepDownResult* OutStepDownResult)
+void UCustomMovementComponent::MoveAlongFloor(const FVector& InVelocity, float DeltaTime, FStepDownResult* OutStepDownResult)
 {
+	// TODO: Again, check if we want to separate this. Following CMC closely for now then will revamp accordingly after a stable foundation is set 
+	if (!CurrentFloor.IsWalkableFloor())
+	{
+		return;
+	}
+
+	/* Project Velocity Along Floor? */
+	MaintainHorizontalGroundVelocity();
+	
 	/* Move along the current Delta */
 	FHitResult Hit(1.f);
 	FVector Delta = InVelocity * DeltaTime; // TODO: Maybe project this to the player plane (passed to SlideAlongSurface)
@@ -674,14 +689,47 @@ void UCustomMovementComponent::MoveIteration(const FVector& InVelocity, float De
 	} // Was valid blocking hit
 }
 
+#pragma endregion Actual Movement Ticks
+
 void UCustomMovementComponent::PostMovementUpdate(float DeltaTime)
 {
+	SaveMovementBaseLocation();
+	
 	UpdateComponentVelocity();
 	
 	LastUpdateLocation = UpdatedComponent ? UpdatedComponent->GetComponentLocation() : FVector::ZeroVector;
 	LastUpdateRotation = UpdatedComponent ? UpdatedComponent->GetComponentQuat() : FQuat::Identity;
 	LastUpdateVelocity = Velocity;
 }
+
+void UCustomMovementComponent::StartLanding(float DeltaTime, uint32 Iterations)
+{
+	if ((DeltaTime < MIN_TICK_TIME) || (Iterations >= MaxSimulationIterations))
+	{
+		return;
+	}
+	
+	LandedEvent();
+
+	PathFindingManagement();
+
+	GroundMovementTick(DeltaTime, Iterations);
+}
+
+void UCustomMovementComponent::StartFalling(float DeltaTime, uint32 Iterations)
+{
+	if ((DeltaTime < MIN_TICK_TIME) || (Iterations >= MaxSimulationIterations))
+	{
+		return;
+	}
+	
+	AdjustRemainingTime();
+
+	PIESpecificThing();
+
+	StartMovementTick(DeltaTime, Iterations);
+}
+
 
 #pragma endregion Core Update Loop
 

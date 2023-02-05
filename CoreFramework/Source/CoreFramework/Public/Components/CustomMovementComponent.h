@@ -291,10 +291,16 @@ protected:
 	/* ~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 	
 public:
-	
+
+	// BEGIN UMovementComponent Interface
+	FORCEINLINE virtual bool IsMovingOnGround() const override { return CurrentFloor.bWalkableFloor; }
+	FORCEINLINE virtual bool IsFalling() const override { return !CurrentFloor.bBlockingHit; }
+	virtual void AddRadialForce(const FVector& Origin, float Radius, float Strength, ERadialImpulseFalloff Falloff) override;
+	virtual void AddRadialImpulse(const FVector& Origin, float Radius, float Strength, ERadialImpulseFalloff Falloff, bool bVelChange) override;
 	virtual void StopActiveMovement() override;			// Check CMC
 	virtual void StopMovementImmediately() override;	// Check CMC
-
+	// END UMovementComponent Interface
+	
 	void DisableMovement();
 	void EnableMovement();
 
@@ -319,6 +325,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Physics State")
 	FORCEINLINE void SetVelocity(const FVector TargetVelocity) { Velocity = TargetVelocity; } 
 
+	UFUNCTION(BlueprintCallable, Category="Physics State")
+	FORCEINLINE bool IsStableOnGround() const { return IsMovingOnGround(); }
+
+	UFUNCTION(BlueprintCallable, Category="Physics State")
+	FORCEINLINE bool IsUnstableOnGround() const { return CurrentFloor.bUnstableFloor; }
+
+	UFUNCTION(BlueprintCallable, Category="Physics State")
+	FORCEINLINE bool IsInAir() const { return !CurrentFloor.bBlockingHit; }
 
 #pragma region Events
 
@@ -351,12 +365,18 @@ public:
 
 	void PerformMovement(float DeltaTime);
 	
-	virtual void PreMovementUpdate(float DeltaTime);
-	void MovementUpdate(float DeltaTime, uint32 Iterations);
-	void AirMovementUpdate(float DeltaTime, uint32 Iterations);
+	virtual bool PreMovementUpdate(float DeltaTime);
+	
+	void StartMovementTick(float DeltaTime, uint32 Iterations);
+	void GroundMovementTick(float DeltaTime, uint32 Iterations);
+	void AirMovementTick(float DeltaTime, uint32 Iterations);
+	
 	virtual void PostMovementUpdate(float DeltaTime);
 
-	virtual void MoveIteration(const FVector& InVelocity, float DeltaTime, FStepDownResult* OutStepDownResult = NULL);
+	virtual void MoveAlongFloor(const FVector& InVelocity, float DeltaTime, FStepDownResult* OutStepDownResult = NULL);
+
+	void StartLanding(float DeltaTime, uint32 Iterations);
+	void StartFalling(float DeltaTime, uint32 Iterations);
 
 
 #pragma endregion Core Update Loop
@@ -492,6 +512,8 @@ protected:
 	
 	UPROPERTY(BlueprintSetter="SetMovementBaseOverride")
 	UPrimitiveComponent* MovementBaseOverride{nullptr};
+
+	void TryUpdateBasedMovement(float DeltaTime);
 
 	void MovementBaseUpdate(float DeltaTime);
 
