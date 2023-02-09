@@ -112,41 +112,6 @@ void UCustomMovementComponent::BeginPlay()
 }
 
 
-void UCustomMovementComponent::SetUpdatedComponent(USceneComponent* NewUpdatedComponent)
-{
-	// Check if it exists
-	if (!NewUpdatedComponent)
-	{
-		return;
-	}
-	
-	// Check if its valid, and if anything is using the delegate event
-	if (IsValid(UpdatedPrimitive) && UpdatedPrimitive->OnComponentBeginOverlap.IsBound())
-	{
-		UpdatedPrimitive->OnComponentBeginOverlap.RemoveDynamic(this, &UCustomMovementComponent::RootCollisionTouched);
-	}
-
-	Super::SetUpdatedComponent(NewUpdatedComponent);
-	
-	if (!IsValid(UpdatedComponent) || !IsValid(UpdatedPrimitive))
-	{
-		DisableMovement();
-		return;
-	}
-
-	if (PawnOwner->GetRootComponent() != UpdatedComponent)
-	{
-		//FLog(EMessageSeverity::Warning, "New updated component must be the root component");
-		PawnOwner->SetRootComponent(UpdatedComponent);
-	}
-
-	if (bEnablePhysicsInteraction)
-	{
-		UpdatedPrimitive->OnComponentBeginOverlap.AddUniqueDynamic(this, &UCustomMovementComponent::RootCollisionTouched);
-	}
-}
-
-
 /* FUNCTIONAL */
 void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
@@ -197,8 +162,45 @@ void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 	
 }
 
+#pragma region Movement Component Overrides
 
-#pragma region Core Update Loop
+void UCustomMovementComponent::SetUpdatedComponent(USceneComponent* NewUpdatedComponent)
+{
+	// Check if it exists
+	if (!NewUpdatedComponent)
+	{
+		return;
+	}
+	
+	// Check if its valid, and if anything is using the delegate event
+	if (IsValid(UpdatedPrimitive) && UpdatedPrimitive->OnComponentBeginOverlap.IsBound())
+	{
+		UpdatedPrimitive->OnComponentBeginOverlap.RemoveDynamic(this, &UCustomMovementComponent::RootCollisionTouched);
+	}
+
+	Super::SetUpdatedComponent(NewUpdatedComponent);
+	
+	if (!IsValid(UpdatedComponent) || !IsValid(UpdatedPrimitive))
+	{
+		DisableMovement();
+		return;
+	}
+
+	if (PawnOwner->GetRootComponent() != UpdatedComponent)
+	{
+		//FLog(EMessageSeverity::Warning, "New updated component must be the root component");
+		PawnOwner->SetRootComponent(UpdatedComponent);
+	}
+
+	if (bEnablePhysicsInteraction)
+	{
+		UpdatedPrimitive->OnComponentBeginOverlap.AddUniqueDynamic(this, &UCustomMovementComponent::RootCollisionTouched);
+	}
+}
+
+#pragma endregion Movement Component Overrides
+
+#pragma region Core Simulation Handling
 
 /* FUNCTIONAL */
 bool UCustomMovementComponent::CanMove() const
@@ -712,7 +714,7 @@ void UCustomMovementComponent::PostMovementUpdate(float DeltaTime)
 	LastUpdateVelocity = Velocity;
 }
 
-void UCustomMovementComponent::StartLanding(float DeltaTime, uint32 Iterations)
+void UCustomMovementComponent::ProcessLanded(FHitResult& Hit, float DeltaTime, uint32 Iterations)
 {
 	if ((DeltaTime < MIN_TICK_TIME) || (Iterations >= MaxSimulationIterations))
 	{
@@ -741,9 +743,10 @@ void UCustomMovementComponent::StartFalling(float DeltaTime, uint32 Iterations)
 }
 
 
-#pragma endregion Core Update Loop
+#pragma endregion Core Simulation Handling
 
 #pragma region Ground Stability Handling
+
 // DONE
 void UCustomMovementComponent::UpdateFloorFromAdjustment()
 {
@@ -1163,6 +1166,7 @@ bool UCustomMovementComponent::ShouldCheckForValidLandingSpot(const FHitResult& 
 	return false;
 }
 
+
 #pragma endregion Ground Stability Handling
 
 #pragma region Step Handling
@@ -1368,6 +1372,7 @@ bool UCustomMovementComponent::CanStepUp(const FHitResult& StepHit) const
 	return true;
 }
 
+
 #pragma endregion Step Handling
 
 #pragma region Ledge Handling
@@ -1442,6 +1447,7 @@ bool UCustomMovementComponent::ComputePerchResult(const float TestRadius, const 
 	return false;
 }
 
+
 #pragma endregion Ledge Handling
 
 #pragma region Collision Adjustments
@@ -1498,13 +1504,13 @@ float UCustomMovementComponent::SlideAlongSurface(const FVector& Delta, float Ti
 	
 	if (!Hit.bBlockingHit) return 0.f;
 
-	if (IsStableOnNormal(Normal) && !MustUnground()) return 0.f;
+	if (IsFloorStable(Normal) && !MustUnground()) return 0.f;
 	
 	FVector NewNormal = Normal;
 
-	if (GroundingStatus.bIsStableOnGround)
+	if (CurrentFloor.bWalkableFloor)
 	{
-		if (!IsStableOnNormal(NewNormal))
+		if (!IsFloorStable(NewNormal))
 		{
 			// Do not push the pawn up an unwalkable surface
 			NewNormal = FVector::VectorPlaneProject(NewNormal, GroundingStatus.GroundNormal).GetSafeNormal();
@@ -1521,12 +1527,12 @@ void UCustomMovementComponent::TwoWallAdjust(FVector& Delta, const FHitResult& H
 	const FVector InDelta = Delta;
 	Super::TwoWallAdjust(Delta, Hit, OldHitNormal);
 
-	if (GroundingStatus.bIsStableOnGround)
+	if (CurrentFloor.bWalkableFloor)
 	{
 		/* If the super projected our movement upwards, make sure its walkable */
 		if ((Delta | UpdatedComponent->GetUpVector()) > 0.f)
 		{
-			if (!IsStableOnNormal(Hit.Normal))
+			if (!IsFloorStable(Hit.Normal))
 			{
 				Delta = FVector::VectorPlaneProject(Delta, GroundingStatus.GroundNormal).GetSafeNormal();
 			}
@@ -1534,10 +1540,10 @@ void UCustomMovementComponent::TwoWallAdjust(FVector& Delta, const FHitResult& H
 	}
 }
 
+
 #pragma endregion Collision Adjustments
 
-
-#pragma region Animation Interface
+#pragma region Root Motion
 
 void UCustomMovementComponent::TickPose(float DeltaTime)
 {
@@ -1689,7 +1695,8 @@ bool UCustomMovementComponent::IsPlayingRootMotion() const
 	return false;
 }
 
-#pragma endregion Animation Interface
+
+#pragma endregion Root Motion
 
 #pragma region Physics Interactions
 
@@ -1740,6 +1747,10 @@ void UCustomMovementComponent::RootCollisionTouched(UPrimitiveComponent* Overlap
 	LOG_SCREEN(-1, 2.f, FColor::Purple, "Impulse Strength = " + FString::SanitizeFloat(ImpulseStrength));
 }
 
+
 #pragma endregion Physics Interactions
 
+#pragma region Moving Base
+
+#pragma endregion Moving Base
 
