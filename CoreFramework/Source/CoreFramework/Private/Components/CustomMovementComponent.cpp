@@ -200,6 +200,16 @@ void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 
 #pragma region Core Update Loop
 
+/* FUNCTIONAL */
+bool UCustomMovementComponent::CanMove() const
+{
+	if (!UpdatedComponent || !PawnOwner) return false;
+	if (UpdatedComponent->Mobility != EComponentMobility::Movable) return false;
+	if (bStuckInGeometry) return false;
+
+	return true;
+}
+
 void UCustomMovementComponent::PerformMovement(float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_PerformMovement)
@@ -733,549 +743,7 @@ void UCustomMovementComponent::StartFalling(float DeltaTime, uint32 Iterations)
 
 #pragma endregion Core Update Loop
 
-#pragma region Stability Evaluations
-
-/* FUNCTIONAL */
-bool UCustomMovementComponent::CanMove() const
-{
-	if (!UpdatedComponent || !PawnOwner) return false;
-	if (UpdatedComponent->Mobility != EComponentMobility::Movable) return false;
-	if (bStuckInGeometry) return false;
-
-	return true;
-}
-
-/* FUNCTIONAL */
-bool UCustomMovementComponent::MustUnground() const
-{
-	return bMustUnground;
-}
-
-
-
-/* ===== Steps ===== */
-
-bool UCustomMovementComponent::StepUp(const FHitResult& StepHit, const FVector& Delta, FStepDownResult* OutStepDownResult)
-{
-	SCOPE_CYCLE_COUNTER(STAT_StepUp)
-	
-	/* Determine our planar move delta for this iteration */
-	const FVector PawnUp = UpdatedComponent->GetUpVector();
-	const FVector StepLocationDelta = FVector::VectorPlaneProject(Delta, PawnUp);
-
-	/* Skip negligible deltas or if step height is 0 (or invalid) */
-	if (MaxStepHeight <= 0.f || StepLocationDelta.IsNearlyZero())
-	{
-		//LOG_SCREEN(-1, 1.f, FColor::Red, "Aborting, Step Delta Near Zero...");
-		return false;
-	}
-	
-	/* Get start location and accurate floor distance */
-	const FVector Extent = UpdatedPrimitive->GetCollisionShape().GetExtent();  // XY Correspond to Radius, Z Corresponds to Half-Height
-	const FVector StartLocation = UpdatedComponent->GetComponentLocation();
-	float PawnHalfHeight = Extent.Z;
-	const FVector UpperBound = (StartLocation + PawnUp * (PawnHalfHeight- Extent.X)); // Lets treat the player center as Z=0, so this would be right before the upper hemispehre
-
-	const FVector BarrierVerticalImpactPoint = StepHit.ImpactPoint;
-
-	// TODO: Work out the maths again using the below
-	// (Point | PawnUp) - (StartLocation | PawnUp) == (Point - StartLocation) | PawnUp
-	// This gives us the height of a point from our current StartLocation (or height from any point but relative to our basis)
-	
-	/* Top of the collision is hitting something so we can't go up */
-	if (((BarrierVerticalImpactPoint - UpperBound) | PawnUp) > 0) 
-	{
-		LOG_SCREEN(-1, 5.f, FColor::Red, "Aborting, Barrier Impact Point Higher...");
-		return false;
-	}
-
-	float TravelUpHeight = MaxStepHeight;
-	float TravelDownHeight = TravelUpHeight;
-	FVector StartFloorPoint = StartLocation - PawnUp * PawnHalfHeight; // Character lower hemisphere center (Center is Z=0 again...)
-	float StartDistanceToFloor = 0.f;
-
-	if (IsWalkable(StepHit) && !MustUnground())
-	{
-		StartDistanceToFloor = FMath::Abs((GroundingStatus.GroundHit.Location - StartLocation) | PawnUp);
-		// Double because we go up first, then we go down(?)
-		TravelDownHeight += 2.f * GROUND_PROBING_REBOUND_DISTANCE;
-	}
-
-	TravelUpHeight = FMath::Max(MaxStepHeight - StartDistanceToFloor, 0.f);
-	StartFloorPoint -= PawnUp * StartDistanceToFloor;
-
-	/* Impact point under lower bound of collision */
-	if (((BarrierVerticalImpactPoint - StartFloorPoint) | PawnUp) <= 0)
-	{
-		LOG_SCREEN(-1, 5.f, FColor::Red, "Aborting, Barrier Impact Point Lower...");
-		return false;
-	}
-
-	FScopedMovementUpdate ScopedMovement(UpdatedComponent, EScopedUpdate::DeferredUpdates);
-
-	constexpr float MIN_STEP_UP_DELTA = 5.0f;
-
-	// @attention Barriers are always treated as vertical walls. The procedure is sweeping upward by "TravelUpHeight" (along positive Up),
-	// sweeping forward by "StepLocationDelta" (laterally) and sweeping downward by "TravelDownHeight" (along negative Up).
-	/* Perform upwards sweep */
-	FHitResult UpHit;
-	const FQuat PawnRotation = UpdatedComponent->GetComponentQuat();
-	MoveUpdatedComponent(PawnUp * TravelUpHeight, PawnRotation, true, &UpHit);
-	if (UpHit.bStartPenetrating)
-	{
-		LOG_SCREEN(-1, 0.1f, FColor::Red, "Aborting Step Up, Upward Sweep Started In Penetration...");
-		ScopedMovement.RevertMove();
-		return false;
-	}
-
-	/* Validate forwards sweep */
-	FVector ClampedStepLocationDelta = StepLocationDelta;
-
-	if (StepLocationDelta.Size() < MIN_STEP_UP_DELTA) //TODO: Make this a macro or const expr
-	{
-		// We need to enforce a minimal location delta for the forward sweep, otherwise we could fail a step-up that should actually be feasible
-		// when hitting a non-walkable surface (because the forward step would have been very short).
-		ClampedStepLocationDelta = StepLocationDelta.GetClampedToSize(MIN_STEP_UP_DELTA, BIG_NUMBER);
-	}
-
-	/* Perform forward sweep */
-	FHitResult ForwardHit;
-	MoveUpdatedComponent(ClampedStepLocationDelta, PawnRotation, true, &ForwardHit);
-	if (OutForwardHit) *OutForwardHit = ForwardHit;
-	if (ForwardHit.bBlockingHit)
-	{
-		if (ForwardHit.bStartPenetrating)
-		{
-			LOG_SCREEN(-1, 1.f, FColor::Red, "Aborting Step Up, Forward Sweep Started In Penetration...");
-			ScopedMovement.RevertMove();
-			return false;
-		}
-		
-		if (UpHit.bBlockingHit) HandleImpact(UpHit);
-		HandleImpact(ForwardHit);
-
-		// Slide along hit surface
-		const float ForwardHitTime = ForwardHit.Time;
-		const float SlideTime = SlideAlongSurface(StepLocationDelta, 1.f - ForwardHit.Time, ForwardHit.Normal, ForwardHit, true);
-
-		if (ForwardHitTime == 0.f && SlideTime == 0.f)
-		{
-			// No movement occured, abort
-			LOG_SCREEN(-1, 0.3f, FColor::Red, "Aborting Step Up, Pawn Stuck After Forward Sweep...");
-			ScopedMovement.RevertMove();
-			return false;
-		}
-		else
-		{
-			//StabilityReport.DistanceFromLedge = (1.f - ForwardHitTime) * (1.f - SlideTime);
-		}
-	}
-
-	/* Perform down sweep */
-	FHitResult DownHit;
-	MoveUpdatedComponent(-PawnUp * TravelDownHeight, PawnRotation, true, &DownHit);
-	if (DownHit.bStartPenetrating)
-	{
-		LOG_SCREEN(-1, 1.f, FColor::Red, "Aborting Step Up, Downward Sweep Started In Penetration...");
-		ScopedMovement.RevertMove();
-		return false;
-	}
-	if (DownHit.bBlockingHit)
-	{
-		/* Verify the delta we moved is smaller than max step height */
-		DRAW_SPHERE(StartFloorPoint, FColor::Green);
-		DRAW_SPHERE(DownHit.ImpactPoint, FColor::Blue);
-		const float StepDelta = (DownHit.ImpactPoint - StartFloorPoint) | PawnUp;
-
-		if (StepDelta > MaxStepHeight)
-		{
-			LOG_SCREEN(-1, 1.f, FColor::Red, "Downward Delta Exceeded Maximum Step Height... Step Delta = " + FString::SanitizeFloat(StepDelta));
-			DRAW_SPHERE(DownHit.ImpactPoint, FColor::Purple);
-			ScopedMovement.RevertMove();
-			return false;
-		}
-
-		/* Reject unwalkable floor */
-		if (!IsStableOnNormal(DownHit.ImpactNormal)) // TODO: This check is borked
-		{
-			LOG_SCREEN(-1, 1.f, FColor::Red, "Aborting, Step Normal Not Stable...")
-			ScopedMovement.RevertMove();
-			return false;
-		}
-
-		/* Check if the floor below us is valid in terms of its type (i.e reject physics simulations) */
-		if (!CheckStepValidity(DownHit, FVector::ZeroVector))
-		{
-			LOG_SCREEN(-1, 1.f, FColor::Red, "Aborting, Step Normal Not Stable...")
-			ScopedMovement.RevertMove();
-			return false;
-		}
-		
-		/* REGISTER DEBUG FIELD */
-		DebugSimulationState.LastSuccessfulStepHeight = StepDelta;
-	}
-	else
-	{
-		/* W*/
-		LOG_SCREEN(-1, 0.1f, FColor::Green, "Downward Sweep has no blocking hit...");
-	}
-
-	LOG_SCREEN(-1, 0.1f, FColor::Green, "Finished Step Up Successfuly...");
-	return true;
-}
-
-bool UCustomMovementComponent::CanStepUp(const FHitResult& StepHit) const
-{
-	if (!StepHit.IsValidBlockingHit())
-	{
-		return false;
-	}
-
-	const UPrimitiveComponent* HitComponent = StepHit.Component.Get();
-	if (!HitComponent)
-	{
-		return true;
-	}
-
-	if (!HitComponent->CanCharacterStepUp(GetPawnOwner()))
-	{
-		return false;
-	}
-
-	if (!StepHit.HitObjectHandle.IsValid())
-	{
-		return true;
-	}
-
-	const AActor* HitActor = StepHit.HitObjectHandle.GetManagingActor();
-	if (!HitActor->CanBeBaseForCharacter(GetPawnOwner()))
-	{
-		return false;
-	}
-
-	return true;
-}
-
-#pragma endregion Stability Evaluations
-
-#pragma region Collision Adjustments
-
-void UCustomMovementComponent::HandleImpact(const FHitResult& Hit, float TimeSlice, const FVector& MoveDelta)
-{
-	SCOPE_CYCLE_COUNTER(STAT_HandleImpact)
-	
-	/* Not really important right now for the movement
-	IPathFollowingAgentInterface* PFAgent = GetPathFollowingAgent();
-	if (PFAgent)
-	{
-		// Notify path following
-		PFAgent->OnMoveBlockedBy(Hit);
-	}
-	*/
-	
-	// Notify other pawn
-	if (const auto OtherPawn = Cast<APawn>(Hit.GetActor()))
-	{
-		NotifyBumpedPawn(OtherPawn);
-	}
-}
-
-FVector UCustomMovementComponent::GetPenetrationAdjustment(const FHitResult& Hit) const
-{
-	FVector Result = Super::GetPenetrationAdjustment(Hit);
-
-	const float MaxDepenetrationWithGeometry = 500.f;
-	const float MaxDepenetrationWithPawn = 100.f;
-	
-	float MaxDistance = MaxDepenetrationWithGeometry;
-	if (Hit.HitObjectHandle.DoesRepresentClass(APawn::StaticClass()))
-	{
-		MaxDistance = MaxDepenetrationWithPawn;
-	}
-
-	Result = Result.GetClampedToMaxSize(MaxDistance);
-
-	return Result;
-}
-
-bool UCustomMovementComponent::ResolvePenetrationImpl(const FVector& Adjustment, const FHitResult& Hit, const FQuat& NewRotation)
-{
-	// If movement occurs, mark that we teleported so we don't incorrectly adjust velocity based on potentially very different movement than ours
-	//bJustTeleported |= Super::ResolvePenetrationImpl(Adjustment, Hit, NewRotation);
-	//return bJustTeleported;
-	return Super::ResolvePenetrationImpl(Adjustment, Hit, NewRotation);
-}
-
-
-float UCustomMovementComponent::SlideAlongSurface(const FVector& Delta, float Time, const FVector& Normal, FHitResult& Hit, bool bHandleImpact)
-{
-	SCOPE_CYCLE_COUNTER(STAT_SlideAlongSurface)
-	
-	if (!Hit.bBlockingHit) return 0.f;
-
-	if (IsStableOnNormal(Normal) && !MustUnground()) return 0.f;
-	
-	FVector NewNormal = Normal;
-
-	if (GroundingStatus.bIsStableOnGround)
-	{
-		if (!IsStableOnNormal(NewNormal))
-		{
-			// Do not push the pawn up an unwalkable surface
-			NewNormal = FVector::VectorPlaneProject(NewNormal, GroundingStatus.GroundNormal).GetSafeNormal();
-		}
-	}
-
-	return Super::SlideAlongSurface(Delta, Time, Normal, Hit, bHandleImpact);
-}
-
-void UCustomMovementComponent::TwoWallAdjust(FVector& Delta, const FHitResult& Hit, const FVector& OldHitNormal) const
-{
-	SCOPE_CYCLE_COUNTER(STAT_TwoWallAdjust)
-	
-	const FVector InDelta = Delta;
-	Super::TwoWallAdjust(Delta, Hit, OldHitNormal);
-
-	if (GroundingStatus.bIsStableOnGround)
-	{
-		/* If the super projected our movement upwards, make sure its walkable */
-		if ((Delta | UpdatedComponent->GetUpVector()) > 0.f)
-		{
-			if (!IsStableOnNormal(Hit.Normal))
-			{
-				Delta = FVector::VectorPlaneProject(Delta, GroundingStatus.GroundNormal).GetSafeNormal();
-			}
-		}
-	}
-}
-
-#pragma endregion Collision Adjustments
-
-
-#pragma region Collision Checks
-
-
-#pragma endregion Collision Checks
-
-
-#pragma region Moving Base
-
-
-#pragma endregion Moving Base 
-
-#pragma region Animation Interface
-
-void UCustomMovementComponent::TickPose(float DeltaTime)
-{
-	SCOPE_CYCLE_COUNTER(STAT_TickPose)
-	
-	UAnimMontage* RootMotionMontage = nullptr;
-	float RootMotionMontagePosition = -1.f;
-	if (const auto RootMotionMontageInstance = GetRootMotionMontageInstance())
-	{
-		RootMotionMontage = RootMotionMontageInstance->Montage;
-		RootMotionMontagePosition = RootMotionMontageInstance->GetPosition();
-	}
-
-	/* REGISTER DEBUG FIELD */
-	DebugSimulationState.MontagePosition = RootMotionMontagePosition;
-	
-	const bool bWasPlayingRootMotion = IsPlayingRootMotion();
-	SkeletalMesh->TickPose(DeltaTime, true);
-	const bool bIsPlayingRootMotion = IsPlayingRootMotion();
-
-	if (bWasPlayingRootMotion || bIsPlayingRootMotion)
-	{
-		RootMotionParams = SkeletalMesh->ConsumeRootMotion();
-	}
-
-	if (RootMotionParams.bHasRootMotion)
-	{
-		if (ShouldDiscardRootMotion(RootMotionMontage, RootMotionMontagePosition))
-		{
-			RootMotionParams = FRootMotionMovementParams();
-			return;
-		}
-		bHasAnimRootMotion = true;
-
-		// Scale root motion translation by user value
-		RootMotionParams.ScaleRootMotionTranslation(GetAnimRootMotionTranslationScale());
-		// Save root motion transform in world space
-		RootMotionParams.Set(SkeletalMesh->ConvertLocalRootMotionToWorld(RootMotionParams.GetRootMotionTransform()));
-		// Calculate the root motion velocity from world space root motion translation
-		CalculateAnimRootMotionVelocity(DeltaTime);
-		// Apply the root motion rotation now. Translation is applied in the next tick from calculated velocity
-		ApplyAnimRootMotionRotation(DeltaTime);
-	}
-}
-
-void UCustomMovementComponent::BlockSkeletalMeshPoseTick() const
-{
-	if (!SkeletalMesh) return;
-	SkeletalMesh->bIsAutonomousTickPose = false;
-	SkeletalMesh->bOnlyAllowAutonomousTickPose = true;
-}
-
-void UCustomMovementComponent::ApplyAnimRootMotionRotation(float DeltaTime)
-{
-	
-}
-
-void UCustomMovementComponent::CalculateAnimRootMotionVelocity(float DeltaTime)
-{
-	FVector RootMotionDelta = RootMotionParams.GetRootMotionTransform().GetTranslation();
-
-	// Ignore components with very small delta values
-	RootMotionDelta.X = FMath::IsNearlyEqual(RootMotionDelta.X, 0.f, 0.01f) ? 0.f : RootMotionDelta.X;
-	RootMotionDelta.Y = FMath::IsNearlyEqual(RootMotionDelta.Y, 0.f, 0.01f) ? 0.f : RootMotionDelta.Y;
-	RootMotionDelta.Z = FMath::IsNearlyEqual(RootMotionDelta.Z, 0.f, 0.01f) ? 0.f : RootMotionDelta.Z;
-
-	const FVector RootMotionVelocity = RootMotionDelta / DeltaTime;
-	/* REGISTER DEBUG FIELD */
-	DebugSimulationState.RootMotionVelocity = RootMotionVelocity;
-	SetVelocity(PostProcessAnimRootMotionVelocity(RootMotionVelocity, DeltaTime));
-}
-
-bool UCustomMovementComponent::ShouldDiscardRootMotion(UAnimMontage* RootMotionMontage, float RootMotionMontagePosition) const
-{
-	if (!RootMotionMontage || RootMotionMontagePosition < 0.f)
-	{
-		return true;
-	}
-
-	const float MontageLength = RootMotionMontage->GetPlayLength();
-	if (RootMotionMontagePosition >= MontageLength)
-	{
-		return true;
-	}
-
-	if (!bApplyRootMotionDuringBlendIn)
-	{
-		if (RootMotionMontagePosition <= RootMotionMontage->BlendIn.GetBlendTime())
-		{
-			return true;
-		}
-	}
-
-	if (!bApplyRootMotionDuringBlendOut)
-	{
-		if (RootMotionMontagePosition >= MontageLength - RootMotionMontage->BlendOut.GetBlendTime())
-		{
-			return true;
-		}
-	}
-
-	return false;
-}
-
-
-void UCustomMovementComponent::SetSkeletalMeshReference(USkeletalMeshComponent* Mesh)
-{
-	if (SkeletalMesh && SkeletalMesh != Mesh)
-	{
-		SkeletalMesh->RemoveTickPrerequisiteComponent(this);
-	}
-
-	SkeletalMesh = Mesh;
-
-	if (SkeletalMesh)
-	{
-		SkeletalMesh->AddTickPrerequisiteComponent(this);
-	}
-}
-
-
-FAnimMontageInstance* UCustomMovementComponent::GetRootMotionMontageInstance() const
-{
-	if (!SkeletalMesh) return nullptr;
-
-	
-	const auto AnimInstance = SkeletalMesh->GetAnimInstance();
-	if (!AnimInstance) return nullptr;
-	
-	return AnimInstance->GetRootMotionMontageInstance();
-}
-
-bool UCustomMovementComponent::IsPlayingMontage() const
-{
-	if (!SkeletalMesh) return false;
-
-	const auto AnimInstance = SkeletalMesh->GetAnimInstance();
-	if (!AnimInstance) return false;
-
-	return AnimInstance->MontageInstances.Num() > 0;
-}
-
-bool UCustomMovementComponent::IsPlayingRootMotion() const
-{
-	if (SkeletalMesh)
-	{
-		return SkeletalMesh->IsPlayingRootMotion();
-	}
-	return false;
-}
-
-#pragma endregion Animation Interface
-
-#pragma region Physics Interactions
-
-void UCustomMovementComponent::RootCollisionTouched(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
-{
-	if (!bEnablePhysicsInteraction)
-	{
-		return;
-	}
-	
-	/* Ensure the component we've touched is a physics body */
-	if (!OtherComponent || !OtherComponent->IsAnySimulatingPhysics())
-	{
-		return;
-	}
-
-	/* Retrieve skinned mesh bone name if it exists (e.g interacting with ragdolls) */
-	FName BoneName = NAME_None;
-	if (OtherBodyIndex != INDEX_NONE)
-	{
-		const auto OtherSkinnedMeshComponent = Cast<USkinnedMeshComponent>(OtherComponent);
-		BoneName = OtherSkinnedMeshComponent->GetBoneName(OtherBodyIndex);
-	}
-
-	/* Scale the impact force to body mass if applicable */
-	float TouchForceFactorModified = TouchForceScale;
-	if (bScaleTouchForceToMass)
-	{
-		const auto BodyInstance = OtherComponent->GetBodyInstance(BoneName);
-		TouchForceFactorModified *= BodyInstance ? BodyInstance->GetBodyMass() : 1.f;
-	}
-
-	/* Clamp the impulse strength determined by our velocity and touch force modifier */
-	float ImpulseStrength = FMath::Clamp(GetVelocity().Size() * TouchForceFactorModified,
-										MinTouchForce > 0.f ? MinTouchForce : -FLT_MAX,
-										MaxTouchForce > 0.f ? MaxTouchForce : FLT_MAX);
-
-	const FVector OtherComponentLocation = OtherComponent->GetComponentLocation();
-	const FVector ShapeLocation = UpdatedComponent->GetComponentLocation();
-
-	// TODO: It's fine keeping impulse direction planar right?
-	FVector ImpulseDirection = FVector(OtherComponentLocation.X - ShapeLocation.X, OtherComponentLocation.Y - ShapeLocation.Y, 0.25f).GetSafeNormal();
-	ImpulseDirection = (ImpulseDirection + GetVelocity().GetSafeNormal()) * 0.5f;
-	ImpulseDirection.Normalize();
-
-	/* Apply the touch force on retrieved bone if applicable */
-	OtherComponent->AddImpulse(ImpulseDirection * ImpulseStrength, BoneName);
-	LOG_SCREEN(-1, 2.f, FColor::Purple, "Impulse Strength = " + FString::SanitizeFloat(ImpulseStrength));
-}
-
-#pragma endregion Physics Interactions
-
-#pragma region CMC Copies
-
-// TODO
-bool UCustomMovementComponent::ShouldCatchAir(const FGroundingStatus& OldFloor, const FGroundingStatus& NewFloor)
-{
-}
-
-
+#pragma region Ground Stability Handling
 // DONE
 void UCustomMovementComponent::UpdateFloorFromAdjustment()
 {
@@ -1695,17 +1163,218 @@ bool UCustomMovementComponent::ShouldCheckForValidLandingSpot(const FHitResult& 
 	return false;
 }
 
-// Done
-float UCustomMovementComponent::GetPerchRadiusThreshold() const
+#pragma endregion Ground Stability Handling
+
+#pragma region Step Handling
+
+bool UCustomMovementComponent::StepUp(const FHitResult& StepHit, const FVector& Delta, FStepDownResult* OutStepDownResult)
 {
-	return FMath::Max(0.f, PerchRadiusThreshold);
+	SCOPE_CYCLE_COUNTER(STAT_StepUp)
+	
+	/* Determine our planar move delta for this iteration */
+	const FVector PawnUp = UpdatedComponent->GetUpVector();
+	const FVector StepLocationDelta = FVector::VectorPlaneProject(Delta, PawnUp);
+
+	/* Skip negligible deltas or if step height is 0 (or invalid) */
+	if (MaxStepHeight <= 0.f || StepLocationDelta.IsNearlyZero())
+	{
+		//LOG_SCREEN(-1, 1.f, FColor::Red, "Aborting, Step Delta Near Zero...");
+		return false;
+	}
+	
+	/* Get start location and accurate floor distance */
+	const FVector Extent = UpdatedPrimitive->GetCollisionShape().GetExtent();  // XY Correspond to Radius, Z Corresponds to Half-Height
+	const FVector StartLocation = UpdatedComponent->GetComponentLocation();
+	float PawnHalfHeight = Extent.Z;
+	const FVector UpperBound = (StartLocation + PawnUp * (PawnHalfHeight- Extent.X)); // Lets treat the player center as Z=0, so this would be right before the upper hemispehre
+
+	const FVector BarrierVerticalImpactPoint = StepHit.ImpactPoint;
+
+	// TODO: Work out the maths again using the below
+	// (Point | PawnUp) - (StartLocation | PawnUp) == (Point - StartLocation) | PawnUp
+	// This gives us the height of a point from our current StartLocation (or height from any point but relative to our basis)
+	
+	/* Top of the collision is hitting something so we can't go up */
+	if (((BarrierVerticalImpactPoint - UpperBound) | PawnUp) > 0) 
+	{
+		LOG_SCREEN(-1, 5.f, FColor::Red, "Aborting, Barrier Impact Point Higher...");
+		return false;
+	}
+
+	float TravelUpHeight = MaxStepHeight;
+	float TravelDownHeight = TravelUpHeight;
+	FVector StartFloorPoint = StartLocation - PawnUp * PawnHalfHeight; // Character lower hemisphere center (Center is Z=0 again...)
+	float StartDistanceToFloor = 0.f;
+
+	if (IsWalkable(StepHit) && !MustUnground())
+	{
+		StartDistanceToFloor = FMath::Abs((GroundingStatus.GroundHit.Location - StartLocation) | PawnUp);
+		// Double because we go up first, then we go down(?)
+		TravelDownHeight += 2.f * GROUND_PROBING_REBOUND_DISTANCE;
+	}
+
+	TravelUpHeight = FMath::Max(MaxStepHeight - StartDistanceToFloor, 0.f);
+	StartFloorPoint -= PawnUp * StartDistanceToFloor;
+
+	/* Impact point under lower bound of collision */
+	if (((BarrierVerticalImpactPoint - StartFloorPoint) | PawnUp) <= 0)
+	{
+		LOG_SCREEN(-1, 5.f, FColor::Red, "Aborting, Barrier Impact Point Lower...");
+		return false;
+	}
+
+	FScopedMovementUpdate ScopedMovement(UpdatedComponent, EScopedUpdate::DeferredUpdates);
+
+	constexpr float MIN_STEP_UP_DELTA = 5.0f;
+
+	// @attention Barriers are always treated as vertical walls. The procedure is sweeping upward by "TravelUpHeight" (along positive Up),
+	// sweeping forward by "StepLocationDelta" (laterally) and sweeping downward by "TravelDownHeight" (along negative Up).
+	/* Perform upwards sweep */
+	FHitResult UpHit;
+	const FQuat PawnRotation = UpdatedComponent->GetComponentQuat();
+	MoveUpdatedComponent(PawnUp * TravelUpHeight, PawnRotation, true, &UpHit);
+	if (UpHit.bStartPenetrating)
+	{
+		LOG_SCREEN(-1, 0.1f, FColor::Red, "Aborting Step Up, Upward Sweep Started In Penetration...");
+		ScopedMovement.RevertMove();
+		return false;
+	}
+
+	/* Validate forwards sweep */
+	FVector ClampedStepLocationDelta = StepLocationDelta;
+
+	if (StepLocationDelta.Size() < MIN_STEP_UP_DELTA) //TODO: Make this a macro or const expr
+	{
+		// We need to enforce a minimal location delta for the forward sweep, otherwise we could fail a step-up that should actually be feasible
+		// when hitting a non-walkable surface (because the forward step would have been very short).
+		ClampedStepLocationDelta = StepLocationDelta.GetClampedToSize(MIN_STEP_UP_DELTA, BIG_NUMBER);
+	}
+
+	/* Perform forward sweep */
+	FHitResult ForwardHit;
+	MoveUpdatedComponent(ClampedStepLocationDelta, PawnRotation, true, &ForwardHit);
+	if (OutForwardHit) *OutForwardHit = ForwardHit;
+	if (ForwardHit.bBlockingHit)
+	{
+		if (ForwardHit.bStartPenetrating)
+		{
+			LOG_SCREEN(-1, 1.f, FColor::Red, "Aborting Step Up, Forward Sweep Started In Penetration...");
+			ScopedMovement.RevertMove();
+			return false;
+		}
+		
+		if (UpHit.bBlockingHit) HandleImpact(UpHit);
+		HandleImpact(ForwardHit);
+
+		// Slide along hit surface
+		const float ForwardHitTime = ForwardHit.Time;
+		const float SlideTime = SlideAlongSurface(StepLocationDelta, 1.f - ForwardHit.Time, ForwardHit.Normal, ForwardHit, true);
+
+		if (ForwardHitTime == 0.f && SlideTime == 0.f)
+		{
+			// No movement occured, abort
+			LOG_SCREEN(-1, 0.3f, FColor::Red, "Aborting Step Up, Pawn Stuck After Forward Sweep...");
+			ScopedMovement.RevertMove();
+			return false;
+		}
+		else
+		{
+			//StabilityReport.DistanceFromLedge = (1.f - ForwardHitTime) * (1.f - SlideTime);
+		}
+	}
+
+	/* Perform down sweep */
+	FHitResult DownHit;
+	MoveUpdatedComponent(-PawnUp * TravelDownHeight, PawnRotation, true, &DownHit);
+	if (DownHit.bStartPenetrating)
+	{
+		LOG_SCREEN(-1, 1.f, FColor::Red, "Aborting Step Up, Downward Sweep Started In Penetration...");
+		ScopedMovement.RevertMove();
+		return false;
+	}
+	if (DownHit.bBlockingHit)
+	{
+		/* Verify the delta we moved is smaller than max step height */
+		DRAW_SPHERE(StartFloorPoint, FColor::Green);
+		DRAW_SPHERE(DownHit.ImpactPoint, FColor::Blue);
+		const float StepDelta = (DownHit.ImpactPoint - StartFloorPoint) | PawnUp;
+
+		if (StepDelta > MaxStepHeight)
+		{
+			LOG_SCREEN(-1, 1.f, FColor::Red, "Downward Delta Exceeded Maximum Step Height... Step Delta = " + FString::SanitizeFloat(StepDelta));
+			DRAW_SPHERE(DownHit.ImpactPoint, FColor::Purple);
+			ScopedMovement.RevertMove();
+			return false;
+		}
+
+		/* Reject unwalkable floor */
+		if (!IsStableOnNormal(DownHit.ImpactNormal)) // TODO: This check is borked
+		{
+			LOG_SCREEN(-1, 1.f, FColor::Red, "Aborting, Step Normal Not Stable...")
+			ScopedMovement.RevertMove();
+			return false;
+		}
+
+		/* Check if the floor below us is valid in terms of its type (i.e reject physics simulations) */
+		if (!CheckStepValidity(DownHit, FVector::ZeroVector))
+		{
+			LOG_SCREEN(-1, 1.f, FColor::Red, "Aborting, Step Normal Not Stable...")
+			ScopedMovement.RevertMove();
+			return false;
+		}
+		
+		/* REGISTER DEBUG FIELD */
+		DebugSimulationState.LastSuccessfulStepHeight = StepDelta;
+	}
+	else
+	{
+		/* W*/
+		LOG_SCREEN(-1, 0.1f, FColor::Green, "Downward Sweep has no blocking hit...");
+	}
+
+	LOG_SCREEN(-1, 0.1f, FColor::Green, "Finished Step Up Successfuly...");
+	return true;
 }
 
-// Done
-float UCustomMovementComponent::GetValidPerchRadius() const
+bool UCustomMovementComponent::CanStepUp(const FHitResult& StepHit) const
 {
-	const float PawnRadius = UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius();
-	return FMath::Clamp(PawnRadius - GetPerchRadiusThreshold(), 0.11f, PawnRadius);
+	if (!StepHit.IsValidBlockingHit())
+	{
+		return false;
+	}
+
+	const UPrimitiveComponent* HitComponent = StepHit.Component.Get();
+	if (!HitComponent)
+	{
+		return true;
+	}
+
+	if (!HitComponent->CanCharacterStepUp(GetPawnOwner()))
+	{
+		return false;
+	}
+
+	if (!StepHit.HitObjectHandle.IsValid())
+	{
+		return true;
+	}
+
+	const AActor* HitActor = StepHit.HitObjectHandle.GetManagingActor();
+	if (!HitActor->CanBeBaseForCharacter(GetPawnOwner()))
+	{
+		return false;
+	}
+
+	return true;
+}
+
+#pragma endregion Step Handling
+
+#pragma region Ledge Handling
+
+// TODO
+bool UCustomMovementComponent::ShouldCatchAir(const FGroundingStatus& OldFloor, const FGroundingStatus& NewFloor)
+{
 }
 
 // Done
@@ -1773,4 +1442,304 @@ bool UCustomMovementComponent::ComputePerchResult(const float TestRadius, const 
 	return false;
 }
 
-#pragma endregion CMC Copies
+#pragma endregion Ledge Handling
+
+#pragma region Collision Adjustments
+
+FVector UCustomMovementComponent::GetPenetrationAdjustment(const FHitResult& Hit) const
+{
+	FVector Result = Super::GetPenetrationAdjustment(Hit);
+
+	const float MaxDepenetrationWithGeometry = 500.f;
+	const float MaxDepenetrationWithPawn = 100.f;
+	
+	float MaxDistance = MaxDepenetrationWithGeometry;
+	if (Hit.HitObjectHandle.DoesRepresentClass(APawn::StaticClass()))
+	{
+		MaxDistance = MaxDepenetrationWithPawn;
+	}
+
+	Result = Result.GetClampedToMaxSize(MaxDistance);
+
+	return Result;
+}
+
+bool UCustomMovementComponent::ResolvePenetrationImpl(const FVector& Adjustment, const FHitResult& Hit, const FQuat& NewRotation)
+{
+	// If movement occurs, mark that we teleported so we don't incorrectly adjust velocity based on potentially very different movement than ours
+	//bJustTeleported |= Super::ResolvePenetrationImpl(Adjustment, Hit, NewRotation);
+	//return bJustTeleported;
+	return Super::ResolvePenetrationImpl(Adjustment, Hit, NewRotation);
+}
+
+void UCustomMovementComponent::HandleImpact(const FHitResult& Hit, float TimeSlice, const FVector& MoveDelta)
+{
+	SCOPE_CYCLE_COUNTER(STAT_HandleImpact)
+	
+	/* Not really important right now for the movement
+	IPathFollowingAgentInterface* PFAgent = GetPathFollowingAgent();
+	if (PFAgent)
+	{
+		// Notify path following
+		PFAgent->OnMoveBlockedBy(Hit);
+	}
+	*/
+	
+	// Notify other pawn
+	if (const auto OtherPawn = Cast<APawn>(Hit.GetActor()))
+	{
+		NotifyBumpedPawn(OtherPawn);
+	}
+}
+
+float UCustomMovementComponent::SlideAlongSurface(const FVector& Delta, float Time, const FVector& Normal, FHitResult& Hit, bool bHandleImpact)
+{
+	SCOPE_CYCLE_COUNTER(STAT_SlideAlongSurface)
+	
+	if (!Hit.bBlockingHit) return 0.f;
+
+	if (IsStableOnNormal(Normal) && !MustUnground()) return 0.f;
+	
+	FVector NewNormal = Normal;
+
+	if (GroundingStatus.bIsStableOnGround)
+	{
+		if (!IsStableOnNormal(NewNormal))
+		{
+			// Do not push the pawn up an unwalkable surface
+			NewNormal = FVector::VectorPlaneProject(NewNormal, GroundingStatus.GroundNormal).GetSafeNormal();
+		}
+	}
+
+	return Super::SlideAlongSurface(Delta, Time, Normal, Hit, bHandleImpact);
+}
+
+void UCustomMovementComponent::TwoWallAdjust(FVector& Delta, const FHitResult& Hit, const FVector& OldHitNormal) const
+{
+	SCOPE_CYCLE_COUNTER(STAT_TwoWallAdjust)
+	
+	const FVector InDelta = Delta;
+	Super::TwoWallAdjust(Delta, Hit, OldHitNormal);
+
+	if (GroundingStatus.bIsStableOnGround)
+	{
+		/* If the super projected our movement upwards, make sure its walkable */
+		if ((Delta | UpdatedComponent->GetUpVector()) > 0.f)
+		{
+			if (!IsStableOnNormal(Hit.Normal))
+			{
+				Delta = FVector::VectorPlaneProject(Delta, GroundingStatus.GroundNormal).GetSafeNormal();
+			}
+		}
+	}
+}
+
+#pragma endregion Collision Adjustments
+
+
+#pragma region Animation Interface
+
+void UCustomMovementComponent::TickPose(float DeltaTime)
+{
+	SCOPE_CYCLE_COUNTER(STAT_TickPose)
+	
+	UAnimMontage* RootMotionMontage = nullptr;
+	float RootMotionMontagePosition = -1.f;
+	if (const auto RootMotionMontageInstance = GetRootMotionMontageInstance())
+	{
+		RootMotionMontage = RootMotionMontageInstance->Montage;
+		RootMotionMontagePosition = RootMotionMontageInstance->GetPosition();
+	}
+
+	/* REGISTER DEBUG FIELD */
+	DebugSimulationState.MontagePosition = RootMotionMontagePosition;
+	
+	const bool bWasPlayingRootMotion = IsPlayingRootMotion();
+	SkeletalMesh->TickPose(DeltaTime, true);
+	const bool bIsPlayingRootMotion = IsPlayingRootMotion();
+
+	if (bWasPlayingRootMotion || bIsPlayingRootMotion)
+	{
+		RootMotionParams = SkeletalMesh->ConsumeRootMotion();
+	}
+
+	if (RootMotionParams.bHasRootMotion)
+	{
+		if (ShouldDiscardRootMotion(RootMotionMontage, RootMotionMontagePosition))
+		{
+			RootMotionParams = FRootMotionMovementParams();
+			return;
+		}
+		bHasAnimRootMotion = true;
+
+		// Scale root motion translation by user value
+		RootMotionParams.ScaleRootMotionTranslation(GetAnimRootMotionTranslationScale());
+		// Save root motion transform in world space
+		RootMotionParams.Set(SkeletalMesh->ConvertLocalRootMotionToWorld(RootMotionParams.GetRootMotionTransform()));
+		// Calculate the root motion velocity from world space root motion translation
+		CalculateAnimRootMotionVelocity(DeltaTime);
+		// Apply the root motion rotation now. Translation is applied in the next tick from calculated velocity
+		ApplyAnimRootMotionRotation(DeltaTime);
+	}
+}
+
+void UCustomMovementComponent::BlockSkeletalMeshPoseTick() const
+{
+	if (!SkeletalMesh) return;
+	SkeletalMesh->bIsAutonomousTickPose = false;
+	SkeletalMesh->bOnlyAllowAutonomousTickPose = true;
+}
+
+void UCustomMovementComponent::ApplyAnimRootMotionRotation(float DeltaTime)
+{
+	
+}
+
+void UCustomMovementComponent::CalculateAnimRootMotionVelocity(float DeltaTime)
+{
+	FVector RootMotionDelta = RootMotionParams.GetRootMotionTransform().GetTranslation();
+
+	// Ignore components with very small delta values
+	RootMotionDelta.X = FMath::IsNearlyEqual(RootMotionDelta.X, 0.f, 0.01f) ? 0.f : RootMotionDelta.X;
+	RootMotionDelta.Y = FMath::IsNearlyEqual(RootMotionDelta.Y, 0.f, 0.01f) ? 0.f : RootMotionDelta.Y;
+	RootMotionDelta.Z = FMath::IsNearlyEqual(RootMotionDelta.Z, 0.f, 0.01f) ? 0.f : RootMotionDelta.Z;
+
+	const FVector RootMotionVelocity = RootMotionDelta / DeltaTime;
+	/* REGISTER DEBUG FIELD */
+	DebugSimulationState.RootMotionVelocity = RootMotionVelocity;
+	SetVelocity(PostProcessAnimRootMotionVelocity(RootMotionVelocity, DeltaTime));
+}
+
+bool UCustomMovementComponent::ShouldDiscardRootMotion(UAnimMontage* RootMotionMontage, float RootMotionMontagePosition) const
+{
+	if (!RootMotionMontage || RootMotionMontagePosition < 0.f)
+	{
+		return true;
+	}
+
+	const float MontageLength = RootMotionMontage->GetPlayLength();
+	if (RootMotionMontagePosition >= MontageLength)
+	{
+		return true;
+	}
+
+	if (!bApplyRootMotionDuringBlendIn)
+	{
+		if (RootMotionMontagePosition <= RootMotionMontage->BlendIn.GetBlendTime())
+		{
+			return true;
+		}
+	}
+
+	if (!bApplyRootMotionDuringBlendOut)
+	{
+		if (RootMotionMontagePosition >= MontageLength - RootMotionMontage->BlendOut.GetBlendTime())
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+
+void UCustomMovementComponent::SetSkeletalMeshReference(USkeletalMeshComponent* Mesh)
+{
+	if (SkeletalMesh && SkeletalMesh != Mesh)
+	{
+		SkeletalMesh->RemoveTickPrerequisiteComponent(this);
+	}
+
+	SkeletalMesh = Mesh;
+
+	if (SkeletalMesh)
+	{
+		SkeletalMesh->AddTickPrerequisiteComponent(this);
+	}
+}
+
+
+FAnimMontageInstance* UCustomMovementComponent::GetRootMotionMontageInstance() const
+{
+	if (!SkeletalMesh) return nullptr;
+
+	
+	const auto AnimInstance = SkeletalMesh->GetAnimInstance();
+	if (!AnimInstance) return nullptr;
+	
+	return AnimInstance->GetRootMotionMontageInstance();
+}
+
+bool UCustomMovementComponent::IsPlayingMontage() const
+{
+	if (!SkeletalMesh) return false;
+
+	const auto AnimInstance = SkeletalMesh->GetAnimInstance();
+	if (!AnimInstance) return false;
+
+	return AnimInstance->MontageInstances.Num() > 0;
+}
+
+bool UCustomMovementComponent::IsPlayingRootMotion() const
+{
+	if (SkeletalMesh)
+	{
+		return SkeletalMesh->IsPlayingRootMotion();
+	}
+	return false;
+}
+
+#pragma endregion Animation Interface
+
+#pragma region Physics Interactions
+
+void UCustomMovementComponent::RootCollisionTouched(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
+{
+	if (!bEnablePhysicsInteraction)
+	{
+		return;
+	}
+	
+	/* Ensure the component we've touched is a physics body */
+	if (!OtherComponent || !OtherComponent->IsAnySimulatingPhysics())
+	{
+		return;
+	}
+
+	/* Retrieve skinned mesh bone name if it exists (e.g interacting with ragdolls) */
+	FName BoneName = NAME_None;
+	if (OtherBodyIndex != INDEX_NONE)
+	{
+		const auto OtherSkinnedMeshComponent = Cast<USkinnedMeshComponent>(OtherComponent);
+		BoneName = OtherSkinnedMeshComponent->GetBoneName(OtherBodyIndex);
+	}
+
+	/* Scale the impact force to body mass if applicable */
+	float TouchForceFactorModified = TouchForceScale;
+	if (bScaleTouchForceToMass)
+	{
+		const auto BodyInstance = OtherComponent->GetBodyInstance(BoneName);
+		TouchForceFactorModified *= BodyInstance ? BodyInstance->GetBodyMass() : 1.f;
+	}
+
+	/* Clamp the impulse strength determined by our velocity and touch force modifier */
+	float ImpulseStrength = FMath::Clamp(GetVelocity().Size() * TouchForceFactorModified,
+										MinTouchForce > 0.f ? MinTouchForce : -FLT_MAX,
+										MaxTouchForce > 0.f ? MaxTouchForce : FLT_MAX);
+
+	const FVector OtherComponentLocation = OtherComponent->GetComponentLocation();
+	const FVector ShapeLocation = UpdatedComponent->GetComponentLocation();
+
+	// TODO: It's fine keeping impulse direction planar right?
+	FVector ImpulseDirection = FVector(OtherComponentLocation.X - ShapeLocation.X, OtherComponentLocation.Y - ShapeLocation.Y, 0.25f).GetSafeNormal();
+	ImpulseDirection = (ImpulseDirection + GetVelocity().GetSafeNormal()) * 0.5f;
+	ImpulseDirection.Normalize();
+
+	/* Apply the touch force on retrieved bone if applicable */
+	OtherComponent->AddImpulse(ImpulseDirection * ImpulseStrength, BoneName);
+	LOG_SCREEN(-1, 2.f, FColor::Purple, "Impulse Strength = " + FString::SanitizeFloat(ImpulseStrength));
+}
+
+#pragma endregion Physics Interactions
+
+
