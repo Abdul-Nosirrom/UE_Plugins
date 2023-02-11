@@ -217,61 +217,52 @@ void UCustomMovementComponent::PerformMovement(float DeltaTime)
 	SCOPE_CYCLE_COUNTER(STAT_PerformMovement)
 	
 	// Setup movement, and do not progress if setup fails
+	// TODO: Looking at CMC in UE4.10, there's no need to consume root motion and all that. It just returns...
 	if (!PreMovementUpdate(DeltaTime))
 	{
 		return;
 	}
 
-	FVector OldVelocity;
-	FVector OldLocation;
+	// TODO: Temp removed the OldVelocity/Location stuff because it doesn't really have any relevance atm
 	
 	// Internal Character Move - looking at CMC, it applies UpdateVelocity, RootMotion, etc... before the character move...
 	{
+		// Scoped updates can improve performance of multiple MoveComponent calls - CMC
 		FScopedMovementUpdate ScopedMovementUpdate(UpdatedComponent, bEnableScopedMovementUpdates ? EScopedUpdate::DeferredUpdates : EScopedUpdate::ImmediateUpdates);
 		
 		/* Update Based Movement */
 		TryUpdateBasedMovement(DeltaTime);
-
-		// Apply Root Motion (Prepare then apply)
-
-		/* Cache previous values for processing later */
-		OldVelocity = Velocity;
-		OldLocation = UpdatedComponent->GetComponentLocation();
 		
 		/* Trigger gameplay event for velocity modification & apply pending impulses and forces*/
 		ApplyAccumulatedForces(DeltaTime); // TODO: Here's where we'd also check for bMustUnground
 		HandlePendingLaunch(); // TODO: This would auto-unground
 		ClearAccumulatedForces();
 		
-		if (CurrentFloor.bWalkableFloor)
-		{
-			const float VelMag = Velocity.Size();
-			SetVelocity(GetDirectionTangentToSurface(Velocity, CurrentFloor.HitResult.Normal).GetSafeNormal() * VelMag);
-		}
+
 		UpdateVelocity(Velocity, DeltaTime);
-
-		// Might also want to make a flag whether we have a skeletal mesh or not in InitializeComponent or something such that we can keep this whole thing general
-		/* Apply root motion after any direct velocity modifications have been made because RM would override it */
-		if (const bool bIsPlayingRootMotion = static_cast<bool>(GetRootMotionMontageInstance()))
-		{
-			// Will update vel & rot based on root motion
-			TickPose(DeltaTime);
-
-			// TODO: There's a bit more we can do here...
-
-			/* Trigger event to allow for manual adjustment of root motion velocity & rotation */
-			if (HasAnimRootMotion())
-			{
-				PostProcessAnimRootMotionVelocity(Velocity, DeltaTime);
-			}
-		}
-
+		
 		/* Perform actual move */
 		StartMovementTick(DeltaTime, 0);
 
 		if (!HasAnimRootMotion())
 		{
-			UpdateRotation(TargetRot, DeltaTime);
+			FQuat CurrentRotation = UpdatedComponent->GetComponentQuat();
+			UpdateRotation(CurrentRotation, DeltaTime);
+			MoveUpdatedComponent(FVector::ZeroVector, CurrentRotation, true);
+		}
+		
+		if (HasAnimRootMotion())
+		{
+			// Apply root motion rotation after movement is complete
+			const FQuat OldActorRotationQuat = UpdatedComponent->GetComponentQuat();
+			const FQuat RootMotionRotationQuat = RootMotionParams.GetRootMotionTransform().GetRotation();
+			if (!RootMotionRotationQuat.IsIdentity())
+			{
+				const FQuat NewActorRotationQuat = RootMotionRotationQuat * OldActorRotationQuat;
+				MoveUpdatedComponent(FVector::ZeroVector, NewActorRotationQuat, true);
+			}
+
+			RootMotionParams.Clear();
 		}
 
 		/* Consume path following requested velocity */
@@ -292,7 +283,9 @@ bool UCustomMovementComponent::PreMovementUpdate(float DeltaTime)
 		return false;
 	}
 
-	bTeleportedSinceLastUpdate = UpdatedComponent->GetComponentLocation() != LastUpdateLocation;
+	// Differs from bJustTeleported which is for within a movement tick. This is in between component ticks
+	// to check if we've moved outside of the movement component. If true, then we should force a floor check.
+	const bool bTeleportedSinceLastUpdate = UpdatedComponent->GetComponentLocation() != LastUpdateLocation;
 	
 	if (!CanMove() || UpdatedComponent->IsSimulatingPhysics())
 	{
@@ -304,7 +297,7 @@ bool UCustomMovementComponent::PreMovementUpdate(float DeltaTime)
 	}
 
 	/* Setup */
-	bForceNextFloorCHeck |= (IsMovingOnGround() && bTeleportedSinceLastUpdate);
+	bForceNextFloorCheck |= (IsMovingOnGround() && bTeleportedSinceLastUpdate);
 	
 	return true;
 }
@@ -344,24 +337,19 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 		return;
 	}
 
-	if (!UpdatedComponent->IsQueryCollisionEnabled())
-	{
-		// Here they set movement mode to walking? In the physwalking method???
-		return;
-	}
-
 	bJustTeleported = false;
 	bool bCheckedFall = false;
 	bool bTriedLedgeMove = false;
 	float RemainingTime = DeltaTime;
-	
 
+	
 	while ((RemainingTime >= MIN_TICK_TIME) && (Iterations < MaxSimulationIterations))
 	{
 		/* Setup current move iteration */
 		Iterations++;
 		bJustTeleported = false;
 		const float IterTick = GetSimulationTimeStep(RemainingTime, Iterations);
+		RemainingTime -= IterTick;
 
 		/* Cache current values */
 		UPrimitiveComponent* const OldBase = GetMovementBase();
@@ -369,7 +357,9 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 		const FVector OldLocation = UpdatedComponent->GetComponentLocation();
 		const FGroundingStatus OldFloor = CurrentFloor;
 
-		/* Rootmotion and gameplay stuff */
+		/* Project Velocity To Ground Before Computing Move Deltas */
+		MaintainHorizontalGroundVelocity();
+		const FVector OldVelocity = Velocity;
 
 		/* Compute move parameters */
 		const FVector MoveVelocity = Velocity;
@@ -384,17 +374,26 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 		} // Zero delta
 		else
 		{
+			// Perform the actual move
 			MoveAlongFloor(MoveVelocity, IterTick, &StepDownResult);
 
-			/* Worth keeping this here if we wanna put the CalcVelocity event after MoveIteration */
+			/* Worth keeping this here if we wanna put the CalcVelocity event after MoveAlongFloor */
 			if (IsFalling())
 			{
+				const float DesiredDist = Delta.Size();
+				if (DesiredDist > UE_KINDA_SMALL_NUMBER)
+				{
+					// TODO: Perhaps project this onto pawns up plane? CMC uses Size2D so just for math consistency...
+					const float ActualDist = (UpdatedComponent->GetComponentLocation() - OldLocation).Size();
+					RemainingTime += IterTick * (1.f - FMath::Min(1.f, ActualDist / DesiredDist));
+				}
+				
 				StartMovementTick(RemainingTime, Iterations);
 				return;
 			}
 		} // Non-zero delta
 
-		/* Update Floor */
+		/* Update Floor (Step down might've computed a floor) */
 		if (StepDownResult.bComputedFloor)
 		{
 			CurrentFloor = StepDownResult.FloorResult;
@@ -409,8 +408,32 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 		if (bCheckLedges && !CurrentFloor.IsWalkableFloor())
 		{
 			// Calculate possible alternate movement
+			const FVector DownDir = -UpdatedComponent->GetUpVector(); // TODO: We're on ground, so assume our rotation is oriented correctly
+			const FVector NewDelta = bTriedLedgeMove ? FVector::ZeroVector : GetLedgeMove(OldLocation, Delta, DownDir);
+			if (!NewDelta.IsZero())
+			{
+				/* First revert current move (Want to avoid walking off ledges in this scope) */
+				RevertMove();
+
+				/* Avoid repeated ledge moves if the first one fails */
+				bTriedLedgeMove = true;
+
+				/* Try new movement direction */
+				Velocity = NewDelta/IterTick;
+				RemainingTime += IterTick;
+				continue;
+			} // Adjusted move delta non-zero
+			else
+			{
+				/* Possible transition to a fall */
+
+				/* Revert current move, zero delta for ledge adjustment */
+				RevertMove();
+				RemainingTime = 0.f;
+				break;
+			} // Adjusted move delta zero
 			
-		} // Check for ledge movement, preventing walking off ledges
+		} // Check for ledge movement, in this scope we're trying to prevent walking off a ledge
 		else
 		{
 			/* Validate the floor check */
@@ -447,7 +470,12 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 			/* Check if we need to start falling */
 			if (!CurrentFloor.IsWalkableFloor() && !CurrentFloor.HitResult.bStartPenetrating)
 			{
-				
+				const bool bMustJump = bJustTeleported || bZeroDelta || (OldBase == nullptr || (!OldBase->IsCollisionEnabled() && MovementBaseUtility::IsDynamicBase(OldBase)));
+				if ((bMustJump || !bCheckedFall) && CheckFall())
+				{
+					return;
+				}
+				bCheckedFall = true;
 			}
 			
 		} // Don't check for ledges
@@ -456,14 +484,14 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 		if (IsMovingOnGround())
 		{
 			/* Make velocity reflect actual move */
-			if (!bJustTeleported && !HasAnimRootMotion() && !CurrentRootMotion.HasOverrideVelocity() && IterTick >= MIN_TICK_TIME)
+			if (!bJustTeleported && !HasAnimRootMotion() && IterTick >= MIN_TICK_TIME)
 			{
 				Velocity = (UpdatedComponent->GetComponentLocation() - OldLocation) / IterTick;
 				MaintainHorizontalGroundVelocity();
 			}
 		}
 
-		/* If we didn't move at all, abort */
+		/* If we didn't move at all, abort since future iterations will also be stuck */
 		if (UpdatedComponent->GetComponentLocation() == OldLocation)
 		{
 			RemainingTime = 0.f;
@@ -668,7 +696,7 @@ void UCustomMovementComponent::MoveAlongFloor(const FVector& InVelocity, float D
 		/* If still in penetration, we're stuck */
 		if (Hit.bStartPenetrating)
 		{
-			bStuckInGeometry = true;
+			OnStuckInGeometry();
 		}
 	} // Was in penetration
 	else if (Hit.IsValidBlockingHit())
@@ -677,7 +705,7 @@ void UCustomMovementComponent::MoveAlongFloor(const FVector& InVelocity, float D
 		/* Could be a walkable floor or ramp, unsure if that would be the case because we prep the velocity for this beforehand */
 		
 		/* Impacted a barrier, check if we can use it as stairs */
-		if (CanStepUp(Hit) || IS_MOVEMENT_BASE)
+		if (CanStepUp(Hit) || (GetMovementBase() != nullptr && Hit.HitObjectHandle == GetMovementBase()->GetOwner()))
 		{
 			const FVector PreStepUpLocation = UpdatedComponent->GetComponentLocation();
 			if (!StepUp(Hit, Delta * (1.f - PercentTimeApplied), OutStepDownResult))
@@ -688,7 +716,7 @@ void UCustomMovementComponent::MoveAlongFloor(const FVector& InVelocity, float D
 			} // Step up failed
 			else
 			{
-				
+				// TODO: Perhaps don't recalculate velocity based on StepUp adjustment?
 			} // Step up succeeded
 			
 		} // Can step up

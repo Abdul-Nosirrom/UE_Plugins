@@ -267,6 +267,18 @@ public:
 
 	UFUNCTION(Category="Motor | Physics State", BlueprintCallable)
 	FORCEINLINE bool IsInAir() const { return !CurrentFloor.bBlockingHit; }
+	
+	/// @brief	Clears forces accumulated through AddImpulse(), AddForce(), and also PendingLaunchVelocity
+	UFUNCTION(Category="Motor | Physics State", BlueprintCallable)
+	virtual void ClearAccumulatedForces();
+
+	/// @brief  Applies momentum accumulated through AddImpulse() and AddForce(), then clears those forces.
+	///			NOTE: Does not use ClearAccumulatedForces() since that would clear pending launch velocity as well
+	virtual void ApplyAccumulatedForces(float DeltaTime);
+
+	/// @brief  Handles a pending launch during an update (primarily from the character class, LaunchCharacter)
+	/// @return True if the launch was triggered
+	virtual bool HandlePendingLaunch();
 
 #pragma region Events
 
@@ -308,6 +320,14 @@ protected:
 	///			velocity can be recomputed based on position deltas
 	UPROPERTY(Category="Motor | Simulation Settings", Transient, VisibleInstanceOnly, BlueprintReadWrite)
 	uint8 bJustTeleported								: 1;
+
+	/// @brief  If true, high level movement updates will be wrapped in a movement scope that accumulates and defers a bulk of
+	///			the work until the end. When enabled, touch & hit events will not be triggered until the end of multiple moves
+	///			within an update, which can improve performance.
+	///
+	///			@see FScopedMovementUpdate
+	UPROPERTY(Category="Motor | Simulation Settings", EditDefaultsOnly)
+	uint8 bEnableScopedMovementUpdates					: 1;
 
 	/// @brief  Max delta time for each discrete simulation step in the movement simulation. Lowering the value can address issues with fast-moving
 	///			objects or complex collision scenarios, at the cost of performance.
