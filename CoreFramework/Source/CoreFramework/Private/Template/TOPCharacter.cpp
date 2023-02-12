@@ -9,8 +9,11 @@
 #include "EnhancedInputSubsystems.h"
 #include "Template/OPMovementComponent.h"
 
-ATOPCharacter::ATOPCharacter() 
+ATOPCharacter::ATOPCharacter() : Super() 
 {
+
+	SetActorTickEnabled(true);
+	
 	// Set size for collision capsule
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
 		
@@ -98,7 +101,7 @@ void ATOPCharacter::ResetJumpState()
 	JumpKeyHoldTime = 0.f;
 	JumpForceTimeRemaining = 0.f;
 
-	if (GetCharacterMovement() && GetCharacterMovement()->GroundingStatus.bIsStableOnGround)
+	if (GetCharacterMovement() && GetCharacterMovement()->CurrentFloor.bWalkableFloor)
 	{
 		JumpCurrentCount = 0;
 		JumpCurrentCountPreJump = 0;
@@ -128,7 +131,7 @@ bool ATOPCharacter::JumpIsAllowedInternal() const
 		// Ensure JumpHoldTime and JumpCount are valid
 		if (!bWasJumping || GetJumpMaxHoldTime() <= 0.f)
 		{
-			if (JumpCurrentCount == 0 && !OPMovementComp->GroundingStatus.bIsStableOnGround)
+			if (JumpCurrentCount == 0 && !OPMovementComp->CurrentFloor.bWalkableFloor)
 			{
 				bJumpIsAllowed = JumpCurrentCount + 1 < JumpMaxCount;
 			}
@@ -188,7 +191,7 @@ void ATOPCharacter::CheckJumpInput(float DeltaTime)
 		GEngine->AddOnScreenDebugMessage(-1, 1.f, FColor::Purple, "About to DoJump()");
 		// If this is the first jump and we're already falling, then increment the count to compensate
 		const bool bFirstJump = JumpCurrentCount == 0;
-		if (bFirstJump && GetCharacterMovement()->GroundingStatus.bIsStableOnGround)
+		if (bFirstJump && GetCharacterMovement()->CurrentFloor.bWalkableFloor)
 		{
 			JumpCurrentCount++;
 		}

@@ -1,8 +1,6 @@
 // Copyright 2023 Abdulrahmen Almodaimegh. All Rights Reserved.
 #include "CustomMovementComponent.h"
 #include "CFW_PCH.h"
-#include "GameFramework/Character.h"
-
 
 #pragma region Profiling & CVars
 /* Core Update Loop */
@@ -76,10 +74,33 @@ namespace RMCCVars
 // Sets default values for this component's properties
 UCustomMovementComponent::UCustomMovementComponent()
 {
-	// Set this component to be initialized when the game starts, and to be ticked every frame.  You can turn these features
-	// off to improve performance if you don't need them.
-	PrimaryComponentTick.bCanEverTick = true;
+	PostPhysicsTickFunction.bCanEverTick = true;
+	PostPhysicsTickFunction.bStartWithTickEnabled = false;
+	PostPhysicsTickFunction.SetTickFunctionEnable(false);
+	PostPhysicsTickFunction.TickGroup = TG_PostPhysics;
 
+	MaxSimulationTimeStep = 0.05f;
+	MaxSimulationIterations = 8;
+
+	MaxDepenetrationWithGeometry = 500.f;
+	MaxDepenetrationWithPawn = 100.f;
+
+	Mass = 100.0f;
+	bJustTeleported = true;
+
+	LastUpdateRotation = FQuat::Identity;
+	LastUpdateVelocity = FVector::ZeroVector;
+	PendingImpulseToApply = FVector::ZeroVector;
+	PendingLaunchVelocity = FVector::ZeroVector;
+
+	PhysicsState = STATE_Grounded;
+	bForceNextFloorCheck = true;
+	bAlwaysCheckFloor = true;
+
+	bEnableScopedMovementUpdates = true;
+
+	OldBaseQuat = FQuat::Identity;
+	OldBaseLocation = FVector::ZeroVector;
 	// Set Avoidance Defaults
 
 	// Set Nav-Movement defaults
@@ -117,7 +138,7 @@ void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 {
 	SCOPE_CYCLE_COUNTER(STAT_TickComponent)
 
-	const FVector InputVector = ConsumeInputVector();
+	InputVector = ConsumeInputVector();
 
 	if (ShouldSkipUpdate(DeltaTime))
 	{
@@ -126,6 +147,14 @@ void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+	const bool bIsSimulatingPhysics = UpdatedComponent->IsSimulatingPhysics();
+
+	/* Check if we fell out of the world*/
+	if (bIsSimulatingPhysics && !PawnOwner->CheckStillInWorld())
+	{
+		return;
+	}
+	
 	/* Don't update if simulating physics (e.g ragdolls) */
 	if (UpdatedComponent->IsSimulatingPhysics())
 	{
@@ -137,19 +166,10 @@ void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 		ClearAccumulatedForces(); // Maybe
 		return;
 	}
-
-	/* Update avoidance parameter */
-	AvoidanceLockTimer -= DeltaTime;
-
+	
 	/* Perform Move */
 	PerformMovement(DeltaTime);
-
-	/* Avoidance update post move */
-	if (bUseRVOAvoidance)
-	{
-		UpdateDefaultAvoidance();
-	}
-
+	
 	/* Physics interactions updates */
 	if (bEnablePhysicsInteraction)
 	{
@@ -162,7 +182,29 @@ void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 	
 }
 
+void FCustomMovementComponentPostPhysicsTickFunction::ExecuteTick(float DeltaTime, ELevelTick TickType, ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
+{
+	FActorComponentTickFunction::ExecuteTickHelper(Target, /*bTickInEditor=*/ false, DeltaTime, TickType, [this](float DilatedTime)
+	{
+		Target->PostPhysicsTickComponent(DilatedTime, *this);
+	});
+}
+
+
+void UCustomMovementComponent::PostPhysicsTickComponent(float DeltaTime, FCustomMovementComponentPostPhysicsTickFunction& ThisTickFunction)
+{
+	if (bDeferUpdateBasedMovement)
+	{
+		FScopedMovementUpdate ScopedMovementUpdate(UpdatedComponent, bEnableScopedMovementUpdates ? EScopedUpdate::DeferredUpdates : EScopedUpdate::ImmediateUpdates);
+		UpdateBasedMovement(DeltaTime);
+		SaveBaseLocation();
+		bDeferUpdateBasedMovement = false;
+	}
+}
+
+
 #pragma region Movement Component Overrides
+// BEGIN UMovementComponent
 
 void UCustomMovementComponent::SetUpdatedComponent(USceneComponent* NewUpdatedComponent)
 {
@@ -198,7 +240,214 @@ void UCustomMovementComponent::SetUpdatedComponent(USceneComponent* NewUpdatedCo
 	}
 }
 
+void UCustomMovementComponent::AddRadialForce(const FVector& Origin, float Radius, float Strength,
+	ERadialImpulseFalloff Falloff)
+{
+	FVector Delta = UpdatedComponent->GetComponentLocation() - Origin;
+	const float DeltaMagnitude = Delta.Size();
+
+	// Do nothing if outside radius
+	if (DeltaMagnitude > Radius) return;
+
+	Delta = Delta.GetSafeNormal();
+
+	float ForceMagnitude = Strength;
+	if (Falloff == RIF_Linear && Radius > 0.f)
+	{
+		ForceMagnitude *= (1.f - (DeltaMagnitude / Radius));
+	}
+
+	AddForce(Delta * ForceMagnitude);
+}
+
+void UCustomMovementComponent::AddRadialImpulse(const FVector& Origin, float Radius, float Strength,
+	ERadialImpulseFalloff Falloff, bool bVelChange)
+{
+	FVector Delta = UpdatedComponent->GetComponentLocation() - Origin;
+	const float DeltaMagnitude = Delta.Size();
+
+	// Do nothing if outside radius
+	if(DeltaMagnitude > Radius)
+	{
+		return;
+	}
+
+	Delta = Delta.GetSafeNormal();
+
+	float ImpulseMagnitude = Strength;
+	if (Falloff == RIF_Linear && Radius > 0.0f)
+	{
+		ImpulseMagnitude *= (1.0f - (DeltaMagnitude / Radius));
+	}
+
+	AddImpulse(Delta * ImpulseMagnitude, bVelChange);
+}
+
+void UCustomMovementComponent::StopActiveMovement()
+{
+	Super::StopActiveMovement();
+
+	Acceleration = FVector::ZeroVector;
+}
+
+// END UMovementComponent
+
+// BEGIN UPawnMovementComponent
+void UCustomMovementComponent::OnTeleported()
+{
+	Super::OnTeleported();
+
+	bJustTeleported = true;
+
+	UpdateFloorFromAdjustment();
+
+	UPrimitiveComponent* OldBase = GetMovementBase();
+	UPrimitiveComponent* NewBase = nullptr;
+
+	// TODO: Maybe an extra vertical velocity check against floor normal
+	if (OldBase && CurrentFloor.IsWalkableFloor() && CurrentFloor.FloorDist <= MAX_FLOOR_DIST)
+	{
+		NewBase = CurrentFloor.HitResult.Component.Get();
+	}
+	else
+	{
+		CurrentFloor.Clear();
+	}
+
+	const bool bWasFalling = (PhysicsState == STATE_Falling);
+	
+	if (!CurrentFloor.IsWalkableFloor() || (OldBase && !NewBase))
+	{
+		SetMovementState(STATE_Falling);
+	}
+	else if (NewBase && bWasFalling)
+	{
+		ProcessLanded(CurrentFloor.HitResult, 0.f, 0);
+	}
+
+	SaveBaseLocation();
+}
+
+// END UPawnMovementComponent
 #pragma endregion Movement Component Overrides
+
+#pragma region Movement State & Interface
+
+void UCustomMovementComponent::SetMovementState(EMovementState NewMovementState)
+{
+	if (PhysicsState == NewMovementState)
+	{
+		return;
+	}
+
+	const EMovementState PrevMovementState = PhysicsState;
+	PhysicsState = NewMovementState;
+
+	OnMovementStateChanged(PrevMovementState);
+}
+
+
+void UCustomMovementComponent::OnMovementStateChanged(EMovementState PreviousMovementState)
+{
+	
+	if (PhysicsState == STATE_Grounded)
+	{
+		// TODO: Project velocity in a way that makes sense
+
+		/* Update floor/base on initial entry of the walking physics */
+		FindFloor(UpdatedComponent->GetComponentLocation(), CurrentFloor, false);
+		AdjustFloorHeight();
+		SetBaseFromFloor(CurrentFloor);
+
+		if (PreviousMovementState == STATE_Falling)
+		{
+			Velocity = FVector::VectorPlaneProject(Velocity, CurrentFloor.HitResult.Normal); 
+		}
+	}
+	else if (PhysicsState == STATE_Falling)
+	{
+		CurrentFloor.Clear();
+		
+		DecayingFormerBaseVelocity = GetImpartedMovementBaseVelocity();
+		Velocity += DecayingFormerBaseVelocity;
+
+		SetBase(nullptr);
+	}
+	else
+	{
+		ClearAccumulatedForces();
+	}
+
+	if (PhysicsState == STATE_Falling && PreviousMovementState != STATE_Falling)
+	{
+		IPathFollowingAgentInterface* PFAgent = GetPathFollowingAgent();
+		if (PFAgent) PFAgent->OnStartedFalling();
+	}
+}
+
+void UCustomMovementComponent::DisableMovement()
+{
+	SetMovementState(STATE_None);
+}
+
+void UCustomMovementComponent::AddImpulse(FVector Impulse, bool bVelocityChange)
+{
+	if (!Impulse.IsZero() && (PhysicsState != STATE_None) && IsActive())
+	{
+		// handle scaling by mass
+		FVector FinalImpulse = Impulse;
+		if ( !bVelocityChange )
+		{
+			if (Mass > UE_SMALL_NUMBER)
+			{
+				FinalImpulse = FinalImpulse / Mass;
+			}
+		}
+
+		PendingImpulseToApply += FinalImpulse;
+	}
+}
+
+void UCustomMovementComponent::AddForce(FVector Force)
+{
+	if (!Force.IsZero() && (PhysicsState != STATE_None) && IsActive())
+	{
+		if (Mass > UE_SMALL_NUMBER)
+		{
+			PendingForceToApply += Force / Mass;
+		}
+	}
+}
+
+void UCustomMovementComponent::ClearAccumulatedForces()
+{
+	PendingImpulseToApply = FVector::ZeroVector;
+	PendingForceToApply = FVector::ZeroVector;
+	PendingLaunchVelocity = FVector::ZeroVector;
+}
+
+// TODO:
+void UCustomMovementComponent::ApplyAccumulatedForces(float DeltaTime)
+{
+	return;
+}
+
+// TODO:
+bool UCustomMovementComponent::HandlePendingLaunch()
+{
+	if (!PendingLaunchVelocity.IsZero())
+	{
+		Velocity = PendingLaunchVelocity;
+		PendingLaunchVelocity = FVector::ZeroVector;
+		if (Velocity.Z > 0)
+			SetMovementState(STATE_Falling);
+		return true;
+	}
+	return false;
+}
+
+
+#pragma endregion Movement State & Interface
 
 #pragma region Core Simulation Handling
 
@@ -211,6 +460,20 @@ bool UCustomMovementComponent::CanMove() const
 
 	return true;
 }
+
+float UCustomMovementComponent::GetSimulationTimeStep(float RemainingTime, uint32 Iterations) const
+{
+	if (RemainingTime > MaxSimulationTimeStep)
+	{
+		if (Iterations < MaxSimulationIterations)
+		{
+			RemainingTime = FMath::Min(MaxSimulationTimeStep, RemainingTime * 0.5f);
+		}
+	}
+
+	return FMath::Max(MIN_TICK_TIME, RemainingTime);
+}
+
 
 void UCustomMovementComponent::PerformMovement(float DeltaTime)
 {
@@ -231,7 +494,7 @@ void UCustomMovementComponent::PerformMovement(float DeltaTime)
 		FScopedMovementUpdate ScopedMovementUpdate(UpdatedComponent, bEnableScopedMovementUpdates ? EScopedUpdate::DeferredUpdates : EScopedUpdate::ImmediateUpdates);
 		
 		/* Update Based Movement */
-		TryUpdateBasedMovement(DeltaTime);
+		UpdateBasedMovement(DeltaTime);
 		
 		/* Trigger gameplay event for velocity modification & apply pending impulses and forces*/
 		ApplyAccumulatedForces(DeltaTime); // TODO: Here's where we'd also check for bMustUnground
@@ -244,30 +507,13 @@ void UCustomMovementComponent::PerformMovement(float DeltaTime)
 		/* Perform actual move */
 		StartMovementTick(DeltaTime, 0);
 
-		if (!HasAnimRootMotion())
+		if (true)
 		{
 			FQuat CurrentRotation = UpdatedComponent->GetComponentQuat();
 			UpdateRotation(CurrentRotation, DeltaTime);
 			MoveUpdatedComponent(FVector::ZeroVector, CurrentRotation, true);
 		}
 		
-		if (HasAnimRootMotion())
-		{
-			// Apply root motion rotation after movement is complete
-			const FQuat OldActorRotationQuat = UpdatedComponent->GetComponentQuat();
-			const FQuat RootMotionRotationQuat = RootMotionParams.GetRootMotionTransform().GetRotation();
-			if (!RootMotionRotationQuat.IsIdentity())
-			{
-				const FQuat NewActorRotationQuat = RootMotionRotationQuat * OldActorRotationQuat;
-				MoveUpdatedComponent(FVector::ZeroVector, NewActorRotationQuat, true);
-			}
-
-			RootMotionParams.Clear();
-		}
-
-		/* Consume path following requested velocity */
-		LastUpdateRequestedVelocity = bHasRequestedVelocity ? RequestedVelocity : FVector::ZeroVector;
-		bHasRequestedVelocity = false;
 	}
 	
 	PostMovementUpdate(DeltaTime);
@@ -316,13 +562,19 @@ void UCustomMovementComponent::StartMovementTick(float DeltaTime, uint32 Iterati
 		return;
 	}
 
-	if (CurrentFloor.bWalkableFloor)
+	switch (PhysicsState)
 	{
-		GroundMovementTick(DeltaTime, Iterations);
-	}
-	else
-	{
-		AirMovementTick(DeltaTime, Iterations);
+		case STATE_None:
+			break;
+		case STATE_Grounded:
+			GroundMovementTick(DeltaTime, Iterations);
+			break;
+		case STATE_Falling:
+			AirMovementTick(DeltaTime, Iterations);
+			break;
+		default:
+			SetMovementState(STATE_None);
+			break;
 	}
 }
 
@@ -350,6 +602,7 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 		bJustTeleported = false;
 		const float IterTick = GetSimulationTimeStep(RemainingTime, Iterations);
 		RemainingTime -= IterTick;
+		SubsteppedTick(Velocity, IterTick);
 
 		/* Cache current values */
 		UPrimitiveComponent* const OldBase = GetMovementBase();
@@ -365,7 +618,7 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 		const FVector MoveVelocity = Velocity;
 		const FVector Delta = MoveVelocity * IterTick;
 		const bool bZeroDelta = Delta.IsNearlyZero();
-		FStepDownResult StepDownResult;
+		FStepDownFloorResult StepDownResult;
 		
 		/* Exit if the delta is zero, no movement should happen anyways */
 		if (bZeroDelta)
@@ -404,7 +657,7 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 		}
 
 		/* Check for ledges here */
-		const bool bCheckLedges = !CanWalkOffLedges();
+		const bool bCheckLedges = !CanWalkOffLedge();
 		if (bCheckLedges && !CurrentFloor.IsWalkableFloor())
 		{
 			// Calculate possible alternate movement
@@ -413,7 +666,7 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 			if (!NewDelta.IsZero())
 			{
 				/* First revert current move (Want to avoid walking off ledges in this scope) */
-				RevertMove();
+				RevertMove(OldLocation, OldBase, PreviousBaseLocation, OldFloor, false);
 
 				/* Avoid repeated ledge moves if the first one fails */
 				bTriedLedgeMove = true;
@@ -426,9 +679,15 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 			else
 			{
 				/* Possible transition to a fall */
+				bool bMustJump = bZeroDelta || (OldBase == nullptr || (!OldBase->IsQueryCollisionEnabled() && MovementBaseUtility::IsDynamicBase(OldBase)));
+				if ((bMustJump || !bCheckedFall) && CheckFall(OldFloor, CurrentFloor.HitResult, Delta, OldLocation, RemainingTime, IterTick, Iterations, bMustJump))
+				{
+					return;
+				}
+				bCheckedFall = true;
 
 				/* Revert current move, zero delta for ledge adjustment */
-				RevertMove();
+				RevertMove(OldLocation, OldBase, PreviousBaseLocation, OldFloor, true);
 				RemainingTime = 0.f;
 				break;
 			} // Adjusted move delta zero
@@ -443,10 +702,10 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 				if (ShouldCatchAir(OldFloor, CurrentFloor))
 				{
 					// TODO: Events and swtiching to falling
-					HandleWalkingOffLedge();
+					HandleWalkingOffLedge(OldFloor.HitResult.ImpactNormal, OldFloor.HitResult.Normal, OldLocation, IterTick);
 					if (IsMovingOnGround())
 					{
-						StartFalling();
+						StartFalling(Iterations, RemainingTime, IterTick, Delta, OldLocation);
 					}
 					return;
 				}
@@ -471,7 +730,7 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 			if (!CurrentFloor.IsWalkableFloor() && !CurrentFloor.HitResult.bStartPenetrating)
 			{
 				const bool bMustJump = bJustTeleported || bZeroDelta || (OldBase == nullptr || (!OldBase->IsCollisionEnabled() && MovementBaseUtility::IsDynamicBase(OldBase)));
-				if ((bMustJump || !bCheckedFall) && CheckFall())
+				if ((bMustJump || !bCheckedFall) && CheckFall(OldFloor, CurrentFloor.HitResult, Delta, OldLocation, RemainingTime, IterTick, Iterations, bMustJump))
 				{
 					return;
 				}
@@ -484,7 +743,7 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 		if (IsMovingOnGround())
 		{
 			/* Make velocity reflect actual move */
-			if (!bJustTeleported && !HasAnimRootMotion() && IterTick >= MIN_TICK_TIME)
+			if (!bJustTeleported && IterTick >= MIN_TICK_TIME)
 			{
 				Velocity = (UpdatedComponent->GetComponentLocation() - OldLocation) / IterTick;
 				MaintainHorizontalGroundVelocity();
@@ -515,15 +774,7 @@ void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteration
 	{
 		return;	
 	}
-
-	if (!UpdatedComponent->IsQueryCollisionEnabled())
-	{
-		return;
-	}
-
-	bJustTeleported = false;
-	bool bCheckedFall = false;
-	bool bTriedLedgeMove = false;
+	
 	float RemainingTime = DeltaTime;
 
 	while ((RemainingTime >= MIN_TICK_TIME) && (Iterations < MaxSimulationIterations))
@@ -533,7 +784,8 @@ void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteration
 		bJustTeleported = false;
 		const float IterTick = GetSimulationTimeStep(RemainingTime, Iterations);
 		RemainingTime -= IterTick;
-
+		SubsteppedTick(Velocity, IterTick);
+		
 		/* Cache current values */
 		const FVector OldLocation = UpdatedComponent->GetComponentLocation();
 		const FQuat PawnRotation = UpdatedComponent->GetComponentQuat();
@@ -588,6 +840,7 @@ void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteration
 				/* Adjust delta based on hit */
 				const FVector OldHitNormal = Hit.Normal;
 				const FVector OldHitImpactNormal = Hit.ImpactNormal;
+				// TODO: Can only do this on Planar, then re-add vertical to ensure gravity is in full effect? But that makes an assumption about gravity being used here which it may not be...
 				FVector AdjustedDelta = ComputeSlideVector(Delta, 1.f - Hit.Time, OldHitNormal, Hit);
 
 				/* Compute the velocity after the deflection */
@@ -615,7 +868,7 @@ void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteration
 						HandleImpact(Hit, LastMoveTimeSlice, Delta);
 
 						/* Compute new deflection using old velocity */
-						if (CONDITION)
+						if ((Hit.Normal | UpdatedComponent->GetUpVector()) > 0.001f) // TODO:  If normal of hit is slightly vertically upwards 
 						{
 							const FVector LastMoveDelta = OldVelocity * LastMoveTimeSlice;
 							AdjustedDelta = ComputeSlideVector(LastMoveDelta, 1.f, OldHitNormal, Hit);
@@ -636,20 +889,21 @@ void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteration
 						}
 
 						/* bDitch = true means the pawn is straddling between two slopes neither of which it can stand on */
-						bool bDitch = ((MATH));
+						const FVector PawnUp = UpdatedComponent->GetUpVector();
+						bool bDitch = (((OldHitImpactNormal | PawnUp) > 0.f) && ((Hit.ImpactNormal | PawnUp) > 0.f) && (FMath::Abs(AdjustedDelta | PawnUp) <= UE_KINDA_SMALL_NUMBER) && ((Hit.ImpactNormal | OldHitImpactNormal) < 0.f));
 						SafeMoveUpdatedComponent(AdjustedDelta, PawnRotation, true, Hit);
 						if (Hit.Time == 0.f)
 						{
 							/* If we're stuck, try to side step */
-							FVector SideDelta = (MATH);
+							FVector SideDelta = FVector::VectorPlaneProject(OldHitNormal + Hit.ImpactNormal, PawnUp).GetSafeNormal();
 							if (SideDelta.IsNearlyZero())
 							{
-								SideDelta = FVector(MATH);
+								SideDelta = FVector::ZeroVector; // TODO: This?
 							}
 							SafeMoveUpdatedComponent(SideDelta, PawnRotation, true, Hit);
 						}
 
-						bool noBToHoldMeBack = true;
+						bool noBToHoldMeBack = true; // TODO: Do not delete this or else everything breaks
 
 						if (bDitch || IsValidLandingSpot(UpdatedComponent->GetComponentLocation(), Hit) || Hit.Time == 0.f)
 						{
@@ -668,7 +922,7 @@ void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteration
 }
 
 
-void UCustomMovementComponent::MoveAlongFloor(const FVector& InVelocity, float DeltaTime, FStepDownResult* OutStepDownResult)
+void UCustomMovementComponent::MoveAlongFloor(const FVector& InVelocity, float DeltaTime, FStepDownFloorResult* OutStepDownResult)
 {
 	// TODO: Again, check if we want to separate this. Following CMC closely for now then will revamp accordingly after a stable foundation is set 
 	if (!CurrentFloor.IsWalkableFloor())
@@ -716,7 +970,14 @@ void UCustomMovementComponent::MoveAlongFloor(const FVector& InVelocity, float D
 			} // Step up failed
 			else
 			{
-				// TODO: Perhaps don't recalculate velocity based on StepUp adjustment?
+				// Perhaps don't recalculate velocity based on StepUp adjustment?
+				bJustTeleported = true;
+				const float StepUpTimeSlice = (1.f - PercentTimeApplied) * DeltaTime;
+				if (!HasAnimRootMotion() && StepUpTimeSlice > UE_KINDA_SMALL_NUMBER)
+				{
+					Velocity = (UpdatedComponent->GetComponentLocation() - PreStepUpLocation) / StepUpTimeSlice;
+					Velocity.Z = 0; // TODO: TEMPORARY
+				}
 			} // Step up succeeded
 			
 		} // Can step up
@@ -733,7 +994,7 @@ void UCustomMovementComponent::MoveAlongFloor(const FVector& InVelocity, float D
 
 void UCustomMovementComponent::PostMovementUpdate(float DeltaTime)
 {
-	SaveMovementBaseLocation();
+	SaveBaseLocation();
 	
 	UpdateComponentVelocity();
 	
@@ -749,31 +1010,116 @@ void UCustomMovementComponent::ProcessLanded(FHitResult& Hit, float DeltaTime, u
 		return;
 	}
 	
-	LandedEvent();
-
-	PathFindingManagement();
-
-	GroundMovementTick(DeltaTime, Iterations);
-}
-
-void UCustomMovementComponent::StartFalling(float DeltaTime, uint32 Iterations)
-{
-	if ((DeltaTime < MIN_TICK_TIME) || (Iterations >= MaxSimulationIterations))
+	if (IsFalling())
 	{
-		return;
+		const FVector PreImpactAccel = Acceleration;
+		const FVector PreImpactVelocity = Velocity;
+		SetMovementState(STATE_Grounded);
+		
+		ApplyImpactPhysicsForces(Hit, PreImpactAccel, PreImpactVelocity);
 	}
-	
-	AdjustRemainingTime();
 
-	PIESpecificThing();
+	IPathFollowingAgentInterface* PFAgent = GetPathFollowingAgent();
+	if (PFAgent)
+	{
+		PFAgent->OnLanded();
+	}
 
 	StartMovementTick(DeltaTime, Iterations);
+}
+
+void UCustomMovementComponent::StartFalling(uint32 Iterations, float RemainingTime, float IterTick, const FVector& Delta, const FVector SubLoc)
+{
+	const float DesiredDist = Delta.Size();
+	const float ActualDist = (UpdatedComponent->GetComponentLocation() - SubLoc).Size2D(); // TODO: Doesn't respect arbitrary rotation, but we're transitioning to a fall
+	RemainingTime = (DesiredDist < UE_KINDA_SMALL_NUMBER ? 0.f : RemainingTime + IterTick * (1.f - FMath::Min(1.f, ActualDist/DesiredDist)));
+
+	if (IsMovingOnGround())
+	{
+		// Catch cases for PIE, following CMC instructions
+		if (!GIsEditor || (GetWorld()->HasBegunPlay() && (GetWorld()->GetTimeSeconds() >= 1.f)))
+		{
+			SetMovementState(STATE_Falling);
+		}
+		else
+		{
+			// to catch the floor
+			bForceNextFloorCheck = true;
+		}
+	}
+
+	StartMovementTick(RemainingTime, Iterations);
+}
+
+void UCustomMovementComponent::RevertMove(const FVector& OldLocation, UPrimitiveComponent* OldBase, const FVector& InOldBaseLocation, const FGroundingStatus& OldFloor, bool bFailMove)
+{
+	UpdatedComponent->SetWorldLocation(OldLocation, false, nullptr, bJustTeleported ? ETeleportType::TeleportPhysics : ETeleportType::None);
+
+	bJustTeleported = false;
+
+	if (IsValid(OldBase) &&
+		(!MovementBaseUtility::IsDynamicBase(OldBase) || OldBase->Mobility == EComponentMobility::Static || OldBase->GetComponentLocation() == InOldBaseLocation))
+	{
+		CurrentFloor = OldFloor;
+		SetBase(OldBase, OldFloor.HitResult.BoneName);
+	}
+	else
+	{
+		SetBase(nullptr);
+	}
+
+	if (bFailMove)
+	{
+		// End movement now
+		Velocity = FVector::ZeroVector;
+		Acceleration = FVector::ZeroVector;
+	}
 }
 
 
 #pragma endregion Core Simulation Handling
 
 #pragma region Ground Stability Handling
+
+bool UCustomMovementComponent::IsFloorStable(const FHitResult& Hit) const
+{
+	if (!Hit.IsValidBlockingHit()) return false;
+
+	float TestStableAngle = MaxStableSlopeAngle;
+	
+	// See if the component overrides floor angle
+	const UPrimitiveComponent* HitComponent = Hit.Component.Get();
+	if (HitComponent)
+	{
+		const FWalkableSlopeOverride& SlopeOverride = HitComponent->GetWalkableSlopeOverride();
+		TestStableAngle = SlopeOverride.ModifyWalkableFloorZ(TestStableAngle);
+		if (TestStableAngle != MaxStableSlopeAngle) TestStableAngle = SlopeOverride.GetWalkableSlopeAngle();
+	}
+
+	const float Angle = FMath::RadiansToDegrees(FMath::Acos(Hit.ImpactNormal | UpdatedComponent->GetUpVector()));
+	
+	if (Angle > TestStableAngle)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+bool UCustomMovementComponent::CheckFall(const FGroundingStatus& OldFloor, const FHitResult& Hit, const FVector& Delta,
+	const FVector& OldLocation, float RemainingTime, float IterTick, uint32 Iterations, bool bMustUnground)
+{
+	if (bMustUnground || CanWalkOffLedge())
+	{
+		HandleWalkingOffLedge(OldFloor.HitResult.ImpactNormal, OldFloor.HitResult.Normal, OldLocation, IterTick);
+		if (IsMovingOnGround())
+		{
+			StartFalling(Iterations, RemainingTime, IterTick, Delta, OldLocation);
+		}
+		return true;
+	}
+	return false;
+}
 
 // DONE
 void UCustomMovementComponent::UpdateFloorFromAdjustment()
@@ -837,7 +1183,7 @@ void UCustomMovementComponent::AdjustFloorHeight()
 		{
 			const float CurrentHeight = UpdatedComponent->GetComponentLocation() | UpdatedComponent->GetUpVector();
 			CurrentFloor.FloorDist = CurrentHeight - (AdjustHit.Location | UpdatedComponent->GetUpVector());
-			if (IsWalkable(AdjustHit))
+			if (IsFloorStable(AdjustHit))
 			{
 				CurrentFloor.SetFromSweep(AdjustHit, CurrentFloor.FloorDist, true);
 			}
@@ -885,7 +1231,7 @@ void UCustomMovementComponent::ComputeFloorDist(const FVector& CapsuleLocation, 
 				/* Don't try a redundant sweep, regardless of whether this sweep is usable */
 				bSkipSweep = true;
 
-				const bool bIsWalkable = IsWalkable(DownwardSweepResult);
+				const bool bIsWalkable = IsFloorStable(*DownwardSweepResult);
 				const float FloorDist = (CapsuleLocation - DownwardSweepResult->Location) | UpdatedComponent->GetUpVector();
 				OutFloorResult.SetFromSweep(*DownwardSweepResult, FloorDist, bIsWalkable);
 
@@ -952,7 +1298,7 @@ void UCustomMovementComponent::ComputeFloorDist(const FVector& CapsuleLocation, 
 			const float SweepResult = FMath::Max(-MaxPenetrationAdjust, Hit.Time * TraceDist - ShrinkHeight);
 
 			OutFloorResult.SetFromSweep(Hit, SweepResult, false);
-			if (Hit.IsValidBlockingHit() && IsWalkable(Hit))
+			if (Hit.IsValidBlockingHit() && IsFloorStable(Hit))
 			{
 				if (SweepResult <= SweepDistance)
 				{
@@ -995,7 +1341,7 @@ void UCustomMovementComponent::ComputeFloorDist(const FVector& CapsuleLocation, 
 				const float LineResult = FMath::Max(-MaxPenetrationAdjust, Hit.Time * TraceDist - ShrinkHeight);
 
 				OutFloorResult.bBlockingHit = true;
-				if (LineResult <= LineDistance && IsWalkable(Hit))
+				if (LineResult <= LineDistance && IsFloorStable(Hit))
 				{
 					OutFloorResult.SetFromLineTrace(Hit, OutFloorResult.FloorDist, LineResult, true);
 					return;
@@ -1008,18 +1354,20 @@ void UCustomMovementComponent::ComputeFloorDist(const FVector& CapsuleLocation, 
 	OutFloorResult.bWalkableFloor = false;
 }
 
-// DONE
+// TODO
 void UCustomMovementComponent::FindFloor(const FVector& CapsuleLocation, FGroundingStatus& OutFloorResult,
 	bool bCanUseCachedLocation, const FHitResult* DownwardSweepResult) const
 {
 	SCOPE_CYCLE_COUNTER(STAT_ProbeGround)
 
 	/* If collision is not enabled, or bSolveGrounding is not set, we don't care */
-	if (!bSolveGrounding || !UpdatedComponent->IsQueryCollisionEnabled())
+	if (!UpdatedComponent->IsQueryCollisionEnabled())
 	{
 		OutFloorResult.Clear();
 		return;
 	}
+
+	const float CapsuleRadius = UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius();
 
 	/* Increase height check slightly if currently groudned to prevent ground snapping height from later invalidating the floor result */
 	const float HeightCheckAdjust = (IsMovingOnGround() ? MAX_FLOOR_DIST + UE_KINDA_SMALL_NUMBER : -MAX_FLOOR_DIST);
@@ -1032,8 +1380,11 @@ void UCustomMovementComponent::FindFloor(const FVector& CapsuleLocation, FGround
 	/* Perform sweep */
 	if (FloorLineTraceDist > 0.f || FloorSweepTraceDist > 0.f)
 	{
+		UCustomMovementComponent* MutableThis = const_cast<UCustomMovementComponent*>(this);
+		
 		if (bAlwaysCheckFloor || !bCanUseCachedLocation || bForceNextFloorCheck || bJustTeleported)
 		{
+			MutableThis->bForceNextFloorCheck = false;
 			ComputeFloorDist(CapsuleLocation, FloorLineTraceDist, FloorSweepTraceDist, OutFloorResult, CapsuleRadius, DownwardSweepResult);
 		} // Force floor sweep
 		else
@@ -1045,8 +1396,8 @@ void UCustomMovementComponent::FindFloor(const FVector& CapsuleLocation, FGround
 
 			if (MovementBase != nullptr)
 			{
-				bForceNextFloorCheck = !MovementBase->IsQueryCollisionEnabled()
-				|| MovementBase->GetCollisionResponseToChannel(CollisionChannel) != ECR_BLOCK
+				MutableThis->bForceNextFloorCheck = !MovementBase->IsQueryCollisionEnabled()
+				|| (MovementBase->GetCollisionResponseToChannel(CollisionChannel) != ECollisionResponse::ECR_Block)
 				|| MovementBaseUtility::IsDynamicBase(MovementBase);
 			}
 
@@ -1059,6 +1410,7 @@ void UCustomMovementComponent::FindFloor(const FVector& CapsuleLocation, FGround
 			} // Don't need to perform a sweep, continue with current floor value
 			else
 			{
+				MutableThis->bForceNextFloorCheck = false;
 				ComputeFloorDist(CapsuleLocation, FloorLineTraceDist, FloorSweepTraceDist, OutFloorResult, CapsuleRadius, DownwardSweepResult);
 			} // Explicitly perform a sweep test
 		} // Check conditions before performing a floor sweep
@@ -1145,7 +1497,7 @@ bool UCustomMovementComponent::IsValidLandingSpot(const FVector& CapsuleLocation
 	if (!Hit.bStartPenetrating)
 	{
 		/* Reject unwalkable floor normals */
-		if (!IsWalkable(Hit))
+		if (!IsFloorStable(Hit))
 		{
 			return false;
 		}
@@ -1188,18 +1540,35 @@ bool UCustomMovementComponent::IsValidLandingSpot(const FVector& CapsuleLocation
 	return true;
 }
 
-// TODO
+// DONE
 bool UCustomMovementComponent::ShouldCheckForValidLandingSpot(const FHitResult& Hit) const
 {
+	/* See if we hit an edge of a surface on the lower portion of the capsule.
+	 * In this case the normal will not equal the impact normal and a downward sweep may find a walkable surface on top of the edge
+	 */
+	const FVector PawnUp = UpdatedComponent->GetUpVector();
+	if ((Hit.Normal | PawnUp) > UE_KINDA_SMALL_NUMBER && !Hit.Normal.Equals(Hit.ImpactNormal))
+	{
+		const FVector PawnLocation = UpdatedComponent->GetComponentLocation();
+		if (IsWithinEdgeTolerance(PawnLocation, Hit.ImpactPoint, UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius()))
+		{
+			return true;
+		}
+	}
 	return false;
 }
 
+void UCustomMovementComponent::MaintainHorizontalGroundVelocity()
+{
+	const float VelMag = Velocity.Size();
+	Velocity = GetDirectionTangentToSurface(Velocity, CurrentFloor.HitResult.Normal).GetSafeNormal() * VelMag;
+}
 
 #pragma endregion Ground Stability Handling
 
 #pragma region Step Handling
 
-bool UCustomMovementComponent::StepUp(const FHitResult& StepHit, const FVector& Delta, FStepDownResult* OutStepDownResult)
+bool UCustomMovementComponent::StepUp(const FHitResult& StepHit, const FVector& Delta, FStepDownFloorResult* OutStepDownResult)
 {
 	SCOPE_CYCLE_COUNTER(STAT_StepUp)
 	
@@ -1229,7 +1598,6 @@ bool UCustomMovementComponent::StepUp(const FHitResult& StepHit, const FVector& 
 	/* Top of the collision is hitting something so we can't go up */
 	if (((BarrierVerticalImpactPoint - UpperBound) | PawnUp) > 0) 
 	{
-		LOG_SCREEN(-1, 5.f, FColor::Red, "Aborting, Barrier Impact Point Higher...");
 		return false;
 	}
 
@@ -1238,11 +1606,11 @@ bool UCustomMovementComponent::StepUp(const FHitResult& StepHit, const FVector& 
 	FVector StartFloorPoint = StartLocation - PawnUp * PawnHalfHeight; // Character lower hemisphere center (Center is Z=0 again...)
 	float StartDistanceToFloor = 0.f;
 
-	if (IsWalkable(StepHit) && !MustUnground())
+	if (IsFloorStable(StepHit) && IsMovingOnGround())
 	{
-		StartDistanceToFloor = FMath::Abs((GroundingStatus.GroundHit.Location - StartLocation) | PawnUp);
+		StartDistanceToFloor = FMath::Abs((CurrentFloor.HitResult.Location - StartLocation) | PawnUp);
 		// Double because we go up first, then we go down(?)
-		TravelDownHeight += 2.f * GROUND_PROBING_REBOUND_DISTANCE;
+		TravelDownHeight += 2.f * MIN_FLOOR_DIST;
 	}
 
 	TravelUpHeight = FMath::Max(MaxStepHeight - StartDistanceToFloor, 0.f);
@@ -1251,7 +1619,6 @@ bool UCustomMovementComponent::StepUp(const FHitResult& StepHit, const FVector& 
 	/* Impact point under lower bound of collision */
 	if (((BarrierVerticalImpactPoint - StartFloorPoint) | PawnUp) <= 0)
 	{
-		LOG_SCREEN(-1, 5.f, FColor::Red, "Aborting, Barrier Impact Point Lower...");
 		return false;
 	}
 
@@ -1267,7 +1634,6 @@ bool UCustomMovementComponent::StepUp(const FHitResult& StepHit, const FVector& 
 	MoveUpdatedComponent(PawnUp * TravelUpHeight, PawnRotation, true, &UpHit);
 	if (UpHit.bStartPenetrating)
 	{
-		LOG_SCREEN(-1, 0.1f, FColor::Red, "Aborting Step Up, Upward Sweep Started In Penetration...");
 		ScopedMovement.RevertMove();
 		return false;
 	}
@@ -1285,12 +1651,10 @@ bool UCustomMovementComponent::StepUp(const FHitResult& StepHit, const FVector& 
 	/* Perform forward sweep */
 	FHitResult ForwardHit;
 	MoveUpdatedComponent(ClampedStepLocationDelta, PawnRotation, true, &ForwardHit);
-	if (OutForwardHit) *OutForwardHit = ForwardHit;
 	if (ForwardHit.bBlockingHit)
 	{
 		if (ForwardHit.bStartPenetrating)
 		{
-			LOG_SCREEN(-1, 1.f, FColor::Red, "Aborting Step Up, Forward Sweep Started In Penetration...");
 			ScopedMovement.RevertMove();
 			return false;
 		}
@@ -1305,7 +1669,6 @@ bool UCustomMovementComponent::StepUp(const FHitResult& StepHit, const FVector& 
 		if (ForwardHitTime == 0.f && SlideTime == 0.f)
 		{
 			// No movement occured, abort
-			LOG_SCREEN(-1, 0.3f, FColor::Red, "Aborting Step Up, Pawn Stuck After Forward Sweep...");
 			ScopedMovement.RevertMove();
 			return false;
 		}
@@ -1320,51 +1683,43 @@ bool UCustomMovementComponent::StepUp(const FHitResult& StepHit, const FVector& 
 	MoveUpdatedComponent(-PawnUp * TravelDownHeight, PawnRotation, true, &DownHit);
 	if (DownHit.bStartPenetrating)
 	{
-		LOG_SCREEN(-1, 1.f, FColor::Red, "Aborting Step Up, Downward Sweep Started In Penetration...");
 		ScopedMovement.RevertMove();
 		return false;
 	}
 	if (DownHit.bBlockingHit)
 	{
 		/* Verify the delta we moved is smaller than max step height */
-		DRAW_SPHERE(StartFloorPoint, FColor::Green);
-		DRAW_SPHERE(DownHit.ImpactPoint, FColor::Blue);
 		const float StepDelta = (DownHit.ImpactPoint - StartFloorPoint) | PawnUp;
 
 		if (StepDelta > MaxStepHeight)
 		{
-			LOG_SCREEN(-1, 1.f, FColor::Red, "Downward Delta Exceeded Maximum Step Height... Step Delta = " + FString::SanitizeFloat(StepDelta));
-			DRAW_SPHERE(DownHit.ImpactPoint, FColor::Purple);
 			ScopedMovement.RevertMove();
 			return false;
 		}
 
 		/* Reject unwalkable floor */
-		if (!IsStableOnNormal(DownHit.ImpactNormal)) // TODO: This check is borked
+		if (!IsFloorStable(DownHit)) // TODO: This check is borked
 		{
-			LOG_SCREEN(-1, 1.f, FColor::Red, "Aborting, Step Normal Not Stable...")
 			ScopedMovement.RevertMove();
 			return false;
 		}
 
 		/* Check if the floor below us is valid in terms of its type (i.e reject physics simulations) */
-		if (!CheckStepValidity(DownHit, FVector::ZeroVector))
+		if (!CanStepUp(DownHit))
 		{
-			LOG_SCREEN(-1, 1.f, FColor::Red, "Aborting, Step Normal Not Stable...")
 			ScopedMovement.RevertMove();
 			return false;
 		}
-		
-		/* REGISTER DEBUG FIELD */
-		DebugSimulationState.LastSuccessfulStepHeight = StepDelta;
 	}
 	else
 	{
-		/* W*/
-		LOG_SCREEN(-1, 0.1f, FColor::Green, "Downward Sweep has no blocking hit...");
+		/* W */
 	}
 
-	LOG_SCREEN(-1, 0.1f, FColor::Green, "Finished Step Up Successfuly...");
+	/* If here, fill out StepDownResult */
+	FindFloor(UpdatedComponent->GetComponentLocation(), OutStepDownResult->FloorResult, false, &DownHit);
+	OutStepDownResult->bComputedFloor = true;
+	
 	return true;
 }
 
@@ -1408,6 +1763,7 @@ bool UCustomMovementComponent::CanStepUp(const FHitResult& StepHit) const
 // TODO
 bool UCustomMovementComponent::ShouldCatchAir(const FGroundingStatus& OldFloor, const FGroundingStatus& NewFloor)
 {
+	return false;
 }
 
 // Done
@@ -1451,12 +1807,12 @@ bool UCustomMovementComponent::ComputePerchResult(const float TestRadius, const 
 	float PawnRadius = UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius();
 	float PawnHalfHeight = UpdatedPrimitive->GetCollisionShape().GetCapsuleHalfHeight();
 
+	const FVector PawnUp = UpdatedComponent->GetUpVector();
 	const FVector CapsuleLocation = (bUseFlatBaseForFloorChecks ? InHit.TraceStart : InHit.Location);
 
-	// TODO: Maths
-	const float InHitAboveBase;
-	const float PerchLineDist;
-	const float PerchSweepDist;
+	const float InHitAboveBase = FMath::Max(0.f, (InHit.ImpactPoint - (CapsuleLocation - PawnHalfHeight * PawnUp)) | PawnUp);
+	const float PerchLineDist = FMath::Max(0.f, InMaxFloorDist - InHitAboveBase);
+	const float PerchSweepDist = FMath::Max(0.f, InMaxFloorDist);
 
 	const float ActualSweepDist = PerchSweepDist + PawnRadius;
 	ComputeFloorDist(CapsuleLocation, PerchLineDist, ActualSweepDist, OutPerchFloorResult, TestRadius);
@@ -1476,6 +1832,63 @@ bool UCustomMovementComponent::ComputePerchResult(const float TestRadius, const 
 }
 
 
+bool UCustomMovementComponent::CheckLedgeDirection(const FVector& OldLocation, const FVector& SideStep,
+	const FVector& GravDir)
+{
+	const FVector SideDest = OldLocation + SideStep;
+	FCollisionQueryParams CapsuleParams(SCENE_QUERY_STAT(CheckLedgeDirection), false, PawnOwner);
+	FCollisionResponseParams ResponseParams;
+	InitCollisionParams(CapsuleParams, ResponseParams);
+	const FCollisionShape CapsuleShape = UpdatedPrimitive->GetCollisionShape();
+	const ECollisionChannel CollisionChannel = UpdatedComponent->GetCollisionObjectType();
+	FHitResult Result(1.f);
+	GetWorld()->SweepSingleByChannel(Result, OldLocation, SideDest, FQuat::Identity, CollisionChannel, CapsuleShape, CapsuleParams, ResponseParams);
+	
+	if (!Result.bBlockingHit || IsFloorStable(Result))
+	{
+	    if (!Result.bBlockingHit)
+	    {
+			GetWorld()->SweepSingleByChannel(Result, SideDest, SideDest + GravDir * (MaxStepHeight + LedgeCheckThreshold), FQuat::Identity, CollisionChannel, CapsuleShape, CapsuleParams, ResponseParams);
+	    }
+	    if ((Result.Time < 1.f) && IsFloorStable(Result))
+	    {
+			return true;
+	    }
+	}
+
+	return false;
+}
+
+FVector UCustomMovementComponent::GetLedgeMove(const FVector& OldLocation, const FVector& Delta,
+	const FVector& GravityDir)
+{
+	if (Delta.IsZero()) return FVector::ZeroVector;
+
+	// Establish a basis based on GravityDir & Pawn Forward
+	const FVector PawnForward = UpdatedComponent->GetForwardVector();
+	
+	const FVector BasisUp = -GravityDir.GetSafeNormal();
+	const FVector BasisRight = (Delta ^ (-GravityDir)).GetSafeNormal();
+	const FVector BasisForward = (BasisUp ^ BasisRight).GetSafeNormal();
+	
+	FVector SideDir = Delta.ProjectOnToNormal(BasisRight) - Delta.ProjectOnToNormal(BasisForward);
+
+	// try left
+	if (CheckLedgeDirection(OldLocation, SideDir, GravityDir)) return SideDir;
+
+	// Try right
+	SideDir *= -1.f;
+	if (CheckLedgeDirection(OldLocation, SideDir, GravityDir)) return SideDir;
+
+	return FVector::ZeroVector;
+}
+
+void UCustomMovementComponent::HandleWalkingOffLedge(const FVector& PreviousFloorImpactNormal,
+	const FVector& PreviousFloorContactNormal, const FVector& PreviousLocation, float TimeDelta)
+{
+}
+
+
 #pragma endregion Ledge Handling
 
 #pragma region Collision Adjustments
@@ -1484,9 +1897,6 @@ FVector UCustomMovementComponent::GetPenetrationAdjustment(const FHitResult& Hit
 {
 	FVector Result = Super::GetPenetrationAdjustment(Hit);
 
-	const float MaxDepenetrationWithGeometry = 500.f;
-	const float MaxDepenetrationWithPawn = 100.f;
-	
 	float MaxDistance = MaxDepenetrationWithGeometry;
 	if (Hit.HitObjectHandle.DoesRepresentClass(APawn::StaticClass()))
 	{
@@ -1510,15 +1920,6 @@ void UCustomMovementComponent::HandleImpact(const FHitResult& Hit, float TimeSli
 {
 	SCOPE_CYCLE_COUNTER(STAT_HandleImpact)
 	
-	/* Not really important right now for the movement
-	IPathFollowingAgentInterface* PFAgent = GetPathFollowingAgent();
-	if (PFAgent)
-	{
-		// Notify path following
-		PFAgent->OnMoveBlockedBy(Hit);
-	}
-	*/
-	
 	// Notify other pawn
 	if (const auto OtherPawn = Cast<APawn>(Hit.GetActor()))
 	{
@@ -1526,24 +1927,39 @@ void UCustomMovementComponent::HandleImpact(const FHitResult& Hit, float TimeSli
 	}
 }
 
-float UCustomMovementComponent::SlideAlongSurface(const FVector& Delta, float Time, const FVector& Normal, FHitResult& Hit, bool bHandleImpact)
+float UCustomMovementComponent::SlideAlongSurface(const FVector& Delta, float Time, const FVector& InNormal, FHitResult& Hit, bool bHandleImpact)
 {
 	SCOPE_CYCLE_COUNTER(STAT_SlideAlongSurface)
 	
 	if (!Hit.bBlockingHit) return 0.f;
 
-	if (IsFloorStable(Normal) && !MustUnground()) return 0.f;
-	
-	FVector NewNormal = Normal;
-
-	if (CurrentFloor.bWalkableFloor)
+	FVector Normal(InNormal);
+	if (IsMovingOnGround())
 	{
-		if (!IsFloorStable(NewNormal))
+		int VerticalNormal = FMath::Sign(Normal | CurrentFloor.HitResult.ImpactNormal);
+
+		if (VerticalNormal > 0) // Don't push up an unwalkable surface (Might not be necessary since we expect gravity to handle this and don't wanna treat them as barriers)
 		{
-			// Do not push the pawn up an unwalkable surface
-			NewNormal = FVector::VectorPlaneProject(NewNormal, GroundingStatus.GroundNormal).GetSafeNormal();
+			
+		}
+		else if (VerticalNormal < 0) // Don't push down into the floor when impact is on upper portion of the capsule
+		{
+			if (CurrentFloor.FloorDist < MIN_FLOOR_DIST && CurrentFloor.bBlockingHit)
+			{
+				const FVector FloorNormal = CurrentFloor.HitResult.Normal;
+				const bool bFloorOpposedToMovement = (Delta | FloorNormal) < 0.f;
+				// There's a second check here for if the floor normal isn't perfectly vertical, which makes sense as in CMC case that could be
+				// considered a barrier, but in our case we project our deltas to the normals (&& bFloorOpposedToMovement)
+				if (bFloorOpposedToMovement)
+				{
+					Normal  = FloorNormal;
+				}
+
+				Normal = FVector::VectorPlaneProject(Normal, FloorNormal).GetSafeNormal();
+			}
 		}
 	}
+	
 
 	return Super::SlideAlongSurface(Delta, Time, Normal, Hit, bHandleImpact);
 }
@@ -1555,14 +1971,22 @@ void UCustomMovementComponent::TwoWallAdjust(FVector& Delta, const FHitResult& H
 	const FVector InDelta = Delta;
 	Super::TwoWallAdjust(Delta, Hit, OldHitNormal);
 
-	if (CurrentFloor.bWalkableFloor)
+	if (IsMovingOnGround())
 	{
-		/* If the super projected our movement upwards, make sure its walkable */
-		if ((Delta | UpdatedComponent->GetUpVector()) > 0.f)
+		/* Allow slides up walkable surfaces, but not unwalkable ones (Treat those as vertical barriers) */
+
+		const FVector FloorNormal = CurrentFloor.HitResult.Normal;
+		const int VerticalDelta = FMath::Sign(Delta | FloorNormal);
+		
+		if (VerticalDelta > 0) // Adjusted Delta Pushing Up (Might not be necessary for the same reason as SlideAlongSurfaces
 		{
-			if (!IsFloorStable(Hit.Normal))
+			
+		}
+		else if (VerticalDelta < 0) // Adjusted Delta Pushing Down, don't wanna push down into the floor
+		{
+			if (CurrentFloor.FloorDist < MIN_FLOOR_DIST && CurrentFloor.bBlockingHit)
 			{
-				Delta = FVector::VectorPlaneProject(Delta, GroundingStatus.GroundNormal).GetSafeNormal();
+				Delta = FVector::VectorPlaneProject(Delta, FloorNormal);
 			}
 		}
 	}
@@ -1572,7 +1996,21 @@ void UCustomMovementComponent::TwoWallAdjust(FVector& Delta, const FHitResult& H
 #pragma endregion Collision Adjustments
 
 #pragma region Root Motion
+void UCustomMovementComponent::SetSkeletalMeshReference(USkeletalMeshComponent* Mesh)
+{
+	if (SkeletalMesh && SkeletalMesh != Mesh)
+	{
+		SkeletalMesh->RemoveTickPrerequisiteComponent(this);
+	}
 
+	SkeletalMesh = Mesh;
+
+	if (SkeletalMesh)
+	{
+		SkeletalMesh->AddTickPrerequisiteComponent(this);
+	}
+}
+/*
 void UCustomMovementComponent::TickPose(float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_TickPose)
@@ -1584,9 +2022,6 @@ void UCustomMovementComponent::TickPose(float DeltaTime)
 		RootMotionMontage = RootMotionMontageInstance->Montage;
 		RootMotionMontagePosition = RootMotionMontageInstance->GetPosition();
 	}
-
-	/* REGISTER DEBUG FIELD */
-	DebugSimulationState.MontagePosition = RootMotionMontagePosition;
 	
 	const bool bWasPlayingRootMotion = IsPlayingRootMotion();
 	SkeletalMesh->TickPose(DeltaTime, true);
@@ -1639,8 +2074,6 @@ void UCustomMovementComponent::CalculateAnimRootMotionVelocity(float DeltaTime)
 	RootMotionDelta.Z = FMath::IsNearlyEqual(RootMotionDelta.Z, 0.f, 0.01f) ? 0.f : RootMotionDelta.Z;
 
 	const FVector RootMotionVelocity = RootMotionDelta / DeltaTime;
-	/* REGISTER DEBUG FIELD */
-	DebugSimulationState.RootMotionVelocity = RootMotionVelocity;
 	SetVelocity(PostProcessAnimRootMotionVelocity(RootMotionVelocity, DeltaTime));
 }
 
@@ -1723,7 +2156,7 @@ bool UCustomMovementComponent::IsPlayingRootMotion() const
 	return false;
 }
 
-
+*/
 #pragma endregion Root Motion
 
 #pragma region Physics Interactions
@@ -1772,7 +2205,6 @@ void UCustomMovementComponent::RootCollisionTouched(UPrimitiveComponent* Overlap
 
 	/* Apply the touch force on retrieved bone if applicable */
 	OtherComponent->AddImpulse(ImpulseDirection * ImpulseStrength, BoneName);
-	LOG_SCREEN(-1, 2.f, FColor::Purple, "Impulse Strength = " + FString::SanitizeFloat(ImpulseStrength));
 }
 
 
@@ -1780,5 +2212,145 @@ void UCustomMovementComponent::RootCollisionTouched(UPrimitiveComponent* Overlap
 
 #pragma region Moving Base
 
-#pragma endregion Moving Base
 
+void UCustomMovementComponent::SetBase(UPrimitiveComponent* NewBaseComponent, const FName InBoneName, bool bNotifyPawn)
+{
+	/* If new base component is nullptr, ignore bone name */
+	const FName BoneName = (NewBaseComponent ? InBoneName : NAME_None);
+
+	/* See what has changed */
+	const bool bBaseChanged = (NewBaseComponent != BasedMovement.MovementBase);
+	const bool bBoneChanged = (BoneName != BasedMovement.BoneName);
+
+	if (bBaseChanged || bBoneChanged)
+	{
+		/* Verify no recursion */
+		APawn* Loop = (NewBaseComponent ? Cast<APawn>(NewBaseComponent->GetOwner()): nullptr);
+		while (Loop)
+		{
+			if (Loop == PawnOwner) return;
+
+			if (UPrimitiveComponent* LoopBase = Loop->GetMovementBase())
+			{
+				Loop = Cast<APawn>(LoopBase->GetOwner());
+			}
+			else
+			{
+				break;
+			}
+		}
+
+		/* Set Base */
+		UPrimitiveComponent* OldBase = BasedMovement.MovementBase;
+		BasedMovement.MovementBase = NewBaseComponent;
+		BasedMovement.BoneName = BoneName;
+
+		/* Set tick dependencies */
+		const bool bBaseIsSimulating = MovementBaseUtility::IsSimulatedBase(NewBaseComponent);
+		if (bBaseChanged)
+		{
+			MovementBaseUtility::RemoveTickDependency(PrimaryComponentTick, OldBase);
+			/* Use special post physics function if simulating, otherwise add normal tick prereqs. */
+			if (!bBaseIsSimulating)
+			{
+				MovementBaseUtility::AddTickDependency(PrimaryComponentTick, NewBaseComponent);
+			}
+		}
+
+		if (NewBaseComponent)
+		{
+			SaveBaseLocation();
+			PostPhysicsTickFunction.SetTickFunctionEnable(bBaseIsSimulating);
+		}
+		else
+		{
+			BasedMovement.BoneName = NAME_None;
+			BasedMovement.bRelativeRotation = false;
+			CurrentFloor.Clear();
+			PostPhysicsTickFunction.SetTickFunctionEnable(false);
+		}
+	}
+}
+
+void UCustomMovementComponent::SetBaseFromFloor(const FGroundingStatus& FloorResult)
+{
+	if (FloorResult.IsWalkableFloor())
+	{
+		SetBase(FloorResult.HitResult.GetComponent(), FloorResult.HitResult.BoneName);
+	}
+	else
+	{
+		SetBase(nullptr);
+	}
+}
+
+UPrimitiveComponent* UCustomMovementComponent::GetMovementBase() const
+{
+	return BasedMovement.MovementBase;
+}
+
+// TODO: That math for imparts might need some work. 
+FVector UCustomMovementComponent::GetImpartedMovementBaseVelocity() const
+{
+	FVector Result = FVector::ZeroVector;
+
+	UPrimitiveComponent* MovementBase = BasedMovement.MovementBase;
+	if (MovementBaseUtility::IsDynamicBase(MovementBase))
+	{
+		FVector BaseVelocity = MovementBaseUtility::GetMovementBaseVelocity(MovementBase, BasedMovement.BoneName);
+
+		if (bImpartBaseAngularVelocity)
+		{
+			const FVector BasePointPosition = (UpdatedComponent->GetComponentLocation() - UpdatedComponent->GetUpVector() * UpdatedPrimitive->GetCollisionShape().GetCapsuleHalfHeight());
+			const FVector BaseTangentialVel = MovementBaseUtility::GetMovementBaseTangentialVelocity(MovementBase, BasedMovement.BoneName, BasePointPosition);
+			BaseVelocity += BaseTangentialVel;
+		}
+
+		Result += BaseVelocity; // For now lets just always impart base velocity and work through it later
+
+		if (bImpartBaseVelocityPlanar)
+		{
+			
+		}
+
+		if (bImpartBaseVelocityVertical)
+		{
+			
+		}
+	}
+
+	return Result;
+}
+
+void UCustomMovementComponent::TryUpdateBasedMovement(float DeltaTime)
+{
+	bDeferUpdateBasedMovement = false;
+}
+
+void UCustomMovementComponent::UpdateBasedMovement(float DeltaTime)
+{
+	if (!bDeferUpdateBasedMovement)
+	{
+		const UPrimitiveComponent* MovementBase = GetMovementBase();
+		if (MovementBase)
+		{
+			/* Read transforms into OldBaseLocation, OldBaseQuat. Do regardless of whether object is movable since mobility can change */
+		}
+	}
+}
+
+
+void UCustomMovementComponent::UpdateBasedRotation(FRotator& FinalRotation, const FRotator& ReducedRotation)
+{
+}
+
+void UCustomMovementComponent::SaveBaseLocation()
+{
+}
+
+void UCustomMovementComponent::OnUnableToFollowBaseMove(const FVector& DeltaPosition, const FVector& OldPosition,
+	const FHitResult& MoveOnBaseHit)
+{
+}
+
+#pragma endregion Moving Base

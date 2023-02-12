@@ -247,9 +247,7 @@ public:
 #pragma endregion General Locomotion
 
 #pragma region Jump Stuff
-protected:
-	UPROPERTY()
-	FVector PendingLaunchVelocity{0};	
+
 public:
 	
 	/* Called in Character.cpp within CheckJumpInput */
@@ -260,9 +258,6 @@ public:
 
 	/* General interface call. Called in Character.cpp within LaunchCharacter which is BlueprintCallable */
 	virtual void Launch(FVector const& LaunchVel);
-
-	/* Called in PerformMovement before the movement tick is done */
-	virtual bool HandlePendingLaunch();
 
 	/* Called in PhysFalling in the while loop, subsequently calls the Character version*/
 	virtual void NotifyJumpApex();

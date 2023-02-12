@@ -16,10 +16,10 @@ void UOPMovementComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 
 void UOPMovementComponent::SubsteppedTick(FVector& CurrentVelocity, float DeltaTime)
 {
-	if (GroundingStatus.bIsStableOnGround)
+	if (IsMovingOnGround())
 	{
 		// Imitate PhysWalking
-		if (!bHasAnimRootMotion)
+		if (!HasAnimRootMotion())
 		{
 			CalcVelocity(DeltaTime, GroundFriction, BrakingDecelerationGround);
 		}
@@ -27,7 +27,7 @@ void UOPMovementComponent::SubsteppedTick(FVector& CurrentVelocity, float DeltaT
 	else
 	{
 		// Imitate PhysFalling
-		if (!bHasAnimRootMotion)
+		if (!HasAnimRootMotion())
 		{
 			const float zVel = Velocity.Z;
 			Velocity.Z = 0;
@@ -80,7 +80,6 @@ void UOPMovementComponent::UpdateVelocity(FVector& CurrentVelocity, float DeltaT
 	// CalcVel & JumpApex stuff verified there too) //
 
 	/* ControlledCharacterMove */
-	const FVector InputVector = ConsumeInputVector();
 	CharacterOwner->CheckJumpInput(DeltaTime);
 	Acceleration = ScaleInputAcceleration(ConstrainInputAcceleration(InputVector));
 	AnalogInputModifier = ComputeAnalogInputModifier();
@@ -97,7 +96,7 @@ void UOPMovementComponent::UpdateRotation(FQuat& CurrentRotation, float DeltaTim
 void UOPMovementComponent::CalcVelocity(float DeltaTime, float Friction, float BrakingDeceleration)
 {
 	// Do not update velocity when using root motion
-	if (bHasAnimRootMotion)
+	if (HasAnimRootMotion())
 	{
 		return;
 	}
@@ -209,12 +208,10 @@ FVector UOPMovementComponent::NewFallVelocity(const FVector& InitialVelocity, co
 
 void UOPMovementComponent::ApplyVelocityBraking(float DeltaTime, float Friction, float BrakingDeceleration)
 {
-	static constexpr float MIN_TICK_TIME = 1e-6f;
-
 	/** Stop completely when braking and velocity magnitude is lower than this. */
 	static constexpr float BRAKE_TO_STOP_VELOCITY = 10.f;
 	
-	if (Velocity.IsZero() || bHasAnimRootMotion || DeltaTime < MIN_TICK_TIME)
+	if (Velocity.IsZero() || HasAnimRootMotion() || DeltaTime < MIN_TICK_TIME)
 	{
 		return;
 	}
@@ -277,7 +274,7 @@ void UOPMovementComponent::PhysicsRotation(float DeltaTime)
 	//{
 	//	return;
 	//}
-
+	
 	FRotator CurrentRotation = UpdatedComponent->GetComponentRotation(); // Normalized
 	
 	FRotator DeltaRot = GetDeltaRotation(DeltaTime);
@@ -379,14 +376,12 @@ bool UOPMovementComponent::ShouldRemainVertical() const
 
 bool UOPMovementComponent::DoJump()
 {
-	GEngine->AddOnScreenDebugMessage(-1, 1.f, FColor::Red, "DoJump()");
 	if (CharacterOwner && CharacterOwner->CanJump())
 	{
 		// Don't jump if we can't move up/down
 		if (!bConstrainToPlane || FMath::Abs(PlaneConstraintNormal.Z) != 1.f)
 		{
-			GEngine->AddOnScreenDebugMessage(-1, 1.f, FColor::Red, "ExecutingJump()");
-			ForceUnground();
+			SetMovementState(STATE_Falling);
 			Velocity.Z = FMath::Max<FVector::FReal>(Velocity.Z, JumpZVelocity);
 			return true;
 		}
@@ -402,19 +397,6 @@ bool UOPMovementComponent::CanAttemptJump() const
 void UOPMovementComponent::Launch(FVector const& LaunchVel)
 {
 	PendingLaunchVelocity = LaunchVel;
-}
-
-bool UOPMovementComponent::HandlePendingLaunch()
-{
-	if (!PendingLaunchVelocity.IsZero())
-	{
-		Velocity = PendingLaunchVelocity;
-		PendingLaunchVelocity = FVector::ZeroVector;
-		if (Velocity.Z > 0)
-			ForceUnground();
-		return true;
-	}
-	return false;
 }
 
 void UOPMovementComponent::NotifyJumpApex()

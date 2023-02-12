@@ -30,7 +30,7 @@ AOPCharacter::AOPCharacter() : Super()
 	
 	// Set this pawn to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
-	PrimaryActorTick.TickInterval = .5f;
+	//PrimaryActorTick.TickInterval = .5f;
 
 	/* ~~~~~ Setup and attach primary components ~~~~~ */
 
@@ -110,6 +110,7 @@ void AOPCharacter::BeginPlay()
 
 void AOPCharacter::TickActor(float DeltaTime, ELevelTick TickType, FActorTickFunction& ThisTickFunction)
 {
+	Super::TickActor(DeltaTime, TickType, ThisTickFunction);
 }
 
 // TODO: This
@@ -257,7 +258,7 @@ FAnimMontageInstance* AOPCharacter::GetRootMotionAnimMontageInstance() const
 
 bool AOPCharacter::IsPlayingRootMotion() const
 {
-	return CustomMovement->IsPlayingRootMotion();
+	return CustomMovement->HasAnimRootMotion();
 }
 
 bool AOPCharacter::HasAnyRootMotion() const
