@@ -89,7 +89,18 @@ void UOPMovementComponent::UpdateRotation(FQuat& CurrentRotation, float DeltaTim
 {
 	//Super::UpdateRotation_Implementation(CurrentRotation, DeltaTime);
 
-	PhysicsRotation(DeltaTime);
+	if (!CurrentFloor.bBlockingHit) return;
+
+	const FVector FloorNormal = CurrentFloor.HitResult.Normal;
+	
+	// Velocity defines forward, floor normal defines up
+	FVector Forward = Velocity.IsZero() ? UpdatedComponent->GetForwardVector() : Velocity.GetSafeNormal();
+
+	FRotator Target = UKismetMathLibrary::MakeRotFromXZ(Forward, FloorNormal.GetSafeNormal());
+
+	MoveUpdatedComponent(FVector::ZeroVector, Target.Quaternion(), false);
+	
+	//PhysicsRotation(DeltaTime);
 }
 
 // From CMC

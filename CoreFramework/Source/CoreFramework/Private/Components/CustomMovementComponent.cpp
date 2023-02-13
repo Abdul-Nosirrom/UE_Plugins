@@ -511,7 +511,7 @@ void UCustomMovementComponent::PerformMovement(float DeltaTime)
 		{
 			FQuat CurrentRotation = UpdatedComponent->GetComponentQuat();
 			UpdateRotation(CurrentRotation, DeltaTime);
-			MoveUpdatedComponent(FVector::ZeroVector, CurrentRotation, true);
+			//MoveUpdatedComponent(FVector::ZeroVector, CurrentRotation, true);
 		}
 		
 	}
@@ -661,7 +661,7 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 		if (bCheckLedges && !CurrentFloor.IsWalkableFloor())
 		{
 			// Calculate possible alternate movement
-			const FVector DownDir = -UpdatedComponent->GetUpVector(); // TODO: We're on ground, so assume our rotation is oriented correctly
+			const FVector DownDir = -GetUpOrientation(); // TODO: We're on ground, so assume our rotation is oriented correctly
 			const FVector NewDelta = bTriedLedgeMove ? FVector::ZeroVector : GetLedgeMove(OldLocation, Delta, DownDir);
 			if (!NewDelta.IsZero())
 			{
@@ -719,7 +719,7 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 				// The floor check failed because it started in penetration, we do not want to try to move downward
 				// because the downward sweep failed. Try to pop out the floor instead.
 				FHitResult Hit(CurrentFloor.HitResult);
-				Hit.TraceEnd = Hit.TraceStart + UpdatedComponent->GetUpVector() * MAX_FLOOR_DIST;
+				Hit.TraceEnd = Hit.TraceStart + GetUpOrientation() * MAX_FLOOR_DIST;
 				const FVector RequestedAdjustment = GetPenetrationAdjustment(Hit);
 				ResolvePenetration(RequestedAdjustment, Hit, UpdatedComponent->GetComponentQuat());
 				bForceNextFloorCheck = true; // Force us to sweep for a floor next time
@@ -868,7 +868,7 @@ void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteration
 						HandleImpact(Hit, LastMoveTimeSlice, Delta);
 
 						/* Compute new deflection using old velocity */
-						if ((Hit.Normal | UpdatedComponent->GetUpVector()) > 0.001f) // TODO:  If normal of hit is slightly vertically upwards 
+						if ((Hit.Normal | GetUpOrientation()) > 0.001f) // TODO:  If normal of hit is slightly vertically upwards 
 						{
 							const FVector LastMoveDelta = OldVelocity * LastMoveTimeSlice;
 							AdjustedDelta = ComputeSlideVector(LastMoveDelta, 1.f, OldHitNormal, Hit);
@@ -885,11 +885,11 @@ void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteration
 						{
 							const FVector NewVelocity = (AdjustedDelta / SubTimeTickRemaining);
 							/* Might move this to an event for PostProcessRootMotion Velocity because we don't want to make assumptions */
-							Velocity = HasAnimRootMotion() ? FVector::VectorPlaneProject(Velocity, PawnRotation.GetUpVector()) + NewVelocity.ProjectOnToNormal(PawnRotation.GetUpVector()): NewVelocity;
+							Velocity = HasAnimRootMotion() ? FVector::VectorPlaneProject(Velocity, GetUpOrientation()) + NewVelocity.ProjectOnToNormal(GetUpOrientation()): NewVelocity;
 						}
 
 						/* bDitch = true means the pawn is straddling between two slopes neither of which it can stand on */
-						const FVector PawnUp = UpdatedComponent->GetUpVector();
+						const FVector PawnUp = GetUpOrientation();
 						bool bDitch = (((OldHitImpactNormal | PawnUp) > 0.f) && ((Hit.ImpactNormal | PawnUp) > 0.f) && (FMath::Abs(AdjustedDelta | PawnUp) <= UE_KINDA_SMALL_NUMBER) && ((Hit.ImpactNormal | OldHitImpactNormal) < 0.f));
 						SafeMoveUpdatedComponent(AdjustedDelta, PawnRotation, true, Hit);
 						if (Hit.Time == 0.f)
@@ -976,7 +976,7 @@ void UCustomMovementComponent::MoveAlongFloor(const FVector& InVelocity, float D
 				if (!HasAnimRootMotion() && StepUpTimeSlice > UE_KINDA_SMALL_NUMBER)
 				{
 					Velocity = (UpdatedComponent->GetComponentLocation() - PreStepUpLocation) / StepUpTimeSlice;
-					Velocity.Z = 0; // TODO: TEMPORARY
+					Velocity = FVector::VectorPlaneProject(Velocity, CurrentFloor.HitResult.Normal); // TODO: TEMPORARY
 				}
 			} // Step up succeeded
 			
@@ -1096,7 +1096,7 @@ bool UCustomMovementComponent::IsFloorStable(const FHitResult& Hit) const
 		if (TestStableAngle != MaxStableSlopeAngle) TestStableAngle = SlopeOverride.GetWalkableSlopeAngle();
 	}
 
-	const float Angle = FMath::RadiansToDegrees(FMath::Acos(Hit.ImpactNormal | UpdatedComponent->GetUpVector()));
+	const float Angle = FMath::RadiansToDegrees(FMath::Acos(Hit.ImpactNormal | GetUpOrientation()));
 	
 	if (Angle > TestStableAngle)
 	{
@@ -1161,13 +1161,13 @@ void UCustomMovementComponent::AdjustFloorHeight()
 	if (OldFloorDist < MIN_FLOOR_DIST || OldFloorDist > MAX_FLOOR_DIST)
 	{
 		FHitResult AdjustHit(1.f);
-		const float InitialHeight = UpdatedComponent->GetComponentLocation() | UpdatedComponent->GetUpVector();
+		const float InitialHeight = UpdatedComponent->GetComponentLocation() | GetUpOrientation();
 		const float AvgFloorDist = (MIN_FLOOR_DIST + MAX_FLOOR_DIST) * 0.5f;
 
 		/* Move dist such that if we're above MAX, it'll move us down - below MIN, it'll move us up. Relative to the average of the two thresholds */
 		const float MoveDist = AvgFloorDist - OldFloorDist;
 
-		SafeMoveUpdatedComponent(UpdatedComponent->GetUpVector() * MoveDist, UpdatedComponent->GetComponentQuat(), true, AdjustHit);
+		SafeMoveUpdatedComponent(GetUpOrientation() * MoveDist, UpdatedComponent->GetComponentQuat(), true, AdjustHit);
 
 		/* Check if the snapping resulted in a valid hit */
 		if (!AdjustHit.IsValidBlockingHit())
@@ -1176,13 +1176,13 @@ void UCustomMovementComponent::AdjustFloorHeight()
 		} // Invalid blocking hit, adjust our cached floor dist for next next
 		else if (MoveDist > 0.f)
 		{
-			const float CurrentHeight = UpdatedComponent->GetComponentLocation() | UpdatedComponent->GetUpVector();
+			const float CurrentHeight = UpdatedComponent->GetComponentLocation() | GetUpOrientation();
 			CurrentFloor.FloorDist += CurrentHeight - InitialHeight;
 		} // Below MIN_FLOOR_DIST
 		else
 		{
-			const float CurrentHeight = UpdatedComponent->GetComponentLocation() | UpdatedComponent->GetUpVector();
-			CurrentFloor.FloorDist = CurrentHeight - (AdjustHit.Location | UpdatedComponent->GetUpVector());
+			const float CurrentHeight = UpdatedComponent->GetComponentLocation() | GetUpOrientation();
+			CurrentFloor.FloorDist = CurrentHeight - (AdjustHit.Location | GetUpOrientation());
 			if (IsFloorStable(AdjustHit))
 			{
 				CurrentFloor.SetFromSweep(AdjustHit, CurrentFloor.FloorDist, true);
@@ -1190,7 +1190,7 @@ void UCustomMovementComponent::AdjustFloorHeight()
 		} // Above MAX_FLOOR_DIST, could be a new floor value so we set that if its walkable
 
 		/* Don't recalculate velocity based on snapping, also avoid if we moved out of penetration */
-		bJustTeleported |= (OldFloorDist < 0.f); // TODO: This could affect projection if we don't do it manually
+		bJustTeleported |= (OldFloorDist < 0.f); // TODO: This could affect projection if we don't do it manually (Old TODO, irrelevant maybe)
 
 		/* If something caused us to adjust our height (especially a depenetration), we should ensure another check next frame or we will keep a stale result */
 		bForceNextFloorCheck = true;
@@ -1201,7 +1201,7 @@ void UCustomMovementComponent::AdjustFloorHeight()
 bool UCustomMovementComponent::IsWithinEdgeTolerance(const FVector& CapsuleLocation, const FVector& TestImpactPoint,
 	const float CapsuleRadius) const
 {
-	const float DistFromCenterSq = FVector::VectorPlaneProject(TestImpactPoint - CapsuleLocation, UpdatedComponent->GetUpVector()).SizeSquared();
+	const float DistFromCenterSq = FVector::VectorPlaneProject(TestImpactPoint - CapsuleLocation, GetUpOrientation()).SizeSquared();
 	const float ReducedRadiusSq = FMath::Square(FMath::Max(SWEEP_EDGE_REJECT_DISTANCE + UE_KINDA_SMALL_NUMBER, CapsuleRadius - SWEEP_EDGE_REJECT_DISTANCE));
 	return DistFromCenterSq < ReducedRadiusSq;
 }
@@ -1212,16 +1212,16 @@ void UCustomMovementComponent::ComputeFloorDist(const FVector& CapsuleLocation, 
 {
 	OutFloorResult.Clear();
 
-	float PawnRadius = UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius();
-	float PawnHalfHeight = UpdatedPrimitive->GetCollisionShape().GetCapsuleHalfHeight();
+	float PawnRadius = GetCapsuleRadius();
+	float PawnHalfHeight = GetCapsuleHalfHeight();
 	
 	bool bSkipSweep = false;
 	if (DownwardSweepResult != nullptr && DownwardSweepResult->IsValidBlockingHit())
 	{
 		/* Accept it only if the supplied sweep was vertical and downwards relative to character orientation */
-		float TraceStartHeight = DownwardSweepResult->TraceStart | UpdatedComponent->GetUpVector();
-		float TraceEndHeight = DownwardSweepResult->TraceEnd | UpdatedComponent->GetUpVector();
-		float TracePlaneProjection = FVector::VectorPlaneProject(DownwardSweepResult->TraceStart - DownwardSweepResult->TraceStart, UpdatedComponent->GetUpVector()).SizeSquared();
+		float TraceStartHeight = DownwardSweepResult->TraceStart | GetUpOrientation();
+		float TraceEndHeight = DownwardSweepResult->TraceEnd | GetUpOrientation();
+		float TracePlaneProjection = FVector::VectorPlaneProject(DownwardSweepResult->TraceStart - DownwardSweepResult->TraceStart, GetUpOrientation()).SizeSquared();
 
 		if ((TraceStartHeight > TraceEndHeight) && (TracePlaneProjection <= UE_KINDA_SMALL_NUMBER))
 		{
@@ -1232,7 +1232,7 @@ void UCustomMovementComponent::ComputeFloorDist(const FVector& CapsuleLocation, 
 				bSkipSweep = true;
 
 				const bool bIsWalkable = IsFloorStable(*DownwardSweepResult);
-				const float FloorDist = (CapsuleLocation - DownwardSweepResult->Location) | UpdatedComponent->GetUpVector();
+				const float FloorDist = (CapsuleLocation - DownwardSweepResult->Location) | GetUpOrientation();
 				OutFloorResult.SetFromSweep(*DownwardSweepResult, FloorDist, bIsWalkable);
 
 				if (bIsWalkable)
@@ -1272,7 +1272,7 @@ void UCustomMovementComponent::ComputeFloorDist(const FVector& CapsuleLocation, 
 		/* ~~~~~~~~~~~~~~~~~~~ */
 		/* Perform Shape Trace */
 		FHitResult Hit(1.f);
-		bBlockingHit = FloorSweepTest(Hit, CapsuleLocation, CapsuleLocation - UpdatedComponent->GetUpVector() * TraceDist, CollisionChannel, CapsuleShape, QueryParams, ResponseParam);
+		bBlockingHit = FloorSweepTest(Hit, CapsuleLocation, CapsuleLocation - GetUpOrientation() * TraceDist, CollisionChannel, CapsuleShape, QueryParams, ResponseParam);
 
 		if (bBlockingHit)
 		{
@@ -1288,7 +1288,7 @@ void UCustomMovementComponent::ComputeFloorDist(const FVector& CapsuleLocation, 
 					CapsuleShape.Capsule.HalfHeight = FMath::Max(PawnHalfHeight - ShrinkHeight, CapsuleShape.Capsule.Radius);
 					Hit.Reset(1.f, false);
 
-					bBlockingHit = FloorSweepTest(Hit, CapsuleLocation, CapsuleLocation - UpdatedComponent->GetUpVector() * TraceDist, CollisionChannel, CapsuleShape, QueryParams, ResponseParam);
+					bBlockingHit = FloorSweepTest(Hit, CapsuleLocation, CapsuleLocation - GetUpOrientation() * TraceDist, CollisionChannel, CapsuleShape, QueryParams, ResponseParam);
 				}
 			}
 
@@ -1325,7 +1325,7 @@ void UCustomMovementComponent::ComputeFloorDist(const FVector& CapsuleLocation, 
 		const float ShrinkHeight = PawnHalfHeight;
 		const FVector LineTraceStart = CapsuleLocation;
 		const float TraceDist = LineDistance + ShrinkHeight;
-		const FVector Down = -UpdatedComponent->GetUpVector() * TraceDist;
+		const FVector Down = -GetUpOrientation() * TraceDist;
 		QueryParams.TraceTag = SCENE_QUERY_STAT_NAME_ONLY(FloorLineTrace);
 
 		FHitResult Hit(1.f);
@@ -1367,7 +1367,7 @@ void UCustomMovementComponent::FindFloor(const FVector& CapsuleLocation, FGround
 		return;
 	}
 
-	const float CapsuleRadius = UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius();
+	const float CapsuleRadius = GetCapsuleRadius();
 
 	/* Increase height check slightly if currently groudned to prevent ground snapping height from later invalidating the floor result */
 	const float HeightCheckAdjust = (IsMovingOnGround() ? MAX_FLOOR_DIST + UE_KINDA_SMALL_NUMBER : -MAX_FLOOR_DIST);
@@ -1472,7 +1472,7 @@ bool UCustomMovementComponent::FloorSweepTest(FHitResult& OutHit, const FVector&
 		const FCollisionShape BoxShape = FCollisionShape::MakeBox(FVector(CapsuleRadius * 0.707f, CapsuleRadius * 0.707f, CapsuleHeight));
 
 		/* First test with a box rotates so the corners are along the major axes (ie rotated 45 Degrees) */
-		bBlockingHit = GetWorld()->SweepSingleByChannel(OutHit, Start, End, FQuat(-1.f * UpdatedComponent->GetUpVector(), UE_PI * 0.25f), TraceChannel, BoxShape, Params, ResponseParams);
+		bBlockingHit = GetWorld()->SweepSingleByChannel(OutHit, Start, End, FQuat(-1.f * GetUpOrientation(), UE_PI * 0.25f), TraceChannel, BoxShape, Params, ResponseParams);
 
 		/* If no hit, check again but without a rotated capsule */
 		if (!bBlockingHit)
@@ -1502,12 +1502,12 @@ bool UCustomMovementComponent::IsValidLandingSpot(const FVector& CapsuleLocation
 			return false;
 		}
 
-		float PawnRadius = UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius();
-		float PawnHalfHeight = UpdatedPrimitive->GetCollisionShape().GetCapsuleHalfHeight();
+		const float PawnRadius = GetCapsuleRadius();
+		const float PawnHalfHeight = GetCapsuleHalfHeight();
 
 		/* Reject hits that are above our lower hemisphere (can happen when sliding down a vertical surface) */
-		const float HitImpactHeight = (Hit.ImpactPoint | UpdatedComponent->GetUpVector());
-		const float LowerHemisphereHeight = (Hit.Location | UpdatedComponent->GetUpVector()) - PawnHalfHeight + PawnRadius;
+		const float HitImpactHeight = (Hit.ImpactPoint | GetUpOrientation());
+		const float LowerHemisphereHeight = (Hit.Location | GetUpOrientation()) - PawnHalfHeight + PawnRadius;
 		if (HitImpactHeight >= LowerHemisphereHeight)
 		{
 			return false;
@@ -1523,7 +1523,7 @@ bool UCustomMovementComponent::IsValidLandingSpot(const FVector& CapsuleLocation
 	{
 		// TODO: Verify the below isn't contradictory. We'd never really need a max slope angle of >= 90 relative to the pawn
 		/* Normal is nearly horizontal or downward, that's a penetration adjustment next to a vertical or overhanging wall. Don't pop to the floor */
-		if ((Hit.Normal | UpdatedComponent->GetUpVector()) < UE_KINDA_SMALL_NUMBER)
+		if ((Hit.Normal | GetUpOrientation()) < UE_KINDA_SMALL_NUMBER)
 		{
 			return false;
 		}
@@ -1546,11 +1546,11 @@ bool UCustomMovementComponent::ShouldCheckForValidLandingSpot(const FHitResult& 
 	/* See if we hit an edge of a surface on the lower portion of the capsule.
 	 * In this case the normal will not equal the impact normal and a downward sweep may find a walkable surface on top of the edge
 	 */
-	const FVector PawnUp = UpdatedComponent->GetUpVector();
+	const FVector PawnUp = GetUpOrientation();
 	if ((Hit.Normal | PawnUp) > UE_KINDA_SMALL_NUMBER && !Hit.Normal.Equals(Hit.ImpactNormal))
 	{
 		const FVector PawnLocation = UpdatedComponent->GetComponentLocation();
-		if (IsWithinEdgeTolerance(PawnLocation, Hit.ImpactPoint, UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius()))
+		if (IsWithinEdgeTolerance(PawnLocation, Hit.ImpactPoint, GetCapsuleRadius()))
 		{
 			return true;
 		}
@@ -1573,7 +1573,7 @@ bool UCustomMovementComponent::StepUp(const FHitResult& StepHit, const FVector& 
 	SCOPE_CYCLE_COUNTER(STAT_StepUp)
 	
 	/* Determine our planar move delta for this iteration */
-	const FVector PawnUp = UpdatedComponent->GetUpVector();
+	const FVector PawnUp = GetUpOrientation();
 	const FVector StepLocationDelta = FVector::VectorPlaneProject(Delta, PawnUp);
 
 	/* Skip negligible deltas or if step height is 0 (or invalid) */
@@ -1782,7 +1782,7 @@ bool UCustomMovementComponent::ShouldComputePerchResult(const FHitResult& InHit,
 
 	if (bCheckRadius)
 	{
-		const float DistFromCenterSq = FVector::VectorPlaneProject(InHit.ImpactPoint - InHit.Location, UpdatedComponent->GetUpVector()).SizeSquared();
+		const float DistFromCenterSq = FVector::VectorPlaneProject(InHit.ImpactPoint - InHit.Location, GetUpOrientation()).SizeSquared();
 		const float StandOnEdgeRadius = GetValidPerchRadius();
 		if (DistFromCenterSq <= FMath::Square(StandOnEdgeRadius))
 		{
@@ -1804,10 +1804,10 @@ bool UCustomMovementComponent::ComputePerchResult(const float TestRadius, const 
 	}
 
 	/* Sweep further than the actual requested distance, because a reduced capsule radius means we could miss some hits the normal radius would catch */
-	float PawnRadius = UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius();
-	float PawnHalfHeight = UpdatedPrimitive->GetCollisionShape().GetCapsuleHalfHeight();
+	const float PawnRadius = GetCapsuleRadius();
+	const float PawnHalfHeight = GetCapsuleHalfHeight();
 
-	const FVector PawnUp = UpdatedComponent->GetUpVector();
+	const FVector PawnUp = GetUpOrientation();
 	const FVector CapsuleLocation = (bUseFlatBaseForFloorChecks ? InHit.TraceStart : InHit.Location);
 
 	const float InHitAboveBase = FMath::Max(0.f, (InHit.ImpactPoint - (CapsuleLocation - PawnHalfHeight * PawnUp)) | PawnUp);
@@ -2301,7 +2301,7 @@ FVector UCustomMovementComponent::GetImpartedMovementBaseVelocity() const
 
 		if (bImpartBaseAngularVelocity)
 		{
-			const FVector BasePointPosition = (UpdatedComponent->GetComponentLocation() - UpdatedComponent->GetUpVector() * UpdatedPrimitive->GetCollisionShape().GetCapsuleHalfHeight());
+			const FVector BasePointPosition = (UpdatedComponent->GetComponentLocation() - GetUpOrientation() * UpdatedPrimitive->GetCollisionShape().GetCapsuleHalfHeight());
 			const FVector BaseTangentialVel = MovementBaseUtility::GetMovementBaseTangentialVelocity(MovementBase, BasedMovement.BoneName, BasePointPosition);
 			BaseVelocity += BaseTangentialVel;
 		}

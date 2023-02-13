@@ -256,7 +256,9 @@ protected:
 	/* Physics State Parameters */
 	UPROPERTY(Category="Motor | Physics State", BlueprintReadOnly)
 	TEnumAsByte<EMovementState> PhysicsState;
-	
+
+	UPROPERTY(Category="Motor | Physics State", BlueprintReadWrite)
+	FVector Gravity;
 	UPROPERTY()
 	FVector Acceleration;
 	UPROPERTY()
@@ -298,6 +300,21 @@ protected:
 	/* ~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 	
 public:
+
+	/*~~~~~ Orientation, scale all that jazz ~~~~~*/
+
+	// There are 3 possible values here to return, Either
+	//	1.) Player Up Vector (Stuff where its in terms of their orientation
+	//	2.) Negative Gravity (So a constant value regardless of surface normal or player orientation, likely used in air)
+	//	3.) Ground normal
+	FORCEINLINE FVector GetUpOrientation(bool bOrientToGround) const
+	{
+		if (Gravity.IsZero()) return UpdatedComponent->GetUpVector();
+		return -Gravity.GetSafeNormal();
+	}
+
+	FORCEINLINE float GetCapsuleRadius() const { return UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius(); }
+	FORCEINLINE float GetCapsuleHalfHeight() const { return UpdatedPrimitive->GetCollisionShape().GetCapsuleHalfHeight(); }
 
 	/*~~~~~ Movement State Interface ~~~~~*/
 
