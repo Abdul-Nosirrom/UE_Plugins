@@ -126,6 +126,11 @@ struct FInputBuffer
 	/// @param InputID ID of the input
 	/// @return True if the input is consumed
 	bool UseInput(FName InputID);
+
+	bool CheckButtonPressed(FName InputID) const {return false;};
+	bool CheckButtonHeld(FName InputID, float HoldThreshold) const {return false;};
+	bool CheckButtonReleased(FName InputID) const {return false;};
+	bool CheckDirectionRegistered(FName InputID) const {return false;};
 };
 
 #pragma endregion Input Buffer Core

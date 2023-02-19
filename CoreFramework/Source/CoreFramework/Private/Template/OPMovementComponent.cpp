@@ -89,18 +89,48 @@ void UOPMovementComponent::UpdateRotation(FQuat& CurrentRotation, float DeltaTim
 {
 	//Super::UpdateRotation_Implementation(CurrentRotation, DeltaTime);
 
-	if (!CurrentFloor.bBlockingHit) return;
+	if (!bOrientRotationToMovement)
+	{
+		if (!CurrentFloor.bBlockingHit) return;
 
-	const FVector FloorNormal = CurrentFloor.HitResult.Normal;
+		const FVector FloorNormal = CurrentFloor.HitResult.Normal;
 	
-	// Velocity defines forward, floor normal defines up
-	FVector Forward = Velocity.IsZero() ? UpdatedComponent->GetForwardVector() : Velocity.GetSafeNormal();
+		// Velocity defines forward, floor normal defines up
+		FVector Forward = Velocity.IsZero() ? UpdatedComponent->GetForwardVector() : Velocity.GetSafeNormal();
 
-	FRotator Target = UKismetMathLibrary::MakeRotFromXZ(Forward, FloorNormal.GetSafeNormal());
+		FRotator Target = UKismetMathLibrary::MakeRotFromXZ(Forward, FloorNormal.GetSafeNormal());
 
-	MoveUpdatedComponent(FVector::ZeroVector, Target.Quaternion(), false);
-	
-	//PhysicsRotation(DeltaTime);
+		constexpr float AngleTolerance = 1e-3f;
+/*
+		if (!CurrentRotation.Rotator().Equals(Target, AngleTolerance))
+		{
+			const auto DeltaRot = GetDeltaRotation(DeltaTime);
+			// PITCH
+			if (!FMath::IsNearlyEqual(CurrentRotation.Rotator().Pitch, Target.Pitch, AngleTolerance))
+			{
+				Target.Pitch = FMath::FixedTurn(CurrentRotation.Rotator().Pitch, Target.Pitch, DeltaRot.Pitch);
+			}
+
+			// YAW
+			if (!FMath::IsNearlyEqual(CurrentRotation.Rotator().Yaw, Target.Yaw, AngleTolerance))
+			{
+				Target.Yaw = FMath::FixedTurn(CurrentRotation.Rotator().Yaw, Target.Yaw, DeltaRot.Yaw);
+			}
+
+			// ROLL
+			if (!FMath::IsNearlyEqual(CurrentRotation.Rotator().Roll, Target.Roll, AngleTolerance))
+			{
+				Target.Roll = FMath::FixedTurn(CurrentRotation.Rotator().Roll, Target.Roll, DeltaRot.Roll);
+			}
+
+			// Set the new rotation.
+			MoveUpdatedComponent( FVector::ZeroVector, Target.Quaternion(), false );
+		}
+	*/
+		MoveUpdatedComponent(FVector::ZeroVector, Target.Quaternion(), false);
+	}
+	else 
+		PhysicsRotation(DeltaTime);
 }
 
 // From CMC
@@ -193,20 +223,20 @@ void UOPMovementComponent::CalcVelocity(float DeltaTime, float Friction, float B
 	//}
 }
 
-FVector UOPMovementComponent::NewFallVelocity(const FVector& InitialVelocity, const FVector& Gravity, float DeltaTime) const
+FVector UOPMovementComponent::NewFallVelocity(const FVector& InitialVelocity, const FVector& InGravity, float DeltaTime) const
 {
 	FVector Result = InitialVelocity;
 
 	if (DeltaTime > 0.f)
 	{
 		// Apply Gravity
-		Result += Gravity * DeltaTime;
+		Result += InGravity * DeltaTime;
 
 		// Don't exceed terminal velocity
 		const float TerminalLimit = FMath::Abs(GetPhysicsVolume()->TerminalVelocity);
 		if (Result.SizeSquared() > FMath::Square(TerminalLimit))
 		{
-			const FVector GravityDir = Gravity.GetSafeNormal();
+			const FVector GravityDir = InGravity.GetSafeNormal();
 			if ((Result | GravityDir) > TerminalLimit)
 			{
 				Result = FVector::PointPlaneProject(Result, FVector::ZeroVector, GravityDir) + GravityDir * TerminalLimit;
@@ -420,10 +450,10 @@ void UOPMovementComponent::NotifyJumpApex()
 
 float UOPMovementComponent::GetMaxJumpHeight() const
 {
-	const float Gravity = GetGravityZ();
-	if (FMath::Abs(Gravity) > UE_KINDA_SMALL_NUMBER)
+	const float GravityMag = GetGravityZ();
+	if (FMath::Abs(GravityMag) > UE_KINDA_SMALL_NUMBER)
 	{
-		return FMath::Square(JumpZVelocity) / (-2.f * Gravity);
+		return FMath::Square(JumpZVelocity) / (-2.f * GravityMag);
 	}
 	else
 	{

@@ -7,10 +7,9 @@
 #include "GameFramework/Character.h"
 #include "CustomMovementComponent.generated.h"
 
-#define CM_DEBUG_BREAK GEngine->DeferredCommands.Add(TEXT("pause"));
-
 /* Profiling */
 DECLARE_STATS_GROUP(TEXT("RadicalMovementComponent_Game"), STATGROUP_RadicalMovementComp, STATCAT_Advanced)
+DECLARE_LOG_CATEGORY_EXTERN(LogRMCMovement, Log, All);
 /* ~~~~~~~~ */
 
 #pragma region Enums
@@ -26,6 +25,15 @@ enum EMovementState
 
 	/* No floor or floor is unstable */
 	STATE_Falling	UMETA(DisplayName="Falling"),
+};
+
+enum EOrientationMode
+{
+	MODE_PawnUp			UMETA(DisplayName="Pawn Up"),
+
+	MODE_Gravity		UMETA(DisplayName="Opposite Gravity"),
+
+	MODE_FloorNormal	UMETA(DisplayName="Floor Normal")
 };
 
 #pragma endregion Enums 
@@ -244,6 +252,7 @@ public:
 	// END UMovementComponent Interface
 
 	// BEGIN UPawnMovementComponent Interface
+	virtual void NotifyBumpedPawn(APawn* BumpedPawn) override;
 	virtual void OnTeleported() override;
 	// END UPawnMovementComponent Interface
 
@@ -257,8 +266,12 @@ protected:
 	UPROPERTY(Category="Motor | Physics State", BlueprintReadOnly)
 	TEnumAsByte<EMovementState> PhysicsState;
 
-	UPROPERTY(Category="Motor | Physics State", BlueprintReadWrite)
+	UPROPERTY(Category="Motor | Physics State", EditAnywhere, BlueprintReadWrite)
 	FVector Gravity;
+
+	UPROPERTY(Category="Motor | Physics State", EditDefaultsOnly)
+	bool bAlwaysOrientToGravity; // TODO: Temp for debug
+	
 	UPROPERTY()
 	FVector Acceleration;
 	UPROPERTY()
@@ -307,11 +320,23 @@ public:
 	//	1.) Player Up Vector (Stuff where its in terms of their orientation
 	//	2.) Negative Gravity (So a constant value regardless of surface normal or player orientation, likely used in air)
 	//	3.) Ground normal
-	FORCEINLINE FVector GetUpOrientation(bool bOrientToGround) const
+	FORCEINLINE FVector GetUpOrientation(EOrientationMode OrientationMode) const /* Perhaps having a fallback be a parameter? */
 	{
-		if (Gravity.IsZero()) return UpdatedComponent->GetUpVector();
-		return -Gravity.GetSafeNormal();
+		if (bAlwaysOrientToGravity) return -Gravity.GetSafeNormal();
+		switch (OrientationMode)
+		{
+			case MODE_PawnUp:
+				return UpdatedComponent->GetUpVector();
+			case MODE_Gravity:
+				return Gravity.IsZero() ? UpdatedComponent->GetUpVector() : -Gravity.GetSafeNormal();
+			case MODE_FloorNormal:
+				return CurrentFloor.bBlockingHit ? CurrentFloor.HitResult.Normal : (Gravity.IsZero() ? UpdatedComponent->GetUpVector() : -Gravity.GetSafeNormal());
+			default:
+				return UpdatedComponent->GetUpVector();
+		}
 	}
+
+	// TODO: Might wanna also (not here but in utilities) add some math methods for computing stuff in w.r.t a given orientation mode (e.g steps). Would be super nice to localize that math in one place.
 
 	FORCEINLINE float GetCapsuleRadius() const { return UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius(); }
 	FORCEINLINE float GetCapsuleHalfHeight() const { return UpdatedPrimitive->GetCollisionShape().GetCapsuleHalfHeight(); }
@@ -402,10 +427,10 @@ public:
 
 protected:
 	/* CONSTANTS FOR SWEEP AND PHYSICS CALCULATIONS */
-	static constexpr float MIN_TICK_TIME				= 1e-6f;
-	static constexpr float MIN_FLOOR_DIST				= 1.9f;
-	static constexpr float MAX_FLOOR_DIST				= 2.4f;
-	static constexpr float SWEEP_EDGE_REJECT_DISTANCE	= 0.15f;
+	static constexpr float MIN_TICK_TIME				= 1e-6f; 
+	static constexpr float MIN_FLOOR_DIST				= 1.9f; // DEBUG : Changed this
+	static constexpr float MAX_FLOOR_DIST				= 2.4f; // DEBUG : Changed This
+	static constexpr float SWEEP_EDGE_REJECT_DISTANCE	= 0.15f; 
 
 protected:
 	/// @brief  Used within movement code to determine if a change in position is based on normal movement or a teleport. If not a teleport,
@@ -494,10 +519,14 @@ protected:
 #pragma region Ground Stability Handling
 protected:
 
+	/// @brief	Additional ground probing distance, probe distance will be chosen as the maximum between this and @see MaxStepHeight
+	UPROPERTY(Category="(Radical Movement): Ground Settings", EditDefaultsOnly, BlueprintReadWrite);
+	float ExtraFloorProbingDistance = 20.f;
+
 	/// @brief  Maximum ground slope angle relative to the actor up direction.
 	UPROPERTY(Category= "(Radical Movement): Ground Settings", EditDefaultsOnly)
 	float MaxStableSlopeAngle = 60.f;
-
+	
 	/// @brief	Will always perform floor sweeps regardless of whether we are moving or not
 	UPROPERTY(Category="(Radical Movement): Ground Settings", EditAnywhere, BlueprintReadWrite, AdvancedDisplay)
 	uint8 bAlwaysCheckFloor				: 1;
@@ -555,12 +584,12 @@ protected:
 #pragma region Step Handling
 	
 	/// @brief  Maximum height of a step which the pawn can climb.
-	UPROPERTY(Category= "(Radical Movement): Step Settings", EditDefaultsOnly, meta=(EditCondition = "bSolveSteps", EditConditionHides))
+	UPROPERTY(Category= "(Radical Movement): Step Settings", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition = "bSolveSteps", EditConditionHides))
 	float MaxStepHeight = 50.f;
 
 	bool CanStepUp(const FHitResult& StepHit) const;
 	
-	bool StepUp(const FHitResult& StepHit, const FVector& Delta, FStepDownFloorResult* OutStepDownResult = nullptr);
+	bool StepUp(const FVector& Orientation, const FHitResult& StepHit, const FVector& Delta, FStepDownFloorResult* OutStepDownResult = nullptr);
 
 #pragma endregion Step Handling
 
@@ -653,13 +682,29 @@ protected:
 /* Methods and fields to handle root motion */
 #pragma region Root Motion
 protected:
-	UPROPERTY(BlueprintReadWrite, Category="(Radical Movement): Animation")
+	UPROPERTY(Category="(Radical Movement): Animation", BlueprintReadWrite)
 	USkeletalMeshComponent* SkeletalMesh{nullptr};
+
+	UPROPERTY(Transient)
+	FRootMotionMovementParams RootMotionParams;
 
 public:
 	virtual void SetSkeletalMeshReference(USkeletalMeshComponent* Mesh);
 
-	FORCEINLINE bool HasAnimRootMotion() const {return false;}
+	/// @brief  Ticks the mesh pose and accumulates root motion
+	void TickPose(float DeltaTime);
+
+	virtual FVector CalcRootMotionVelocity(FVector RootMotionDeltaMove, float DeltaTime, const FVector& CurrentVelocity) const;
+
+public:
+	//UPROPERTY(Category="(Radical Movement): Animation", BlueprintCallable)
+	//bool HasAnimRootMotion() const
+	//{
+	//	return RootMotionParams.bHasRootMotion;
+	//}
+
+	FORCEINLINE bool HasAnimRootMotion() const { return RootMotionParams.bHasRootMotion; }
+
 /*
 protected:
 
@@ -726,28 +771,56 @@ protected:
 
 public:
 	/* Wanna keep this setting exposed and read/writable */
-	/// @brief  Whether the pawn should interact with physics objects in the world
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category= "Motor | Physics Interactions")
-	bool bEnablePhysicsInteraction{true};
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Motor | Physics Interactions", meta = (ClampMin = "0.0001", UIMin = "1", EditCondition="bEnablePhysicsInteraction"))
+	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta = (ClampMin = "0", UIMin = "0"))
 	float Mass{100.f};
 	
-	/// @brief  If true, "TouchForceScale" is applied per kilogram of mass of the affected object.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category= "Motor | Physics Interactions", meta=(EditCondition="bEnablePhysicsInteraction"))
-	bool bScaleTouchForceToMass{true};
+	/// @brief  Whether the pawn should interact with physics objects in the world
+	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite)
+	uint8 bEnablePhysicsInteraction				: 1;
 
+	/// @brief  If true, "TouchForceScale" is applied per kilogram of mass of the affected object.
+	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bEnablePhysicsInteraction"))
+	uint8 bTouchForceScaledToMass				: 1;
+
+	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bEnablePhysicsInteraction"))
+	uint8 bPushForceScaledToMass				: 1;
+
+	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bEnablePhysicsInteraction"))
+	uint8 bPushForceUsingVerticalOffset			: 1;
+
+	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bEnablePhysicsInteraction"))
+	uint8 bScalePushForceToVelocity				: 1;
+
+	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bEnablePhysicsInteraction"))
+	float RepulsionForce{2.5f};
+	
 	/// @brief  Multiplier for the force that is applied to physics objects that are touched by the pawn.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category= "Motor | Physics Interactions", meta=(EditCondition="bEnablePhysicsInteraction", ClampMin = "0", UIMin="0"))
-	float TouchForceScale{1.f};
+	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bEnablePhysicsInteraction"))
+	float TouchForceFactor{1.f};
 
 	/// @brief  The minimum force applied to physics objects touched by the pawn.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category= "Motor | Physics Interactions", meta=(EditCondition="bEnablePhysicsInteraction", ClampMin = "0", UIMin="0"))
-	float MinTouchForce{0.f};
+	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bEnablePhysicsInteraction"))
+	float MinTouchForce{-1.f};
 
 	/// @brief  The maximum force applied to physics objects touched by the pawn.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category= "Motor | Physics Interactions", meta=(EditCondition="bEnablePhysicsInteraction", ClampMin = "0", UIMin="0"))
+	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bEnablePhysicsInteraction"))
 	float MaxTouchForce{250.f};
+
+	/// @brief  
+	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bEnablePhysicsInteraction"))
+	float StandingDownwardForceScale{1.f};
+
+	/// @brief  
+	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bEnablePhysicsInteraction"))
+	float InitialPushForceFactor{500.f};
+
+	/// @brief  
+	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bEnablePhysicsInteraction"))
+	float PushForceFactor{750000.f};
+
+	/// @brief  
+	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bEnablePhysicsInteraction", UIMin="-1.0", UIMax="1.0"))
+	float PushForcePointVerticalOffsetFactor{-0.75f};
 
 	
 	/// @brief Event invoked when the root collision component hits another collision component
@@ -767,9 +840,9 @@ public:
 	  const FHitResult& SweepResult
 	);
 
-	virtual void ApplyImpactPhysicsForces(const FHitResult& Impact, const FVector& ImpactAcceleration, const FVector& ImpactVelocity) {};
-	virtual void ApplyRepulsionForce(float DeltaTime) {};
-	virtual void ApplyDownwardForce(float DeltaTime) {};
+	virtual void ApplyImpactPhysicsForces(const FHitResult& Impact, const FVector& ImpactAcceleration, const FVector& ImpactVelocity);
+	virtual void ApplyRepulsionForce(float DeltaTime);
+	virtual void ApplyDownwardForce(float DeltaTime);
 
 #pragma endregion Physics Interactions
 
@@ -781,28 +854,31 @@ protected:
 	/* ~~~~~ Based Movement Core Settings ~~~~~ */
 	
 	/// @brief  Whether to move with the platform/base relatively
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category= "Motor | Movement Base Settings")
+	UPROPERTY(Category= "(Radical Movement): Movement Base Settings", EditAnywhere, BlueprintReadWrite)
 	uint8 bMoveWithBase					: 1;
+
+	UPROPERTY(Category= "(Radical Movement): Movement Base Settings", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bMoveWithBase", EditConditionHides, ClampMin="0", UIMin="0"))
+	float FormerBaseVelocityDecayHalfLife = 0.f;
 	
 	/**
 	* Whether the character ignores changes in rotation of the base it is standing on.
 	* If true, the character maintains current world rotation.
 	* If false, the character rotates with the moving base.
 	*/
-	UPROPERTY(Category="Motor | Movement Base Settings", EditAnywhere, BlueprintReadWrite)
+	UPROPERTY(Category="(Radical Movement): Movement Base Settings", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bMoveWithBase", EditConditionHides))
 	uint8 bIgnoreBaseRotation			: 1;
 	
 	/** If true, impart the base actor's X velocity when falling off it (which includes jumping) */
-	UPROPERTY(Category= "Motor | Movement Base Settings", EditAnywhere, BlueprintReadWrite)
+	UPROPERTY(Category= "(Radical Movement): Movement Base Settings", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bMoveWithBase", EditConditionHides))
 	uint8 bImpartBaseVelocityPlanar		: 1;
 
 	/** If true, impart the base actor's Y velocity when falling off it (which includes jumping) */
-	UPROPERTY(Category= "Motor | Movement Base Settings", EditAnywhere, BlueprintReadWrite)
+	UPROPERTY(Category= "(Radical Movement): Movement Base Settings", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bMoveWithBase", EditConditionHides))
 	uint8 bImpartBaseVelocityVertical	: 1;
 
 	/// @brief  If true, impart the base component's tangential components of angular velocity when jumping or falling off it.
 	///			May be restricted by other base velocity impart settings @see bImpartBaseVelocityVertical, bImpartBaseVelocityPlanar
-	UPROPERTY(Category="Motor | Movement Base Settings", EditAnywhere, BlueprintReadWrite)
+	UPROPERTY(Category="(Radical Movement): Movement Base Settings", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bMoveWithBase", EditConditionHides))
 	uint8 bImpartBaseAngularVelocity	: 1;
 
 	/* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
@@ -845,6 +921,8 @@ protected:
 	UFUNCTION(Category="Motor | Movement Base", BlueprintCallable)
 	virtual FVector GetImpartedMovementBaseVelocity() const;
 
+	void DecayFormerBaseVelocity(float DeltaTime);
+	
 	/// @brief  Update position based on Based movement
 	virtual void TryUpdateBasedMovement(float DeltaTime);
 
@@ -862,13 +940,54 @@ protected:
 	
 #pragma endregion Moving Base
 
+
+#pragma region AI Path Following & RVO
+
+	UPROPERTY(Transient)
+	FVector RequestedVelocity;
+
+	UPROPERTY(Transient)
+	FVector LastUpdateRequestedVelocity;
+
+	FVector GetLastUpdateRequestedVelocity() const { return LastUpdateRequestedVelocity; }
+	
+// BEGIN UNavMovementComponent Interface
+	virtual void RequestDirectMove(const FVector& MoveVelocity, bool bForceMaxSpeed) override { Super::RequestDirectMove(MoveVelocity, bForceMaxSpeed); };
+	virtual void RequestPathMove(const FVector& MoveInput) override {Super::RequestPathMove(MoveInput); };
+	virtual bool CanStartPathFollowing() const override {return Super::CanStartPathFollowing(); };
+	virtual bool CanStopPathFollowing() const override { return Super::CanStopPathFollowing(); };
+	virtual float GetPathFollowingBrakingDistance(float MaxSpeed) const override {return Super::GetPathFollowingBrakingDistance(MaxSpeed);};
+// END UNavMovementComponent Interface
+
+	//virtual bool ApplyRequestedMove(float DeltaTime, float MaxAccel, float MaxSpeed, float Friction, float BrakingDeceleration, FVector& OutAcceleration);
+	//virtual bool ShouldComputeAccelerationToReachRequestedVelocity(const float RequestedSpeed) const;
+	//virtual void PerformAirControlForPathFollowing(FVector Direction, float ZDiff);
+	//virtual void ShouldPerformAirControlForPathFollowing() const;
+#pragma endregion AI Path Following & RVO
+	
 /* Math shit or whatever helpers */
 #pragma region Utility
 
-	FORCEINLINE FVector GetDirectionTangentToSurface(const FVector Direction, const FVector SurfaceNormal) const
+	void VisualizeMovement() const;
+
+public:
+	/// @brief  Draw important variables on canvas. Character will call DisplayDebug() on the current view target when the ShowDebug exec is used
+	/// @param  Canvas Canvas to draw on
+	/// @param  DebugDisplay Contains information about what debug data to display
+	/// @param  YL Height of the current font
+	/// @param  YPos Y position on Canvas. YPos += YL, gives position to draw text for next debug line
+	virtual void DisplayDebug(class UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL, float& YPos);
+
+
+	FORCEINLINE FVector GetDirectionTangentToSurface(const FVector& Direction, const FVector& SurfaceNormal) const
 	{
 		const FVector DirectionRight = Direction ^ UpdatedComponent->GetUpVector();
 		return (SurfaceNormal ^ DirectionRight).GetSafeNormal();
+	}
+
+	FORCEINLINE float DistanceAlongAxis(const FVector& From, const FVector& To, const FVector& Axis) const 
+	{
+		return (To - From) | Axis;
 	}
 
 #pragma endregion Utility

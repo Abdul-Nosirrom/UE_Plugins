@@ -5,6 +5,57 @@
 #include "CoreMinimal.h"
 #include "InputData.generated.h"
 
+class UMotionMappingContext;
+class UMotionAction;
+
+#pragma region General Definitions
+
+UCLASS()
+class UInputBufferMap : public UDataAsset
+{
+	GENERATED_BODY()
+
+public:
+	// Localized context descriptor
+	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = "Description", DisplayName = "Description")
+	FText ContextDescription;
+
+	/// @brief  Input Action Mappings associated with this input buffer data map
+	UPROPERTY(Category="Mappings", BlueprintReadOnly, EditAnywhere)
+	TObjectPtr<UInputMappingContext> InputActionMap = nullptr;
+
+	/// @brief  Directional Input Action Mappings associated with this input buffer data map
+	UPROPERTY(Category="Mappings", BlueprintReadOnly, EditAnywhere)
+	TObjectPtr<UMotionMappingContext> DirectionalActionMap = nullptr;
+};
+
+
+
+#pragma endregion General Definitions
+
+#pragma region Directional Input Definitions
+
+UCLASS()
+class UMotionMappingContext : public UDataAsset
+{
+	GENERATED_BODY()
+
+public:
+	TArray<TObjectPtr<UMotionAction>> GetMappings() { return Mapping; }
+	
+public:
+	/// @brief Localized context descriptor
+	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category="Description", DisplayName="Description")
+	FText ContextDescription;
+	
+protected:
+	/// @brief Holds a collection of motion actions to define the maps motion action map
+	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category= "Mappings")
+	TArray<TObjectPtr<UMotionAction>> Mapping;
+};
+
+#pragma region Enum Primitives
+
 /* Primitive to define various motion commands */
 UENUM()
 enum EMotionCommandDirection
@@ -23,6 +74,8 @@ enum ETurnDirection
 {
 	CW, CCW
 };
+
+#pragma endregion Enum Primitives
 
 // TODO: This should be a data asset similar to ActionMaps, much better organization than tacking it onto the controller
 UCLASS()
@@ -70,24 +123,12 @@ protected:
 	
 public:
 
+	FName GetID() const { return ActionName; }
+
 	bool CheckMotionDirection(FVector2D AxisInput);
 	
 	EMotionCommandDirection GetAxisDirection(FVector2D AxisInput);
 	
 };
 
-UCLASS()
-class UMotionMap : public UDataAsset
-{
-	GENERATED_BODY()
-
-protected:
-	/// @brief Holds a collection of motion actions to define the maps motion action map
-	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category= "Mappings")
-	TArray<TObjectPtr<const UMotionAction>> Mapping;
-
-public:
-	/// @brief Localized context descriptor
-	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category="Description", DisplayName="Description")
-	FText ContextDescription;
-};
+#pragma endregion Directional Input Definitions

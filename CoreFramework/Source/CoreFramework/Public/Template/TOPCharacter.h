@@ -13,6 +13,7 @@ class COREFRAMEWORK_API ATOPCharacter : public AOPCharacter
 	GENERATED_BODY()
 
 public:
+
 #pragma region ACharacter Parameters
 	/** 
 	 * The max time the jump key can be held.

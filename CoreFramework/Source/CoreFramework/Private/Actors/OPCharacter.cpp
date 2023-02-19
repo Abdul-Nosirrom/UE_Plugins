@@ -215,9 +215,18 @@ float AOPCharacter::GetDefaultHalfHeight() const
 // TODO: This
 void AOPCharacter::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL, float& YPos)
 {
-	
 	Super::DisplayDebug(Canvas, DebugDisplay, YL, YPos);
 
+	float Indent = 0.f;
+	static FName NAME_Physics = FName(TEXT("Physics"));
+	if (DebugDisplay.IsDisplayOn(NAME_Physics))
+	{
+		FIndenter PhysicsIndent(Indent);
+		if (CustomMovement != nullptr)
+		{
+			CustomMovement->DisplayDebug(Canvas, DebugDisplay, YL, YPos);
+		}
+	}
 }
 
 void AOPCharacter::RecalculateBaseEyeHeight()

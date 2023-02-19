@@ -1,6 +1,7 @@
 ﻿// Copyright 2023 Abdulrahmen Almodaimegh. All Rights Reserved.
 #include "BufferedController.h"
 #include "CFW_PCH.h"
+#include "InputData.h"
 
 namespace BufferUtility
 {
@@ -23,6 +24,8 @@ ABufferedController::ABufferedController() : Super()
 void ABufferedController::BeginPlay()
 {
 	Super::BeginPlay();
+	//RegisterInputSignature.
+	
 	
 	// Pass map to buffer
 	InputBufferObject = FInputBuffer(BufferSize);
@@ -34,11 +37,51 @@ void ABufferedController::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 
 	InputBufferObject.UpdateBuffer();
+
+	/* Invoke Action Events */
+	for (auto Action : InputMap->InputActionMap->GetMappings())
+	{
+		const FName ActionID = FName(Action.Action->ActionDescription.ToString());
+		const float HoldThreshold = 0.f;
+
+		// Or could consolidate it into 1 event and have an Enum differentiate it?
+
+		const bool bPressed = InputBufferObject.CheckButtonPressed(ActionID);
+		const bool bHeld = InputBufferObject.CheckButtonHeld(ActionID, HoldThreshold);
+		const bool bReleased = InputBufferObject.CheckButtonReleased(ActionID);
+		
+		if (bPressed)
+		{
+			InputPressedDelegateSignature.Broadcast(Action.Action);
+		}
+		if (bHeld)
+		{
+			float TimeHeld = 0.f;
+			InputHeldDelegateSignature.Broadcast(Action.Action, TimeHeld);
+		}
+		if (bReleased)
+		{
+			InputReleasedDelegateSignature.Broadcast(Action.Action);
+		}
+	}
+
+	/* For Directional Events */
+	for (auto Direction : InputMap->DirectionalActionMap->GetMappings())
+	{
+		
+		const bool bRegistered = InputBufferObject.CheckDirectionRegistered(Direction->GetID());
+		if (bRegistered)
+		{
+			DirectionalRegisteredDelegateSignature.Broadcast(Direction);
+		}
+	}
 }
 
 void ABufferedController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
+
+	
 
 	BufferUtility::InputIDs.Empty();
 	BufferUtility::RawButtonContainer.Empty();
@@ -48,7 +91,7 @@ void ABufferedController::SetupInputComponent()
 	if (!InputMap) return;
 	
 	/* Initialize ID array */
-	for (auto Mapping : InputMap->GetMappings())
+	for (auto Mapping : InputMap->InputActionMap->GetMappings())
 	{
 		if (BufferUtility::InputIDs.Contains(FName(Mapping.Action->ActionDescription.ToString()))) continue;
 		BufferUtility::InputIDs.Add(FName(Mapping.Action->ActionDescription.ToString()));
@@ -58,10 +101,10 @@ void ABufferedController::SetupInputComponent()
 	/* Add input map to the EnhancedInput subsystem*/
 	UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer());
 	Subsystem->ClearAllMappings();
-	Subsystem->AddMappingContext(InputMap, 0);
+	Subsystem->AddMappingContext(InputMap->InputActionMap, 0);
 	
 	UEnhancedInputComponent* PEI = Cast<UEnhancedInputComponent>(InputComponent);
-	auto Mappings = InputMap->GetMappings();
+	auto Mappings = InputMap->InputActionMap->GetMappings();
 
 	/* Generate Action Bindings */
 	for (auto ActionMap : Mappings)

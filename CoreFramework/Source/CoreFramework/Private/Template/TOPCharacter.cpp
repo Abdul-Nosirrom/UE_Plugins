@@ -96,7 +96,7 @@ void ATOPCharacter::SetupPlayerInputComponent(class UInputComponent* PlayerInput
 
 void ATOPCharacter::ResetJumpState()
 {
-	bPressedJump = false;
+	//bPressedJump = false;
 	bWasJumping = false;
 	JumpKeyHoldTime = 0.f;
 	JumpForceTimeRemaining = 0.f;
@@ -185,10 +185,9 @@ void ATOPCharacter::CheckJumpInput(float DeltaTime)
 {
 	JumpCurrentCountPreJump = JumpCurrentCount;
 
-
 	if (bPressedJump)
 	{
-		GEngine->AddOnScreenDebugMessage(-1, 1.f, FColor::Purple, "About to DoJump()");
+
 		// If this is the first jump and we're already falling, then increment the count to compensate
 		const bool bFirstJump = JumpCurrentCount == 0;
 		if (bFirstJump && GetCharacterMovement()->CurrentFloor.bWalkableFloor)
@@ -277,14 +276,14 @@ void ATOPCharacter::Look(const FInputActionValue& Value)
 
 void ATOPCharacter::Jump(const FInputActionValue& Value)
 {
-	GEngine->AddOnScreenDebugMessage(-1, 1.f, FColor::Purple, "JUMP REGISTERED!");
+	if (GetMovementComponent()->IsMovingOnGround())
+		LaunchCharacter(FVector(0,0, 700), false, true);
 	bPressedJump = true;
 	JumpKeyHoldTime = 0.f;
 }
 
 void ATOPCharacter::StopJumping(const FInputActionValue& Value)
 {
-	bPressedJump = false;
 	ResetJumpState();
 }
 
