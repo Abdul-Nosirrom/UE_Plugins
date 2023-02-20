@@ -682,6 +682,12 @@ protected:
 /* Methods and fields to handle root motion */
 #pragma region Root Motion
 protected:
+	UPROPERTY(Category="(Radical Movement): Animation", EditDefaultsOnly)
+	uint8 bApplyRootMotionDuringBlendIn		: 1;
+	
+	UPROPERTY(Category="(Radical Movement): Animation", EditDefaultsOnly)
+	uint8 bApplyRootMotionDuringBlendOut	: 1;
+	
 	UPROPERTY(Category="(Radical Movement): Animation", BlueprintReadWrite)
 	USkeletalMeshComponent* SkeletalMesh{nullptr};
 
@@ -696,15 +702,22 @@ public:
 
 	virtual FVector CalcRootMotionVelocity(FVector RootMotionDeltaMove, float DeltaTime, const FVector& CurrentVelocity) const;
 
+	bool ShouldDiscardRootMotion(UAnimMontage* RootMotionMontage, float RootMotionMontagePosition) const;
+
 public:
-	//UPROPERTY(Category="(Radical Movement): Animation", BlueprintCallable)
-	//bool HasAnimRootMotion() const
-	//{
-	//	return RootMotionParams.bHasRootMotion;
-	//}
+	/// @brief	Returns the currently playing root motion montage instance (if any)
+	/// @return Current root motion montage instance or nullptr if none is currently playing
+	FAnimMontageInstance* GetRootMotionMontageInstance() const;
+	
+	UFUNCTION(Category="(Radical Movement): Animation", BlueprintCallable)
+	bool HasAnimRootMotion() const
+	{
+		return RootMotionParams.bHasRootMotion;
+	}
 
-	FORCEINLINE bool HasAnimRootMotion() const { return RootMotionParams.bHasRootMotion; }
-
+	//float GetAnimRootMotionTranslatonScale() const;
+	//float SetAnimRootMotionTranslationScale(float Scale = 1.f);
+	
 /*
 protected:
 
@@ -745,10 +758,7 @@ public:
 	bool HasAnimRootMotion() const { return bHasAnimRootMotion; }
 
 protected:
-	
-	/// @brief	Returns the currently playing root motion montage instance (if any)
-	/// @return Current root motion montage instance or nullptr if none is currently playing
-	FAnimMontageInstance* GetRootMotionMontageInstance() const;
+
 	
 	void BlockSkeletalMeshPoseTick() const;
 

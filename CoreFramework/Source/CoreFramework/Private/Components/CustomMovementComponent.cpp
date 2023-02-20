@@ -2215,6 +2215,14 @@ void UCustomMovementComponent::TickPose(float DeltaTime)
 	}
 */
 
+	UAnimMontage* RootMotionMontage = nullptr;
+	float RootMotionMontagePosition = -1.f;
+	if (const auto RootMotionMontageInstance = GetRootMotionMontageInstance())
+	{
+		RootMotionMontage = RootMotionMontageInstance->Montage;
+		RootMotionMontagePosition = RootMotionMontageInstance->GetPosition();
+	}
+	
 	bool bWasPlayingRootMotion = SkeletalMesh->IsPlayingRootMotion();
 
 	SkeletalMesh->TickPose(DeltaTime, true);
@@ -2231,6 +2239,12 @@ void UCustomMovementComponent::TickPose(float DeltaTime)
 	
 	if (HasAnimRootMotion())
 	{
+		if (ShouldDiscardRootMotion(RootMotionMontage, RootMotionMontagePosition))
+		{
+			RootMotionParams = FRootMotionMovementParams();
+			return;
+		}
+		
 		// Convert local space root motion to world space before physics
 		RootMotionParams.Set(SkeletalMesh->ConvertLocalRootMotionToWorld(RootMotionParams.GetRootMotionTransform()));
 
@@ -2251,6 +2265,41 @@ FVector UCustomMovementComponent::CalcRootMotionVelocity(FVector RootMotionDelta
 	const FVector RootMotionVelocity = RootMotionDeltaMove / DeltaTime;
 	return RootMotionVelocity; // TODO: Post process event
 }
+
+FAnimMontageInstance* UCustomMovementComponent::GetRootMotionMontageInstance() const
+{
+	if (!SkeletalMesh) return nullptr;
+
+	
+	const auto AnimInstance = SkeletalMesh->GetAnimInstance();
+	if (!AnimInstance) return nullptr;
+	
+	return AnimInstance->GetRootMotionMontageInstance();
+}
+
+bool UCustomMovementComponent::ShouldDiscardRootMotion(UAnimMontage* RootMotionMontage, float RootMotionMontagePosition) const
+{
+	const float MontageLength = RootMotionMontage->GetPlayLength();
+
+	if (!bApplyRootMotionDuringBlendIn)
+	{
+		if (RootMotionMontagePosition <= RootMotionMontage->BlendIn.GetBlendTime())
+		{
+			return true;
+		}
+	}
+
+	if (!bApplyRootMotionDuringBlendOut)
+	{
+		if (RootMotionMontagePosition >= MontageLength - RootMotionMontage->BlendOut.GetBlendTime())
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
 
 /*
 void UCustomMovementComponent::BlockSkeletalMeshPoseTick() const
@@ -2326,17 +2375,6 @@ void UCustomMovementComponent::SetSkeletalMeshReference(USkeletalMeshComponent* 
 	}
 }
 
-
-FAnimMontageInstance* UCustomMovementComponent::GetRootMotionMontageInstance() const
-{
-	if (!SkeletalMesh) return nullptr;
-
-	
-	const auto AnimInstance = SkeletalMesh->GetAnimInstance();
-	if (!AnimInstance) return nullptr;
-	
-	return AnimInstance->GetRootMotionMontageInstance();
-}
 
 bool UCustomMovementComponent::IsPlayingMontage() const
 {
@@ -2702,9 +2740,7 @@ FVector UCustomMovementComponent::GetImpartedMovementBaseVelocity() const
 			const FVector BaseTangentialVel = MovementBaseUtility::GetMovementBaseTangentialVelocity(MovementBase, BasedMovement.BoneName, BasePointPosition);
 			BaseVelocity += BaseTangentialVel;
 		}
-
-		Result += BaseVelocity; // For now lets just always impart base velocity and work through it later
-
+		
 		if (bImpartBaseVelocityPlanar)
 		{
 			Result += FVector::VectorPlaneProject(BaseVelocity, GetUpOrientation(MODE_PawnUp));
