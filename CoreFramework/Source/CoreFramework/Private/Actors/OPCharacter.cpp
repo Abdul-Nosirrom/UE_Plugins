@@ -66,7 +66,7 @@ AOPCharacter::AOPCharacter() : Super()
 	if (CustomMovement)
 	{
 		CustomMovement->UpdatedComponent = CapsuleComponent;
-		CustomMovement->SetSkeletalMeshReference(Mesh);
+		CustomMovement->CharacterOwner = this;
 	}
 	
 	
@@ -87,6 +87,9 @@ AOPCharacter::AOPCharacter() : Super()
 		Mesh->SetGenerateOverlapEvents(false);
 		Mesh->SetCanEverAffectNavigation(false);
 	}
+
+	/* ~~~~~ Setup Default Values ~~~~~ */
+	AnimRootMotionTranslationScale = 1.f;
 }
 
 #pragma region AActor & UObject Interface
@@ -193,6 +196,12 @@ UPawnMovementComponent* AOPCharacter::GetMovementComponent() const
 	return CustomMovement;
 }
 
+UPrimitiveComponent* AOPCharacter::GetMovementBase() const
+{
+	return CustomMovement->GetMovementBase();
+}
+
+
 // Called to bind functionality to input
 void AOPCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
@@ -244,30 +253,110 @@ void AOPCharacter::UpdateNavigationRelevance()
 
 #pragma endregion APawn Interface
 
+#pragma region Events
+
+void AOPCharacter::Landed(const FHitResult& Hit)
+{
+	OnLanded(Hit);
+	LandedDelegate.Broadcast(Hit);
+}
+
+void AOPCharacter::MovementStateChanged(EMovementState PrevMovementState)
+{
+	OnMovementStateChanged(PrevMovementState);
+	MovementStateChangedDelegate.Broadcast(this, PrevMovementState);
+}
+
+void AOPCharacter::WalkingOffLedge(const FVector& PreviousFloorImpactNormal, const FVector& PreviousFloorContactNormal, const FVector& PreviousLocation, float DeltaTime)
+{
+	OnWalkingOffLedge(PreviousFloorImpactNormal, PreviousFloorContactNormal, PreviousLocation, DeltaTime);
+	WalkedOffLedgeDelegate.Broadcast(PreviousFloorImpactNormal, PreviousFloorContactNormal, PreviousLocation, DeltaTime);
+}
+
+void AOPCharacter::MoveBlockedBy(const FHitResult& Hit)
+{
+	OnMoveBlocked(Hit);
+	MoveBlockedByDelegate.Broadcast(Hit);
+}
+
+void AOPCharacter::OnStuckInGeometry(const FHitResult& Hit)
+{
+	StuckInGeometryDelegate.Broadcast(Hit);
+}
+
+
+#pragma endregion Events
+
 #pragma region Animation Interface
+
+void AOPCharacter::SetAnimRootMotionTranslationScale(float InAnimRootMotionTranslationScale)
+{
+	AnimRootMotionTranslationScale = InAnimRootMotionTranslationScale;
+}
+
+float AOPCharacter::GetAnimRootMotionTranslationScale() const
+{
+	return AnimRootMotionTranslationScale;
+}
+
 
 float AOPCharacter::PlayAnimMontage(UAnimMontage* AnimMontage, float InPlayRate, FName StartSectionName)
 {
+	UAnimInstance* AnimInstance = (Mesh) ? Mesh->GetAnimInstance() : nullptr;
+	if (AnimMontage && AnimInstance)
+	{
+		const float Duration = AnimInstance->Montage_Play(AnimMontage, InPlayRate);
+
+		if (Duration > 0.f)
+		{
+			// Start at a given section
+			if (StartSectionName != NAME_None)
+			{
+				AnimInstance->Montage_JumpToSection(StartSectionName, AnimMontage);
+			}
+
+			return Duration;
+		}
+	}
+
 	return 0.f;
 }
 
 void AOPCharacter::StopAnimMontage(UAnimMontage* AnimMontage)
 {
+	UAnimInstance * AnimInstance = (Mesh)? Mesh->GetAnimInstance() : nullptr; 
+	UAnimMontage * MontageToStop = (AnimMontage)? AnimMontage : GetCurrentMontage();
+	bool bShouldStopMontage =  AnimInstance && MontageToStop && !AnimInstance->Montage_GetIsStopped(MontageToStop);
+
+	if ( bShouldStopMontage )
+	{
+		AnimInstance->Montage_Stop(MontageToStop->BlendOut.GetBlendTime(), MontageToStop);
+	}
 }
 
 UAnimMontage* AOPCharacter::GetCurrentMontage() const
 {
+	UAnimInstance * AnimInstance = (Mesh)? Mesh->GetAnimInstance() : nullptr; 
+	if ( AnimInstance )
+	{
+		return AnimInstance->GetCurrentActiveMontage();
+	}
+
 	return nullptr;
 }
 
 FAnimMontageInstance* AOPCharacter::GetRootMotionAnimMontageInstance() const
 {
-	return nullptr;
+	return (Mesh && Mesh->GetAnimInstance()) ? Mesh->GetAnimInstance()->GetRootMotionMontageInstance() : nullptr;
 }
 
 bool AOPCharacter::IsPlayingRootMotion() const
 {
-	return CustomMovement->HasAnimRootMotion();
+	if (Mesh)
+	{
+		return Mesh->IsPlayingRootMotion();
+	}
+	return false;
 }
 
 bool AOPCharacter::HasAnyRootMotion() const

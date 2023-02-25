@@ -1,7 +1,9 @@
 // Copyright 2023 Abdulrahmen Almodaimegh. All Rights Reserved.
 #include "CustomMovementComponent.h"
+#include "GameFramework/Character.h"
 #include "Debug/CFW_LOG.h"
 #include "CFW_PCH.h"
+#include "OPCharacter.h"
 
 #pragma region Profiling & CVars
 /* Core Update Loop */
@@ -121,17 +123,10 @@ UCustomMovementComponent::UCustomMovementComponent()
 void UCustomMovementComponent::BeginPlay()
 {
 	// This will reserve this component specifically for pawns, do we want that?
-	if (!PawnOwner)
+	if (!CharacterOwner)
 	{
 		Super::BeginPlay();
 		return;
-	}
-	
-	// Set a reference to the skeletal mesh of the owning pawn if present
-	const auto Mesh = PawnOwner->FindComponentByClass(USkeletalMeshComponent::StaticClass());
-	if (Mesh)
-	{
-		SetSkeletalMeshReference(Cast<USkeletalMeshComponent>(Mesh));
 	}
 
 	// Set root collision Shape
@@ -142,6 +137,23 @@ void UCustomMovementComponent::BeginPlay()
 	Super::BeginPlay();
 	PhysicsState = STATE_Grounded;
 }
+
+void UCustomMovementComponent::PostLoad()
+{
+	Super::PostLoad();
+
+	CharacterOwner = Cast<AOPCharacter>(PawnOwner);
+}
+
+void UCustomMovementComponent::Deactivate()
+{
+	Super::Deactivate();
+	if (!IsActive())
+	{
+		ClearAccumulatedForces();
+	}
+}
+
 
 
 /* FUNCTIONAL */
@@ -238,6 +250,7 @@ void UCustomMovementComponent::SetUpdatedComponent(USceneComponent* NewUpdatedCo
 	}
 
 	Super::SetUpdatedComponent(NewUpdatedComponent);
+	CharacterOwner = Cast<AOPCharacter>(PawnOwner);
 	
 	if (!IsValid(UpdatedComponent) || !IsValid(UpdatedPrimitive))
 	{
@@ -410,6 +423,8 @@ void UCustomMovementComponent::OnMovementStateChanged(EMovementState PreviousMov
 		IPathFollowingAgentInterface* PFAgent = GetPathFollowingAgent();
 		if (PFAgent) PFAgent->OnStartedFalling();
 	}
+
+	if (CharacterOwner) CharacterOwner->OnMovementStateChanged(PreviousMovementState);
 }
 
 void UCustomMovementComponent::DisableMovement()
@@ -496,7 +511,6 @@ bool UCustomMovementComponent::CanMove() const
 {
 	if (!UpdatedComponent || !PawnOwner) return false;
 	if (UpdatedComponent->Mobility != EComponentMobility::Movable) return false;
-	if (bStuckInGeometry) return false;
 
 	return true;
 }
@@ -545,7 +559,7 @@ void UCustomMovementComponent::PerformMovement(float DeltaTime)
 		UpdateVelocity(Velocity, DeltaTime);
 
 		/* Apply root motion after velocity modifications */
-		if (SkeletalMesh && SkeletalMesh->IsPlayingRootMotion())
+		if (CharacterOwner && CharacterOwner->IsPlayingRootMotion())
 		{
 			TickPose(DeltaTime);
 		}
@@ -595,8 +609,13 @@ bool UCustomMovementComponent::PreMovementUpdate(float DeltaTime)
 	if (!CanMove() || UpdatedComponent->IsSimulatingPhysics())
 	{
 		/* Consume root motion */
-
+		if (CharacterOwner->IsPlayingRootMotion() && CharacterOwner->GetMesh())
+		{
+			TickPose(DeltaTime);
+			RootMotionParams.Clear();
+		}
 		/* Clear pending physics forces*/
+		ClearAccumulatedForces();
 
 		return false;
 	}
@@ -650,6 +669,7 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 
 	bJustTeleported = false;
 	bool bCheckedFall = false;
+	bool bSteppedUp = false; // Or use bJustTeleported...
 	bool bTriedLedgeMove = false;
 	float RemainingTime = DeltaTime;
 
@@ -814,6 +834,7 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 						LOG_HIT(CurrentFloor.HitResult, 1.f);
 					}
 				}
+				//if (!StepDownResult.bComputedFloor) // DEBUG: Skip Z Projection when stepping? Maybe make it a seperate flag? (used bJustTeleported in MaintainGroundVel)
 				MaintainHorizontalGroundVelocity(); //BUG: Could this be it?
 			}
 		}
@@ -1014,7 +1035,7 @@ void UCustomMovementComponent::MoveAlongFloor(const FVector& InVelocity, float D
 		/* If still in penetration, we're stuck */
 		if (Hit.bStartPenetrating)
 		{
-			OnStuckInGeometry();
+			OnStuckInGeometry(&Hit);
 		}
 	} // Was in penetration
 	else if (Hit.IsValidBlockingHit())
@@ -1043,8 +1064,8 @@ void UCustomMovementComponent::MoveAlongFloor(const FVector& InVelocity, float D
 				if (!HasAnimRootMotion() && StepUpTimeSlice > UE_KINDA_SMALL_NUMBER)
 				{
 					// BUG: This whole velocity recalculation is kind of broken
-					//Velocity = (UpdatedComponent->GetComponentLocation() - PreStepUpLocation) / StepUpTimeSlice;
-					//Velocity.Z = 0;
+					Velocity = (UpdatedComponent->GetComponentLocation() - PreStepUpLocation) / StepUpTimeSlice;
+					Velocity.Z = 0;
 					//Velocity = FVector::VectorPlaneProject(Velocity, Orientation); // TODO: TEMPORARY
 					//MaintainHorizontalGroundVelocity();
 				}
@@ -1075,12 +1096,9 @@ void UCustomMovementComponent::PostMovementUpdate(float DeltaTime)
 
 void UCustomMovementComponent::ProcessLanded(FHitResult& Hit, float DeltaTime, uint32 Iterations)
 {
-	if ((DeltaTime < MIN_TICK_TIME) || (Iterations >= MaxSimulationIterations))
-	{
-		return;
-	}
-
 	LOG_HIT(Hit, 2.f);
+
+	if (CharacterOwner) CharacterOwner->Landed(Hit);
 
 	const FVector PreImpactAccel = Acceleration + (IsFalling() ? GetUpOrientation(MODE_Gravity) * GetGravityZ() : FVector::ZeroVector) ;
 	const FVector PreImpactVelocity = Velocity;
@@ -1148,8 +1166,36 @@ void UCustomMovementComponent::RevertMove(const FVector& OldLocation, UPrimitive
 	}
 }
 
+void UCustomMovementComponent::OnStuckInGeometry(const FHitResult* Hit)
+{
+	if (Hit == nullptr)
+	{
+		FLog(Log, "%s is stuck and failed to move!", *CharacterOwner->GetName());
+	}
+	else
+	{
+		FLog(Log, "%s is stuck and failed to move! Velocity: X=%3.2f Y=%3.2f Z=%3.2f Location: X=%3.2f Y=%3.2f Z=%3.2f Normal: X=%3.2f Y=%3.2f Z=%3.2f PenetrationDepth:%.3f Actor:%s Component:%s BoneName:%s",
+			*GetNameSafe(CharacterOwner),
+			Velocity.X, Velocity.Y, Velocity.Z,
+			Hit->Location.X, Hit->Location.Y, Hit->Location.Z,
+			Hit->Normal.X, Hit->Normal.Y, Hit->Normal.Z,
+			Hit->PenetrationDepth,
+			*Hit->HitObjectHandle.GetName(),
+			*GetNameSafe(Hit->GetComponent()),
+			Hit->BoneName.IsValid() ? *Hit->BoneName.ToString() : TEXT("NONE"));
+	}
+
+	
+	CharacterOwner->OnStuckInGeometry(*Hit);
+	
+	// Don't update velocity based on our (failed) change in position this update since we're stuck
+	bJustTeleported = true;
+}
+
 
 #pragma endregion Core Simulation Handling
+
+// TODO: For stuff like JumpOff, can use an event and handle it later elsewhere
 
 #pragma region Ground Stability Handling
 
@@ -1157,6 +1203,8 @@ bool UCustomMovementComponent::IsFloorStable(const FHitResult& Hit) const
 {
 	if (!Hit.IsValidBlockingHit()) return false;
 
+	// TODO: Ideally we'd check both
+	const FVector Orientation = StabilityOrientationMode == MODE_Gravity ? GetUpOrientation(MODE_Gravity) : GetUpOrientation(MODE_PawnUp);
 	float TestStableAngle = MaxStableSlopeAngle;
 	
 	// See if the component overrides floor angle
@@ -1168,10 +1216,12 @@ bool UCustomMovementComponent::IsFloorStable(const FHitResult& Hit) const
 		if (TestStableAngle != MaxStableSlopeAngle) TestStableAngle = SlopeOverride.GetWalkableSlopeAngle();
 	}
 
-	const float Angle = FMath::RadiansToDegrees(FMath::Acos(Hit.ImpactNormal | GetUpOrientation(MODE_PawnUp)));
+	const float Angle = FMath::RadiansToDegrees(FMath::Acos(Hit.ImpactNormal | Orientation));
 	
 	if (Angle > TestStableAngle)
 	{
+		FLog(Warning, "Angle Limit Hit For (%f) Along Direction (%s): %f", TestStableAngle, *Orientation.ToCompactString(), Angle);
+		LOG_HIT(Hit, 2);
 		return false;
 	}
 
@@ -1284,8 +1334,8 @@ void UCustomMovementComponent::ComputeFloorDist(const FVector& CapsuleLocation, 
 {
 	OutFloorResult.Clear();
 
-	float PawnRadius = GetCapsuleRadius();
-	float PawnHalfHeight = GetCapsuleHalfHeight();
+	float PawnRadius, PawnHalfHeight;
+	CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleSize(PawnRadius, PawnHalfHeight);
 	
 	bool bSkipSweep = false;
 	if (DownwardSweepResult != nullptr && DownwardSweepResult->IsValidBlockingHit())
@@ -1450,7 +1500,7 @@ void UCustomMovementComponent::FindFloor(const FVector& CapsuleLocation, FGround
 
 	FLog(Display, "At Location [%s]", *CapsuleLocation.ToString())
 	
-	const float CapsuleRadius = GetCapsuleRadius();
+	const float CapsuleRadius = CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleRadius();
 
 	/* Increase height check slightly if currently groudned to prevent ground snapping height from later invalidating the floor result */
 	const float HeightCheckAdjust = (IsMovingOnGround() ? MAX_FLOOR_DIST + UE_KINDA_SMALL_NUMBER : -MAX_FLOOR_DIST);
@@ -1552,8 +1602,8 @@ bool UCustomMovementComponent::FloorSweepTest(FHitResult& OutHit, const FVector&
 	else
 	{
 		/* Test with a box that is enclosed by the capsule */
-		const float CapsuleRadius = CollisionShape.GetCapsuleRadius();
-		const float CapsuleHeight = CollisionShape.GetCapsuleHalfHeight();
+		float CapsuleRadius, CapsuleHeight;
+		CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleSize(CapsuleRadius, CapsuleHeight);
 		const FCollisionShape BoxShape = FCollisionShape::MakeBox(FVector(CapsuleRadius * 0.707f, CapsuleRadius * 0.707f, CapsuleHeight));
 
 		/* First test with a box rotates so the corners are along the major axes (ie rotated 45 Degrees) */
@@ -1591,8 +1641,8 @@ bool UCustomMovementComponent::IsValidLandingSpot(const FVector& CapsuleLocation
 			return false;
 		}
 
-		const float PawnRadius = GetCapsuleRadius();
-		const float PawnHalfHeight = GetCapsuleHalfHeight();
+		float PawnRadius, PawnHalfHeight;
+		CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleSize(PawnRadius, PawnHalfHeight);
 
 		/* Reject hits that are above our lower hemisphere (can happen when sliding down a vertical surface) */
 		const float HitImpactHeight = (Hit.ImpactPoint | GetUpOrientation(MODE_PawnUp));
@@ -1640,7 +1690,7 @@ bool UCustomMovementComponent::ShouldCheckForValidLandingSpot(const FHitResult& 
 	if ((Hit.Normal | PawnUp) > UE_KINDA_SMALL_NUMBER && !Hit.Normal.Equals(Hit.ImpactNormal))
 	{
 		const FVector PawnLocation = UpdatedComponent->GetComponentLocation();
-		if (IsWithinEdgeTolerance(PawnLocation, Hit.ImpactPoint, GetCapsuleRadius()))
+		if (IsWithinEdgeTolerance(PawnLocation, Hit.ImpactPoint, CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleRadius()))
 		{
 			return true;
 		}
@@ -1652,6 +1702,11 @@ bool UCustomMovementComponent::ShouldCheckForValidLandingSpot(const FHitResult& 
 void UCustomMovementComponent::MaintainHorizontalGroundVelocity()
 {
 	// BUG: Causes a significant increase in velocity when landing at times, very significant especially with stairs (behavior resolved when just setting V.z = 0 (THIS IS RIGHT, SO LOOK FOR THE PROBLEM ELSEWHERE)
+	if (bJustTeleported)
+	{
+		Velocity.Z = 0;
+		return;
+	}
 	const float VelMag = Velocity.Size();//FVector::VectorPlaneProject(Velocity, CurrentFloor.HitResult.Normal).Size();
 	Velocity = GetDirectionTangentToSurface(Velocity, CurrentFloor.HitResult.Normal).GetSafeNormal() * VelMag;
 }
@@ -1670,8 +1725,8 @@ bool UCustomMovementComponent::StepUp(const FVector& Orientation, const FHitResu
 
 	/* Get Pawn Location And Properties */
 	const FVector OldLocation = UpdatedComponent->GetComponentLocation();
-	const float PawnRadius = GetCapsuleRadius();
-	const float PawnHalfHeight = GetCapsuleHalfHeight();
+	float PawnRadius, PawnHalfHeight;
+	CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleSize(PawnRadius, PawnHalfHeight);
 
 	/* Don't step up if top of the capsule is what recieved the hit */
 	const FVector InitialImpactPoint = StepHit.ImpactPoint;
@@ -1840,7 +1895,7 @@ bool UCustomMovementComponent::StepUp(const FVector& Orientation, const FHitResu
 		}
 
 		// See if we can validate the floor as a result of the step down
-		if (OutStepDownResult != nullptr) // DEBUG: Gonna try to throw away the step down result for now
+		if (OutStepDownResult != nullptr) // DEBUG: Gonna try to throw away the step down result for now (No longer an issue w/ Angle restrictions...?)
 		{
 			FindFloor(UpdatedComponent->GetComponentLocation(), StepDownResult.FloorResult, false, &Hit);
 
@@ -1911,9 +1966,16 @@ bool UCustomMovementComponent::CanStepUp(const FHitResult& StepHit) const
 
 #pragma region Ledge Handling
 
+float UCustomMovementComponent::GetValidPerchRadius() const
+{
+	const float PawnRadius = CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleRadius();
+	return FMath::Clamp(PawnRadius - GetPerchRadiusThreshold(), 0.11f, PawnRadius);
+};
+
 // TODO: Add 2 denivelation angles, one for when going "down", one for when going "up"
 bool UCustomMovementComponent::ShouldCatchAir(const FGroundingStatus& OldFloor, const FGroundingStatus& NewFloor)
 {
+	// HACK: These both used to be impact normal
 	const float Angle = FMath::RadiansToDegrees(FMath::Acos(OldFloor.HitResult.ImpactNormal | NewFloor.HitResult.ImpactNormal));
 	if (Angle >= MaxStableDenivelationAngle)
 	{
@@ -1960,8 +2022,8 @@ bool UCustomMovementComponent::ComputePerchResult(const float TestRadius, const 
 	}
 
 	/* Sweep further than the actual requested distance, because a reduced capsule radius means we could miss some hits the normal radius would catch */
-	const float PawnRadius = GetCapsuleRadius();
-	const float PawnHalfHeight = GetCapsuleHalfHeight();
+	float PawnRadius, PawnHalfHeight;
+	CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleSize(PawnRadius, PawnHalfHeight);
 
 	const FVector PawnUp = GetUpOrientation(MODE_PawnUp);
 	const FVector CapsuleLocation = (bUseFlatBaseForFloorChecks ? InHit.TraceStart : InHit.Location);
@@ -2042,6 +2104,14 @@ FVector UCustomMovementComponent::GetLedgeMove(const FVector& OldLocation, const
 void UCustomMovementComponent::HandleWalkingOffLedge(const FVector& PreviousFloorImpactNormal,
 	const FVector& PreviousFloorContactNormal, const FVector& PreviousLocation, float TimeDelta)
 {
+	FHitResult Hit(CurrentFloor.HitResult);
+	Hit.ImpactPoint = PreviousLocation - PreviousFloorImpactNormal * CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+	Hit.Location = PreviousLocation;
+	Hit.Normal = PreviousFloorContactNormal;
+	Hit.ImpactNormal = PreviousFloorImpactNormal;
+	LOG_HIT(Hit, 2);
+
+	CharacterOwner->WalkingOffLedge(PreviousFloorImpactNormal, PreviousFloorContactNormal, PreviousLocation, TimeDelta);
 }
 
 
@@ -2074,6 +2144,11 @@ bool UCustomMovementComponent::ResolvePenetrationImpl(const FVector& Adjustment,
 void UCustomMovementComponent::HandleImpact(const FHitResult& Hit, float TimeSlice, const FVector& MoveDelta)
 {
 	SCOPE_CYCLE_COUNTER(STAT_HandleImpact)
+
+	if (CharacterOwner)
+	{
+		CharacterOwner->MoveBlockedBy(Hit);
+	}
 	
 	// Notify other pawn
 	if (Hit.HitObjectHandle.DoesRepresentClass(APawn::StaticClass()))
@@ -2158,20 +2233,6 @@ void UCustomMovementComponent::TwoWallAdjust(FVector& Delta, const FHitResult& H
 #pragma endregion Collision Adjustments
 
 #pragma region Root Motion
-void UCustomMovementComponent::SetSkeletalMeshReference(USkeletalMeshComponent* Mesh)
-{
-	if (SkeletalMesh && SkeletalMesh != Mesh)
-	{
-		SkeletalMesh->RemoveTickPrerequisiteComponent(this);
-	}
-
-	SkeletalMesh = Mesh;
-
-	if (SkeletalMesh)
-	{
-		SkeletalMesh->AddTickPrerequisiteComponent(this);
-	}
-}
 
 void UCustomMovementComponent::TickPose(float DeltaTime)
 {
@@ -2215,30 +2276,37 @@ void UCustomMovementComponent::TickPose(float DeltaTime)
 	}
 */
 
-	UAnimMontage* RootMotionMontage = nullptr;
-	float RootMotionMontagePosition = -1.f;
-	if (const auto RootMotionMontageInstance = GetRootMotionMontageInstance())
-	{
-		RootMotionMontage = RootMotionMontageInstance->Montage;
-		RootMotionMontagePosition = RootMotionMontageInstance->GetPosition();
-	}
-	
-	bool bWasPlayingRootMotion = SkeletalMesh->IsPlayingRootMotion();
+	check(CharacterOwner && CharacterOwner->GetMesh());
+	USkeletalMeshComponent* SkeletalMesh = CharacterOwner->GetMesh();
 
-	SkeletalMesh->TickPose(DeltaTime, true);
-
-	// Grab Root Motion Now That We Have Ticked The Pose
-	if (SkeletalMesh->IsPlayingRootMotion() && bWasPlayingRootMotion)
+	if (SkeletalMesh->ShouldTickPose())
 	{
-		FRootMotionMovementParams RootMotion = SkeletalMesh->ConsumeRootMotion();
-		if (RootMotion.bHasRootMotion)
+		bool bWasPlayingRootMotion = SkeletalMesh->IsPlayingRootMotion();
+
+		SkeletalMesh->TickPose(DeltaTime, true);
+		
+		// Grab Root Motion Now That We Have Ticked The Pose
+		if (SkeletalMesh->IsPlayingRootMotion() || bWasPlayingRootMotion)
 		{
-			RootMotionParams.Accumulate(RootMotion);
+			FRootMotionMovementParams RootMotion = SkeletalMesh->ConsumeRootMotion();
+			if (RootMotion.bHasRootMotion)
+			{
+				RootMotion.ScaleRootMotionTranslation(CharacterOwner->GetAnimRootMotionTranslationScale());
+				RootMotionParams.Accumulate(RootMotion);
+			}
 		}
 	}
-	
+
 	if (HasAnimRootMotion())
 	{
+		UAnimMontage* RootMotionMontage = nullptr;
+		float RootMotionMontagePosition = -1.f;
+		if (const auto RootMotionMontageInstance = CharacterOwner->GetRootMotionAnimMontageInstance())
+		{
+			RootMotionMontage = RootMotionMontageInstance->Montage;
+			RootMotionMontagePosition = RootMotionMontageInstance->GetPosition();
+		}
+		
 		if (ShouldDiscardRootMotion(RootMotionMontage, RootMotionMontagePosition))
 		{
 			RootMotionParams = FRootMotionMovementParams();
@@ -2266,19 +2334,12 @@ FVector UCustomMovementComponent::CalcRootMotionVelocity(FVector RootMotionDelta
 	return RootMotionVelocity; // TODO: Post process event
 }
 
-FAnimMontageInstance* UCustomMovementComponent::GetRootMotionMontageInstance() const
-{
-	if (!SkeletalMesh) return nullptr;
-
-	
-	const auto AnimInstance = SkeletalMesh->GetAnimInstance();
-	if (!AnimInstance) return nullptr;
-	
-	return AnimInstance->GetRootMotionMontageInstance();
-}
 
 bool UCustomMovementComponent::ShouldDiscardRootMotion(UAnimMontage* RootMotionMontage, float RootMotionMontagePosition) const
 {
+	// Return false if montage is null
+	if (!RootMotionMontage) return false;
+	
 	const float MontageLength = RootMotionMontage->GetPlayLength();
 
 	if (!bApplyRootMotionDuringBlendIn)
@@ -2547,8 +2608,8 @@ void UCustomMovementComponent::ApplyRepulsionForce(float DeltaTime)
 			QueryParams.bReturnFaceIndex = false;
 			QueryParams.bReturnPhysicalMaterial = false;
 
-			float CapsuleRadius = GetCapsuleRadius();
-			float CapsuleHalfHeight = GetCapsuleHalfHeight();
+			float CapsuleRadius, CapsuleHalfHeight;
+			CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleSize(CapsuleRadius, CapsuleHalfHeight);
 
 			const float RepulsionForceRadius = CapsuleRadius * 1.2f;
 			const float StopBodyDistance = 2.5f;
@@ -2736,7 +2797,8 @@ FVector UCustomMovementComponent::GetImpartedMovementBaseVelocity() const
 
 		if (bImpartBaseAngularVelocity)
 		{
-			const FVector BasePointPosition = (UpdatedComponent->GetComponentLocation() - GetUpOrientation(MODE_FloorNormal) * UpdatedPrimitive->GetCollisionShape().GetCapsuleHalfHeight());
+			// TODO: Note, the below used to be MODE_FloorNormal but removed that mdoe since nothing else used it
+			const FVector BasePointPosition = (UpdatedComponent->GetComponentLocation() - GetUpOrientation(MODE_Gravity) * CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
 			const FVector BaseTangentialVel = MovementBaseUtility::GetMovementBaseTangentialVelocity(MovementBase, BasedMovement.BoneName, BasePointPosition);
 			BaseVelocity += BaseTangentialVel;
 		}
@@ -2879,8 +2941,8 @@ void UCustomMovementComponent::UpdateBasedMovement(float DeltaTime)
 		}
 
 		// We need to offset the base of the character here, not its origin, so offset by half height
-		float HalfHeight = GetCapsuleHalfHeight();
-		float Radius = GetCapsuleRadius();
+		float Radius, HalfHeight;
+		CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleSize(Radius, HalfHeight);
 
 		const FVector BaseOffset = GetUpOrientation(MODE_PawnUp) * HalfHeight;
 		const FVector LocalBasePos = OldLocalToWorld.InverseTransformPosition(UpdatedComponent->GetComponentLocation() - BaseOffset);
@@ -2904,9 +2966,9 @@ void UCustomMovementComponent::UpdateBasedMovement(float DeltaTime)
 			OnUnableToFollowBaseMove(DeltaPosition, OldLocation, MoveOnBaseHit);
 		}
 
-		if (MovementBase->IsSimulatingPhysics() && SkeletalMesh)
+		if (MovementBase->IsSimulatingPhysics() && CharacterOwner->GetMesh())
 		{
-			SkeletalMesh->ApplyDeltaToAllPhysicsTransforms(DeltaPosition, DeltaQuat);
+			CharacterOwner->GetMesh()->ApplyDeltaToAllPhysicsTransforms(DeltaPosition, DeltaQuat);
 		}
 	}
 	
@@ -2917,7 +2979,7 @@ void UCustomMovementComponent::UpdateBasedRotation(FRotator& FinalRotation, cons
 {
 	if (!bMoveWithBase) return;
 	
-	AController* Controller = PawnOwner ? PawnOwner->Controller : nullptr;
+	AController* Controller = CharacterOwner ? CharacterOwner->Controller : nullptr;
 
 	if ((Controller != nullptr) && !bIgnoreBaseRotation)
 	{
@@ -2978,7 +3040,7 @@ void UCustomMovementComponent::VisualizeMovement() const
 	const float OffsetPerElement = 10.0f;
 
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-	const FVector TopOfCapsule = GetActorLocation() + GetUpOrientation(MODE_PawnUp) * GetCapsuleHalfHeight();
+	const FVector TopOfCapsule = GetActorLocation() + GetUpOrientation(MODE_PawnUp) * CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
 	
 	// Position
 	{
@@ -3081,8 +3143,8 @@ void UCustomMovementComponent::DisplayDebug(UCanvas* Canvas, const FDebugDisplay
 	T = FString::Printf(TEXT("Extra Probing Distance: %f"), ExtraFloorProbingDistance);
 	DisplayDebugManager.DrawString(T);
 
-	T = FString::Printf(TEXT("Capsule Radius: %f"), GetCapsuleRadius());
-	DisplayDebugManager.DrawString(T);
+	//T = FString::Printf(TEXT("Capsule Radius: %f"), GetCapsuleRadius());
+	//DisplayDebugManager.DrawString(T);
 }
 
 

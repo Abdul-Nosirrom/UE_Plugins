@@ -24,6 +24,7 @@ ATOPCharacter::ATOPCharacter() : Super()
 
 	// Configure character movement
 	GetCharacterMovement()->CharacterOwner = this;
+	GetCharacterMovement()->ModCharacterOwner = this;
 	GetCharacterMovement()->bOrientRotationToMovement = true; // Character moves in the direction of input...	
 	GetCharacterMovement()->RotationRate = FRotator(0.0f, 500.0f, 0.0f); // ...at this rotation rate
 	

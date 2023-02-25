@@ -12,6 +12,14 @@ class UCapsuleComponent;
 class UArrowComponent;
 class UOPMovementComponent;
 
+/* Delegate Declarations */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FMovementStateChangedSignature, class AOPCharacter*, Character, enum EMovementState, PrevMovementState);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOPLandedSignature, const FHitResult&, Hit);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FLostFloorStabilitySignature, const FHitResult&, Hit);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FWalkedOffLedge, const FVector&, PreviousFloorImpactNormal, const FVector&, PreviousFloorContactNormal, const FVector&, PreviousLocation, float, DeltaTime);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FMoveBlockedBySignature, const FHitResult&, Hit);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FStuckInGeometrySignature, const FHitResult&, Hit);
+
 UCLASS()
 class COREFRAMEWORK_API AOPCharacter : public APawn
 {
@@ -81,6 +89,17 @@ public:
 	virtual void NotifyActorBeginOverlap(AActor* OtherActor);
 	virtual void NotifyActorEndOverlap(AActor* OtherActor);
 	//~ End AActor Interface
+
+	template<class T>
+	T* FindComponentByClass() const
+	{
+		return AActor::FindComponentByClass<T>();
+	}
+
+	//~ Begin INavAgentInterface Interface
+	//virtual FVector GetNavAgentLocation() const override;
+	//~ End INavAgentInterface Interface
+
 	
 #pragma endregion AActor & UObject Interface
 
@@ -89,7 +108,7 @@ public:
 	//~ Begin APawn Interface.
 	virtual void PostInitializeComponents() override;
 	virtual UPawnMovementComponent* GetMovementComponent() const override;
-	//virtual UPrimitiveComponent* GetMovementBase() const override final { return BasedMovement.MovementBase; }
+	virtual UPrimitiveComponent* GetMovementBase() const override final;
 	virtual float GetDefaultHalfHeight() const override;
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 	virtual void DisplayDebug(class UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL, float& YPos) override;
@@ -99,33 +118,79 @@ public:
 
 #pragma endregion APawn Interface
 
+#pragma region Events
+protected:
+	UPROPERTY(Category="Character", BlueprintAssignable)
+	FMovementStateChangedSignature MovementStateChangedDelegate;
+	
+	UPROPERTY(Category="Character", BlueprintAssignable)
+	FOPLandedSignature LandedDelegate;
+	
+	UPROPERTY(Category="Character", BlueprintAssignable)
+	FLostFloorStabilitySignature LostStabilityDelegate;
+	
+	UPROPERTY(Category="Character", BlueprintAssignable)
+	FWalkedOffLedge WalkedOffLedgeDelegate;
+
+	UPROPERTY(Category="Character", BlueprintAssignable)
+	FMoveBlockedBySignature MoveBlockedByDelegate;
+
+	UPROPERTY(Category="Character", BlueprintAssignable)
+	FStuckInGeometrySignature StuckInGeometryDelegate;
+
+public:
+	UFUNCTION(Category="Character", BlueprintImplementableEvent)
+	void OnLanded(const FHitResult& Hit);
+	void Landed(const FHitResult& Hit);
+
+	UFUNCTION(Category="Character", BlueprintImplementableEvent)
+	void OnMovementStateChanged(enum EMovementState PrevMovementState);
+	void MovementStateChanged(enum EMovementState PrevMovementState);
+
+	UFUNCTION(Category="Character", BlueprintImplementableEvent)
+	void OnWalkingOffLedge(const FVector& PreviousFloorImpactNormal, const FVector& PreviousFloorContactNormal, const FVector& PreviousLocation, float DeltaTime);
+	void WalkingOffLedge(const FVector& PreviousFloorImpactNormal, const FVector& PreviousFloorContactNormal, const FVector& PreviousLocation, float DeltaTime);
+
+	UFUNCTION(Category="Character", BlueprintImplementableEvent)
+	void OnMoveBlocked(const FHitResult& Hit);
+	void MoveBlockedBy(const FHitResult& Hit);
+
+	void OnStuckInGeometry(const FHitResult& Hit);
+#pragma endregion Events
+
 #pragma region Animation Interface
 	
 	/** Scale to apply to root motion translation on this Character */
 	UPROPERTY()
 	float AnimRootMotionTranslationScale;
 
+	UFUNCTION(Category=Animation, BlueprintCallable)
+	void SetAnimRootMotionTranslationScale(float InAnimRootMotionTranslationScale = 1.f);
+
+	UFUNCTION(Category=Animation, BlueprintCallable)
+	float GetAnimRootMotionTranslationScale() const;
+
 	/** Play Animation Montage on the character mesh. Returns the length of the animation montage in seconds, or 0.f if failed to play. **/
-	UFUNCTION(BlueprintCallable, Category=Animation)
+	UFUNCTION(Category=Animation, BlueprintCallable)
 	virtual float PlayAnimMontage(class UAnimMontage* AnimMontage, float InPlayRate = 1.f, FName StartSectionName = NAME_None);
 
 	/** Stop Animation Montage. If nullptr, it will stop what's currently active. The Blend Out Time is taken from the montage asset that is being stopped. **/
-	UFUNCTION(BlueprintCallable, Category=Animation)
+	UFUNCTION(Category=Animation, BlueprintCallable)
 	virtual void StopAnimMontage(class UAnimMontage* AnimMontage = nullptr);
 
 	/** Return current playing Montage **/
-	UFUNCTION(BlueprintCallable, Category=Animation)
+	UFUNCTION(Category=Animation, BlueprintCallable)
 	class UAnimMontage* GetCurrentMontage() const;
 
 	/** Get FAnimMontageInstance playing RootMotion */
 	FAnimMontageInstance * GetRootMotionAnimMontageInstance() const;
 
 	/** True if we are playing Anim root motion right now */
-	UFUNCTION(BlueprintCallable, Category=Animation, meta=(DisplayName="Is Playing Anim Root Motion"))
+	UFUNCTION(Category=Animation, BlueprintCallable, meta=(DisplayName="Is Playing Anim Root Motion"))
 	bool IsPlayingRootMotion() const;
 
 	/** True if we are playing root motion from any source right now (anim root motion, root motion source) */
-	UFUNCTION(BlueprintCallable, Category=Animation)
+	UFUNCTION(Category=Animation, BlueprintCallable)
 	bool HasAnyRootMotion() const;
 
 #pragma endregion Animation Interface

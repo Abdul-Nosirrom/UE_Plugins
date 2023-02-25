@@ -18,6 +18,8 @@ public:
 	// Sets default values for this component's properties
 	UOPMovementComponent();
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+
+	TObjectPtr<ATOPCharacter> ModCharacterOwner;
 #pragma region Event Overrides
 protected:
 
@@ -188,9 +190,6 @@ public:
 	float AnalogInputModifier;
 
 #pragma endregion Gameplay Parameters
-
-	UPROPERTY()
-	TObjectPtr<ATOPCharacter> CharacterOwner;
 
 #pragma region General Locomotion
 protected:

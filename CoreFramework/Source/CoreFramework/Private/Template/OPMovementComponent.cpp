@@ -11,6 +11,10 @@ UOPMovementComponent::UOPMovementComponent()
 void UOPMovementComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	FActorComponentTickFunction* ThisTickFunction)
 {
+	if (ModCharacterOwner)
+	{
+		ModCharacterOwner = Cast<ATOPCharacter>(CharacterOwner);
+	}
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 }
 
@@ -40,17 +44,17 @@ void UOPMovementComponent::SubsteppedTick(FVector& CurrentVelocity, float DeltaT
 		bool bEndingJumpForce = false;
 		float GravityTime = DeltaTime;
 
-		if (CharacterOwner->JumpForceTimeRemaining > 0.0f)
+		if (ModCharacterOwner->JumpForceTimeRemaining > 0.0f)
 		{
 			// Consume some of the force time. Only the remaining time (if any) is affected by gravity when bApplyGravityWhileJumping=false.
-			const float JumpForceTime = FMath::Min(CharacterOwner->JumpForceTimeRemaining, DeltaTime);
+			const float JumpForceTime = FMath::Min(ModCharacterOwner->JumpForceTimeRemaining, DeltaTime);
 			GravityTime = bApplyGravityWhileJumping ? DeltaTime : FMath::Max(0.0f, DeltaTime - JumpForceTime);
 			
 			// Update Character state
-			CharacterOwner->JumpForceTimeRemaining -= JumpForceTime;
-			if (CharacterOwner->JumpForceTimeRemaining <= 0.0f)
+			ModCharacterOwner->JumpForceTimeRemaining -= JumpForceTime;
+			if (ModCharacterOwner->JumpForceTimeRemaining <= 0.0f)
 			{
-				CharacterOwner->ResetJumpState();
+				ModCharacterOwner->ResetJumpState();
 				bEndingJumpForce = true;
 			}
 		}
@@ -80,7 +84,7 @@ void UOPMovementComponent::UpdateVelocity(FVector& CurrentVelocity, float DeltaT
 	// CalcVel & JumpApex stuff verified there too) //
 
 	/* ControlledCharacterMove */
-	CharacterOwner->CheckJumpInput(DeltaTime);
+	ModCharacterOwner->CheckJumpInput(DeltaTime);
 	Acceleration = ScaleInputAcceleration(ConstrainInputAcceleration(InputVector));
 	AnalogInputModifier = ComputeAnalogInputModifier();
 }
@@ -417,7 +421,7 @@ bool UOPMovementComponent::ShouldRemainVertical() const
 
 bool UOPMovementComponent::DoJump()
 {
-	if (CharacterOwner && CharacterOwner->CanJump())
+	if (ModCharacterOwner && ModCharacterOwner->CanJump())
 	{
 		// Don't jump if we can't move up/down
 		if (!bConstrainToPlane || FMath::Abs(PlaneConstraintNormal.Z) != 1.f)
@@ -442,7 +446,7 @@ void UOPMovementComponent::Launch(FVector const& LaunchVel)
 
 void UOPMovementComponent::NotifyJumpApex()
 {
-	if (CharacterOwner)
+	if (ModCharacterOwner)
 	{
 		//CharacterOwner->NotifyJumpApex();
 	}
@@ -472,7 +476,7 @@ float UOPMovementComponent::GetMaxJumpHeightWithJumpTime() const
 		// to avoid expensive calculations.
 
 		// This can be imagined as the character being displaced to some height, then jumping from that height.
-		return (CharacterOwner->JumpMaxHoldTime * JumpZVelocity) + MaxJumpHeight;
+		return (ModCharacterOwner->JumpMaxHoldTime * JumpZVelocity) + MaxJumpHeight;
 	}
 
 	return MaxJumpHeight;

@@ -48,7 +48,9 @@ template<typename T> T& Unused(T&& Var) { return Var; }
 	#define DEBUG_PRINT_MSG(Duration, FormatStr, ...)
 #endif
 
-#define LOG_HIT(InHit, Duration)\
+#define LOG_HIT(InHit, Duration)
+
+#define LOG_HIT_DIS(InHit, Duration)\
 				{\
 					FLog(Warning, "Hit Logged With Vel = %s", *Velocity.ToCompactString());\
 					DrawDebugString(GetWorld(), InHit.Location + GetUpOrientation(MODE_PawnUp) * (GetCapsuleHalfHeight() + 1.1f * GetCapsuleRadius()), FString(__func__), 0, FColor::White, Duration, true);\

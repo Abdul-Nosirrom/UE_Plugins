@@ -12,6 +12,10 @@ DECLARE_STATS_GROUP(TEXT("RadicalMovementComponent_Game"), STATGROUP_RadicalMove
 DECLARE_LOG_CATEGORY_EXTERN(LogRMCMovement, Log, All);
 /* ~~~~~~~~ */
 
+/* Forward Declarations */
+class AOPCharacter;
+//struct FBasedMovementInfo;
+
 #pragma region Enums
 
 UENUM(BlueprintType)
@@ -27,13 +31,12 @@ enum EMovementState
 	STATE_Falling	UMETA(DisplayName="Falling"),
 };
 
+UENUM(BlueprintType)
 enum EOrientationMode
 {
 	MODE_PawnUp			UMETA(DisplayName="Pawn Up"),
 
-	MODE_Gravity		UMETA(DisplayName="Opposite Gravity"),
-
-	MODE_FloorNormal	UMETA(DisplayName="Floor Normal")
+	MODE_Gravity		UMETA(DisplayName="Gravity Direction"),
 };
 
 #pragma endregion Enums 
@@ -224,13 +227,16 @@ public:
 	// Sets default values for this component's properties
 	UCustomMovementComponent();
 
-protected:
-	// Called when the game starts
-	virtual void BeginPlay() override;
+	UPROPERTY()
+	TObjectPtr<AOPCharacter> CharacterOwner;
 
 public:
-	// Called every frame
+	// BEGIN UActorComponent Interface
+	virtual void BeginPlay() override;
+	virtual void PostLoad() override;
+	virtual void Deactivate() override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+	// END UActorComponent Interface
 
 	UPROPERTY()
 	FCustomMovementComponentPostPhysicsTickFunction PostPhysicsTickFunction;
@@ -316,10 +322,10 @@ public:
 
 	/*~~~~~ Orientation, scale all that jazz ~~~~~*/
 
-	// There are 3 possible values here to return, Either
-	//	1.) Player Up Vector (Stuff where its in terms of their orientation
-	//	2.) Negative Gravity (So a constant value regardless of surface normal or player orientation, likely used in air)
-	//	3.) Ground normal
+	/// @brief There are 3 possible values here to return, Either: 
+	///	(1) Player Up Vector (Stuff where its in terms of their orientation 
+	///	(2) Negative Gravity (So a constant value regardless of surface normal or player orientation, likely used in air) 
+	///	(3) Ground normal
 	FORCEINLINE FVector GetUpOrientation(EOrientationMode OrientationMode) const /* Perhaps having a fallback be a parameter? */
 	{
 		if (bAlwaysOrientToGravity) return -Gravity.GetSafeNormal();
@@ -329,17 +335,12 @@ public:
 				return UpdatedComponent->GetUpVector();
 			case MODE_Gravity:
 				return Gravity.IsZero() ? UpdatedComponent->GetUpVector() : -Gravity.GetSafeNormal();
-			case MODE_FloorNormal:
-				return CurrentFloor.bBlockingHit ? CurrentFloor.HitResult.Normal : (Gravity.IsZero() ? UpdatedComponent->GetUpVector() : -Gravity.GetSafeNormal());
 			default:
 				return UpdatedComponent->GetUpVector();
 		}
 	}
 
 	// TODO: Might wanna also (not here but in utilities) add some math methods for computing stuff in w.r.t a given orientation mode (e.g steps). Would be super nice to localize that math in one place.
-
-	FORCEINLINE float GetCapsuleRadius() const { return UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius(); }
-	FORCEINLINE float GetCapsuleHalfHeight() const { return UpdatedPrimitive->GetCollisionShape().GetCapsuleHalfHeight(); }
 
 	/*~~~~~ Movement State Interface ~~~~~*/
 
@@ -368,7 +369,13 @@ public:
 	FORCEINLINE FVector GetVelocity() const { return Velocity; }
 
 	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
-	FORCEINLINE void SetVelocity(const FVector TargetVelocity) { Velocity = TargetVelocity; } 
+	FORCEINLINE void SetVelocity(const FVector TargetVelocity) { Velocity = TargetVelocity; }
+
+	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
+	FORCEINLINE FVector GetAcceleration() const { return Acceleration; }
+
+	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
+	FORCEINLINE void SetAcceleration(const FVector TargetAcceleration) { Acceleration = TargetAcceleration; }
 
 	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
 	FORCEINLINE bool IsStableOnGround() const { return IsMovingOnGround(); }
@@ -399,6 +406,8 @@ public:
 
 #pragma region Events
 
+	// TODO: Review these...
+
 	/// @brief Entry point for gameplay manipulation of rotation via blueprints or child class
 	/// @param CurrentRotation Reference to current rotation to modify
 	/// @param DeltaTime Current sub-step delta time
@@ -428,8 +437,8 @@ public:
 protected:
 	/* CONSTANTS FOR SWEEP AND PHYSICS CALCULATIONS */
 	static constexpr float MIN_TICK_TIME				= 1e-6f; 
-	static constexpr float MIN_FLOOR_DIST				= 1.9f; // DEBUG : Changed this
-	static constexpr float MAX_FLOOR_DIST				= 2.4f; // DEBUG : Changed This
+	static constexpr float MIN_FLOOR_DIST				= 1.9f; 
+	static constexpr float MAX_FLOOR_DIST				= 2.4f; 
 	static constexpr float SWEEP_EDGE_REJECT_DISTANCE	= 0.15f; 
 
 protected:
@@ -445,8 +454,6 @@ protected:
 	///			@see FScopedMovementUpdate
 	UPROPERTY(Category="(Radical Movement): Simulation Settings", EditDefaultsOnly)
 	uint8 bEnableScopedMovementUpdates					: 1;
-
-	uint8 bStuckInGeometry								: 1;
 
 	/// @brief  Max delta time for each discrete simulation step in the movement simulation. Lowering the value can address issues with fast-moving
 	///			objects or complex collision scenarios, at the cost of performance.
@@ -511,7 +518,7 @@ protected:
 
 	void RevertMove(const FVector& OldLocation, UPrimitiveComponent* OldBase, const FVector& InOldBaseLocation, const FGroundingStatus& OldFloor, bool bFailMove);
 	
-	FORCEINLINE void OnStuckInGeometry() { bStuckInGeometry = true; }
+	void OnStuckInGeometry(const FHitResult* Hit);
 
 #pragma endregion Core Simulation Handling
 
@@ -520,8 +527,12 @@ protected:
 protected:
 
 	/// @brief	Additional ground probing distance, probe distance will be chosen as the maximum between this and @see MaxStepHeight
-	UPROPERTY(Category="(Radical Movement): Ground Settings", EditDefaultsOnly, BlueprintReadWrite);
+	UPROPERTY(Category="(Radical Movement): Ground Settings", EditDefaultsOnly, BlueprintReadWrite)
 	float ExtraFloorProbingDistance = 20.f;
+
+	/// @brief  Mode to define against what direction to test stability settings
+	UPROPERTY(Category="(Radical Movement): Ground Settings", EditDefaultsOnly, BlueprintReadWrite)
+	TEnumAsByte<EOrientationMode> StabilityOrientationMode; 
 
 	/// @brief  Maximum ground slope angle relative to the actor up direction.
 	UPROPERTY(Category= "(Radical Movement): Ground Settings", EditDefaultsOnly)
@@ -540,16 +551,6 @@ protected:
 	///			Normally if @see bAlwaysCheckFloor is false, floor checks are avoided unless certain conditions are met. This overrides that to force a floor check.
 	UPROPERTY(Category="(Radical Movement): Ground Settings", VisibleInstanceOnly, BlueprintReadWrite, AdvancedDisplay)
 	uint8 bForceNextFloorCheck			: 1;
-
-	//~~~~~ Ground Extra Settings ~~~~~ //
-	UPROPERTY(Category = "(Radical Movement): Ground Settings", EditDefaultsOnly, AdvancedDisplay)
-	bool bEnableGlobalAngleRestriction;
-
-	UPROPERTY(Category = "(Radical Movement): Ground Settings", EditDefaultsOnly, AdvancedDisplay, meta=(EditCondition="bEnableGlobalAngleRestriction", EditConditionHides))
-	FVector RelativeDirection;
-
-	UPROPERTY(Category = "(Radical Movement): Ground Settings", EditDefaultsOnly, AdvancedDisplay, meta=(EditCondition="bEnableGlobalAngleRestriction", EditConditionHides))
-	float MaxStableSlongAngleInRelativeDirection;
 	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
 public:
 	UPROPERTY(Category="(Radical Movement): Ground Status", VisibleInstanceOnly, BlueprintReadOnly)
@@ -582,7 +583,7 @@ protected:
 
 /* Main stair related shit */
 #pragma region Step Handling
-	
+protected:
 	/// @brief  Maximum height of a step which the pawn can climb.
 	UPROPERTY(Category= "(Radical Movement): Step Settings", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition = "bSolveSteps", EditConditionHides))
 	float MaxStepHeight = 50.f;
@@ -595,7 +596,7 @@ protected:
 
 /* Ledge & Perching shit, contains methods for evaluating denivelation handling and perch stability */
 #pragma region Ledge Handling
-
+protected:
 	/// @brief  If false, owner won't be able to walk off a ledge - it'll be treated as if there was an invisible wall
 	UPROPERTY(Category="(Radical Movement): Ledge Settings", EditDefaultsOnly, BlueprintReadWrite)
 	uint8 bCanWalkOffLedges				: 1;
@@ -634,11 +635,7 @@ protected:
 	/// @brief  Returns the radius within which we can stand on the edge of a surface without falling (If it's a stable surface).
 	/// @return Capsule Radius - GetPerchRadiusThreshold()
 	UFUNCTION(Category= "(Radical Movement): Ledge Settings", BlueprintGetter)
-	FORCEINLINE float GetValidPerchRadius() const
-	{
-		const float PawnRadius = UpdatedPrimitive->GetCollisionShape().GetCapsuleRadius();
-		return FMath::Clamp(PawnRadius - GetPerchRadiusThreshold(), 0.11f, PawnRadius);
-	};
+	float GetValidPerchRadius() const;
 
 	bool ShouldCatchAir(const FGroundingStatus& OldFloor, const FGroundingStatus& NewFloor);
 	
@@ -658,9 +655,10 @@ protected:
 	
 /* Methods to evaluate the stability of a given hit or overlap */
 #pragma region Stability Evaluations
-
+public:
 	/// @brief  Checks whether we are currently able to move
 	/// @return True if we are not stuck in geometry or have valid data
+	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
 	bool CanMove() const;
 
 
@@ -670,6 +668,7 @@ protected:
 /* Methods to adjust movement based on the stability of a hit or overlap */
 #pragma region Collision Adjustments
 
+protected:
 	virtual FVector GetPenetrationAdjustment(const FHitResult& Hit) const override;
 	virtual bool ResolvePenetrationImpl(const FVector& Adjustment, const FHitResult& Hit, const FQuat& NewRotation) override;
 
@@ -687,16 +686,11 @@ protected:
 	
 	UPROPERTY(Category="(Radical Movement): Animation", EditDefaultsOnly)
 	uint8 bApplyRootMotionDuringBlendOut	: 1;
-	
-	UPROPERTY(Category="(Radical Movement): Animation", BlueprintReadWrite)
-	USkeletalMeshComponent* SkeletalMesh{nullptr};
 
 	UPROPERTY(Transient)
 	FRootMotionMovementParams RootMotionParams;
 
-public:
-	virtual void SetSkeletalMeshReference(USkeletalMeshComponent* Mesh);
-
+protected:
 	/// @brief  Ticks the mesh pose and accumulates root motion
 	void TickPose(float DeltaTime);
 
@@ -705,18 +699,13 @@ public:
 	bool ShouldDiscardRootMotion(UAnimMontage* RootMotionMontage, float RootMotionMontagePosition) const;
 
 public:
-	/// @brief	Returns the currently playing root motion montage instance (if any)
-	/// @return Current root motion montage instance or nullptr if none is currently playing
-	FAnimMontageInstance* GetRootMotionMontageInstance() const;
-	
-	UFUNCTION(Category="(Radical Movement): Animation", BlueprintCallable)
+
+	/// @brief  Check to see if we have root motion from an Anim. Not valid outside of the scope of PerformMovement() since its extracted and used in it
+	/// @return True if we have Root Motion from animation to use in PerformMovement() physics
 	bool HasAnimRootMotion() const
 	{
 		return RootMotionParams.bHasRootMotion;
 	}
-
-	//float GetAnimRootMotionTranslatonScale() const;
-	//float SetAnimRootMotionTranslationScale(float Scale = 1.f);
 	
 /*
 protected:
@@ -779,9 +768,9 @@ protected:
 /* Methods to impart forces and evaluate physics interactions*/
 #pragma region Physics Interactions
 
-public:
+protected:
 	/* Wanna keep this setting exposed and read/writable */
-	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta = (ClampMin = "0", UIMin = "0"))
+	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, BlueprintGetter="GetMass", meta = (ClampMin = "0", UIMin = "0"))
 	float Mass{100.f};
 	
 	/// @brief  Whether the pawn should interact with physics objects in the world
@@ -854,6 +843,10 @@ public:
 	virtual void ApplyRepulsionForce(float DeltaTime);
 	virtual void ApplyDownwardForce(float DeltaTime);
 
+public:
+	UFUNCTION(Category="(Radical Movement): Physics Interactions", BlueprintCallable)
+	float GetMass() const { return Mass; };
+
 #pragma endregion Physics Interactions
 
 /* Methods to handle moving bases */
@@ -914,6 +907,7 @@ protected:
 
 	/*~~~~~ Based Movement Methods ~~~~~*/
 
+public:
 	/// @brief  Sets the component the pawn is walking on/following
 	void SetBase(UPrimitiveComponent* NewBaseComponent, const FName InBoneName = NAME_None, bool bNotifyPawn = true);
 
@@ -931,6 +925,7 @@ protected:
 	UFUNCTION(Category="Motor | Movement Base", BlueprintCallable)
 	virtual FVector GetImpartedMovementBaseVelocity() const;
 
+protected:
 	void DecayFormerBaseVelocity(float DeltaTime);
 	
 	/// @brief  Update position based on Based movement
