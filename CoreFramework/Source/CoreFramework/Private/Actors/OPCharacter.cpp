@@ -3,6 +3,7 @@
 #include "OPCharacter.h"
 #include "CFW_PCH.h"
 #include "CustomMovementComponent.h"
+#include "Debug/CFW_LOG.h"
 #include "Template/OPMovementComponent.h"
 
 
@@ -109,6 +110,7 @@ void AOPCharacter::PostLoad()
 void AOPCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+	//bHasBasedMovementOverride = false;
 }
 
 void AOPCharacter::TickActor(float DeltaTime, ELevelTick TickType, FActorTickFunction& ThisTickFunction)
@@ -119,6 +121,17 @@ void AOPCharacter::TickActor(float DeltaTime, ELevelTick TickType, FActorTickFun
 // TODO: This
 void AOPCharacter::ClearCrossLevelReferences()
 {
+	// Clear base
+	if( BasedMovement.MovementBase != nullptr && GetOutermost() != BasedMovement.MovementBase->GetOutermost() )
+	{
+		SetBase( nullptr );
+	}
+	// Clear base override
+	if (BasedMovementOverride.MovementBase != nullptr && GetOutermost() != BasedMovementOverride.MovementBase->GetOutermost())
+	{
+		RemoveBaseOverride();
+	}
+	
 	Super::ClearCrossLevelReferences();
 }
 
@@ -198,7 +211,7 @@ UPawnMovementComponent* AOPCharacter::GetMovementComponent() const
 
 UPrimitiveComponent* AOPCharacter::GetMovementBase() const
 {
-	return CustomMovement->GetMovementBase();
+	return GetBasedMovement().MovementBase;
 }
 
 
@@ -230,11 +243,42 @@ void AOPCharacter::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& DebugD
 	static FName NAME_Physics = FName(TEXT("Physics"));
 	if (DebugDisplay.IsDisplayOn(NAME_Physics))
 	{
+		auto DisplayDebugManager = Canvas->DisplayDebugManager;
+		
 		FIndenter PhysicsIndent(Indent);
+
 		if (CustomMovement != nullptr)
 		{
 			CustomMovement->DisplayDebug(Canvas, DebugDisplay, YL, YPos);
 		}
+		/*
+		DisplayDebugManager.SetDrawColor(FColor::Yellow);
+		FString T = FString::Printf(TEXT("----- BASED MOVEMENT -----"));
+		DisplayDebugManager.DrawString(T, Indent);
+
+		if (!GetBasedMovement().MovementBase)
+		{
+			DisplayDebugManager.SetDrawColor(FColor::Red);
+			T = FString::Printf(TEXT("No Based Movement"));
+			DisplayDebugManager.DrawString(T, Indent);
+			
+			DisplayDebugManager.SetDrawColor(FColor::White);
+			T = FString::Printf(TEXT("Has Base Override? %s"), BOOL2STR(bHasBasedMovementOverride));
+			DisplayDebugManager.DrawString(T, Indent);
+		}
+		else
+		{
+			DisplayDebugManager.SetDrawColor(FColor::White);
+			T = FString::Printf(TEXT("Has Base Override? %s"), BOOL2STR(bHasBasedMovementOverride));
+			DisplayDebugManager.DrawString(T, Indent);
+
+			T = FString::Printf(TEXT("Base Name %s"), *GetBasedMovement().MovementBase.GetName());
+			DisplayDebugManager.DrawString(T, Indent);
+
+			T = FString::Printf(TEXT("Base Location %s"), *GetBasedMovement().Location.ToCompactString());
+			DisplayDebugManager.DrawString(T, Indent);
+		}
+		*/
 	}
 }
 
@@ -252,6 +296,33 @@ void AOPCharacter::UpdateNavigationRelevance()
 }
 
 #pragma endregion APawn Interface
+
+#pragma region Gameplay Interface
+
+void AOPCharacter::LaunchCharacter(FVector LaunchVelocity, bool bPlanarOverride, bool bVerticalOverride)
+{
+	if (CustomMovement)
+	{
+		FVector FinalVel = LaunchVelocity;
+		const FVector Velocity = GetVelocity();
+
+		if (!bPlanarOverride)
+		{
+			FinalVel += FVector::VectorPlaneProject(Velocity, CustomMovement->GetUpOrientation(MODE_Gravity));
+		}
+		if (bVerticalOverride)
+		{
+			FinalVel += Velocity.ProjectOnToNormal(CustomMovement->GetUpOrientation(MODE_Gravity));
+		}
+
+		CustomMovement->Launch(FinalVel);
+
+		OnLaunched(LaunchVelocity, bPlanarOverride, bVerticalOverride);
+	}
+}
+
+
+#pragma endregion Gameplay Interface
 
 #pragma region Events
 
@@ -286,6 +357,123 @@ void AOPCharacter::OnStuckInGeometry(const FHitResult& Hit)
 
 
 #pragma endregion Events
+
+#pragma region Based Movement
+
+void AOPCharacter::CreateBasedMovementInfo(FBasedMovementInfo& BasedMovementInfoToFill, UPrimitiveComponent* BaseComponent, const FName InBoneName)
+{
+	/* If new base component is nullptr, ignore bone name */
+	const FName BoneName = (BaseComponent ? InBoneName : NAME_None);
+
+	/* See what has changed */
+	const bool bBaseChanged = (BaseComponent != BasedMovementInfoToFill.MovementBase);
+	const bool bBoneChanged = (BoneName != BasedMovementInfoToFill.BoneName);
+
+	if (bBaseChanged || bBoneChanged)
+	{
+		/* Verify no recursion */
+		APawn* Loop = (BaseComponent ? Cast<APawn>(BaseComponent->GetOwner()): nullptr);
+		while (Loop)
+		{
+			if (Loop == this) return;
+
+			if (UPrimitiveComponent* LoopBase = Loop->GetMovementBase())
+			{
+				Loop = Cast<APawn>(LoopBase->GetOwner());
+			}
+			else
+			{
+				break;
+			}
+		}
+
+		/* Set Base */
+		UPrimitiveComponent* OldBase = BasedMovementInfoToFill.MovementBase;
+		BasedMovementInfoToFill.MovementBase = BaseComponent;
+		BasedMovementInfoToFill.BoneName = BoneName;
+
+		/* Set tick dependencies */
+		const bool bBaseIsSimulating = MovementBaseUtility::IsSimulatedBase(BaseComponent);
+		if (bBaseChanged)
+		{
+			MovementBaseUtility::RemoveTickDependency(CustomMovement->PrimaryComponentTick, OldBase);
+			/* Use special post physics function if simulating, otherwise add normal tick prereqs. */
+			if (!bBaseIsSimulating)
+			{
+				MovementBaseUtility::AddTickDependency(CustomMovement->PrimaryComponentTick, BaseComponent);
+			}
+		}
+
+		if (BaseComponent)
+		{
+			CustomMovement->SaveBaseLocation();
+			CustomMovement->PostPhysicsTickFunction.SetTickFunctionEnable(bBaseIsSimulating);
+		}
+		else
+		{
+			BasedMovementInfoToFill.BoneName = NAME_None;
+			BasedMovementInfoToFill.bRelativeRotation = false;
+			CustomMovement->CurrentFloor.Clear();
+			CustomMovement->PostPhysicsTickFunction.SetTickFunctionEnable(false);
+		}
+	}
+}
+
+
+void AOPCharacter::SetBase(UPrimitiveComponent* NewBaseComponent, const FName InBoneName, bool bNotifyActor)
+{
+	CreateBasedMovementInfo(BasedMovement, NewBaseComponent, InBoneName);
+
+	if (bNotifyActor)
+	{
+		BaseChange();
+	}
+}
+
+void AOPCharacter::SetBaseOverride(UPrimitiveComponent* NewBase, const FName BoneName)
+{
+	CreateBasedMovementInfo(BasedMovementOverride, NewBase, BoneName);
+	
+	if (NewBase)
+	{
+		bHasBasedMovementOverride = true;
+	}
+	else
+	{
+		bHasBasedMovementOverride = false;
+	}
+}
+
+void AOPCharacter::RemoveBaseOverride()
+{
+	bHasBasedMovementOverride = false;
+	SetBaseOverride(nullptr);
+}
+
+
+const FBasedMovementInfo& AOPCharacter::GetBasedMovement() const
+{
+	if (HasBasedMovementOverride() && BasedMovementOverride.MovementBase)
+	{
+		return BasedMovementOverride;
+	}
+	else
+	{
+		return BasedMovement;
+	}
+}
+
+void AOPCharacter::SaveRelativeBasedMovement(const FVector& NewRelativeLocation, const FRotator& NewRotation, bool bRelativeRotation)
+{
+	FBasedMovementInfo BasedMovementUsed = GetBasedMovement();
+	BasedMovementUsed.Location = NewRelativeLocation;
+	BasedMovementUsed.Rotation = NewRotation;
+	BasedMovementUsed.bRelativeRotation = bRelativeRotation;
+}
+
+	
+
+#pragma endregion Based Movement
 
 #pragma region Animation Interface
 

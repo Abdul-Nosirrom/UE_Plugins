@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/Character.h"
 #include "OPCharacter.generated.h"
 
 /* Forward declarations */
@@ -118,6 +119,13 @@ public:
 
 #pragma endregion APawn Interface
 
+#pragma region Gameplay Interface
+
+	UFUNCTION(Category="Character", BlueprintCallable)
+	virtual void LaunchCharacter(FVector LaunchVelocity, bool bPlanarOverride, bool bVerticalOverride);
+
+#pragma endregion Gameplay Interface
+
 #pragma region Events
 protected:
 	UPROPERTY(Category="Character", BlueprintAssignable)
@@ -156,7 +164,44 @@ public:
 	void MoveBlockedBy(const FHitResult& Hit);
 
 	void OnStuckInGeometry(const FHitResult& Hit);
+
+	UFUNCTION(BlueprintImplementableEvent)
+	void BaseChange();
+
 #pragma endregion Events
+
+#pragma region Based Movement
+
+protected:
+	
+	UPROPERTY()
+	FBasedMovementInfo BasedMovement;
+
+	UPROPERTY()
+	FBasedMovementInfo BasedMovementOverride;
+
+	uint8 bHasBasedMovementOverride			: 1;
+
+	void CreateBasedMovementInfo(FBasedMovementInfo& BasedMovementInfoToFill, UPrimitiveComponent* BaseComponent, const FName BoneName);
+
+public:
+	
+	virtual void SetBase(UPrimitiveComponent* NewBase, const FName InBoneName = NAME_None, bool bNotifyActor=true);
+
+	UFUNCTION(Category="Based Movement", BlueprintCallable)
+	virtual void SetBaseOverride(UPrimitiveComponent* NewBase, const FName InBoneName = NAME_None); // Do not notify in the case of setting an override
+
+	UFUNCTION(Category="Based Movement", BlueprintCallable)
+	virtual void RemoveBaseOverride();
+
+	const FBasedMovementInfo& GetBasedMovement() const;
+
+	/** Save a new relative location in BasedMovement and a new rotation with is either relative or absolute. */
+	void SaveRelativeBasedMovement(const FVector& NewRelativeLocation, const FRotator& NewRotation, bool bRelativeRotation);
+
+	FORCEINLINE bool HasBasedMovementOverride() const { return bHasBasedMovementOverride; }
+
+#pragma endregion Based Movement
 
 #pragma region Animation Interface
 	

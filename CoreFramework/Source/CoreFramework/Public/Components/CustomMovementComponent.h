@@ -4,7 +4,6 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/PawnMovementComponent.h"
-#include "GameFramework/Character.h"
 #include "CustomMovementComponent.generated.h"
 
 /* Profiling */
@@ -585,7 +584,7 @@ protected:
 #pragma region Step Handling
 protected:
 	/// @brief  Maximum height of a step which the pawn can climb.
-	UPROPERTY(Category= "(Radical Movement): Step Settings", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition = "bSolveSteps", EditConditionHides))
+	UPROPERTY(Category= "(Radical Movement): Step Settings", EditDefaultsOnly, BlueprintReadWrite)
 	float MaxStepHeight = 50.f;
 
 	bool CanStepUp(const FHitResult& StepHit) const;
@@ -696,7 +695,7 @@ protected:
 
 	virtual FVector CalcRootMotionVelocity(FVector RootMotionDeltaMove, float DeltaTime, const FVector& CurrentVelocity) const;
 
-	bool ShouldDiscardRootMotion(UAnimMontage* RootMotionMontage, float RootMotionMontagePosition) const;
+	bool ShouldDiscardRootMotion(const UAnimMontage* RootMotionMontage, float RootMotionMontagePosition) const;
 
 public:
 
@@ -900,10 +899,6 @@ protected:
 	FQuat OldBaseQuat;
 
 	FVector DecayingFormerBaseVelocity = FVector::ZeroVector;
-	
-	/// @brief  Information about the current movement base if any
-	UPROPERTY()
-	FBasedMovementInfo BasedMovement;
 
 	/*~~~~~ Based Movement Methods ~~~~~*/
 
@@ -925,6 +920,8 @@ public:
 	UFUNCTION(Category="Motor | Movement Base", BlueprintCallable)
 	virtual FVector GetImpartedMovementBaseVelocity() const;
 
+	virtual void SaveBaseLocation();
+	
 protected:
 	void DecayFormerBaseVelocity(float DeltaTime);
 	
@@ -934,8 +931,6 @@ protected:
 	virtual void UpdateBasedMovement(float DeltaTime);
 	
 	virtual void UpdateBasedRotation(FRotator& FinalRotation, const FRotator& ReducedRotation);
-
-	virtual void SaveBaseLocation();
 	
 	/// @brief  Event triggered when we are moving on a base but are unable to move the full DeltaPosition because something blocked us
 	/// @param  DeltaPosition	How far we tried to move WITH the base

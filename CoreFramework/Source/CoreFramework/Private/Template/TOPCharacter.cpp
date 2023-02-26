@@ -71,6 +71,7 @@ void ATOPCharacter::BeginPlay()
 	}
 }
 
+
 //////////////////////////////////////////////////////////////////////////
 // Input
 
@@ -278,7 +279,10 @@ void ATOPCharacter::Look(const FInputActionValue& Value)
 void ATOPCharacter::Jump(const FInputActionValue& Value)
 {
 	if (GetMovementComponent()->IsMovingOnGround())
+	{
+		OnJumpedDelegate.Broadcast();
 		LaunchCharacter(FVector(0,0, 700), false, true);
+	}
 	bPressedJump = true;
 	JumpKeyHoldTime = 0.f;
 }

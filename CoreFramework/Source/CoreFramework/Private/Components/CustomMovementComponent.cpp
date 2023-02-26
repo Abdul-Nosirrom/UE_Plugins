@@ -407,10 +407,13 @@ void UCustomMovementComponent::OnMovementStateChanged(EMovementState PreviousMov
 		LOG_HIT(CurrentFloor.HitResult, 2.f);
 
 		CurrentFloor.Clear();
-		
-		DecayingFormerBaseVelocity = GetImpartedMovementBaseVelocity();
-		Velocity += DecayingFormerBaseVelocity;
 
+		if (!CharacterOwner->HasBasedMovementOverride())
+		{
+			DecayingFormerBaseVelocity = GetImpartedMovementBaseVelocity();
+			Velocity += DecayingFormerBaseVelocity;
+		}
+		
 		SetBase(nullptr);
 	}
 	else
@@ -2335,7 +2338,7 @@ FVector UCustomMovementComponent::CalcRootMotionVelocity(FVector RootMotionDelta
 }
 
 
-bool UCustomMovementComponent::ShouldDiscardRootMotion(UAnimMontage* RootMotionMontage, float RootMotionMontagePosition) const
+bool UCustomMovementComponent::ShouldDiscardRootMotion(const UAnimMontage* RootMotionMontage, float RootMotionMontagePosition) const
 {
 	// Return false if montage is null
 	if (!RootMotionMontage) return false;
@@ -2709,60 +2712,9 @@ void UCustomMovementComponent::ApplyRepulsionForce(float DeltaTime)
 
 void UCustomMovementComponent::SetBase(UPrimitiveComponent* NewBaseComponent, const FName InBoneName, bool bNotifyPawn)
 {
-	/* If new base component is nullptr, ignore bone name */
-	const FName BoneName = (NewBaseComponent ? InBoneName : NAME_None);
-
-	/* See what has changed */
-	const bool bBaseChanged = (NewBaseComponent != BasedMovement.MovementBase);
-	const bool bBoneChanged = (BoneName != BasedMovement.BoneName);
-
-	if (bBaseChanged || bBoneChanged)
+	if (CharacterOwner)
 	{
-		/* Verify no recursion */
-		APawn* Loop = (NewBaseComponent ? Cast<APawn>(NewBaseComponent->GetOwner()): nullptr);
-		while (Loop)
-		{
-			if (Loop == PawnOwner) return;
-
-			if (UPrimitiveComponent* LoopBase = Loop->GetMovementBase())
-			{
-				Loop = Cast<APawn>(LoopBase->GetOwner());
-			}
-			else
-			{
-				break;
-			}
-		}
-
-		/* Set Base */
-		UPrimitiveComponent* OldBase = BasedMovement.MovementBase;
-		BasedMovement.MovementBase = NewBaseComponent;
-		BasedMovement.BoneName = BoneName;
-
-		/* Set tick dependencies */
-		const bool bBaseIsSimulating = MovementBaseUtility::IsSimulatedBase(NewBaseComponent);
-		if (bBaseChanged)
-		{
-			MovementBaseUtility::RemoveTickDependency(PrimaryComponentTick, OldBase);
-			/* Use special post physics function if simulating, otherwise add normal tick prereqs. */
-			if (!bBaseIsSimulating)
-			{
-				MovementBaseUtility::AddTickDependency(PrimaryComponentTick, NewBaseComponent);
-			}
-		}
-
-		if (NewBaseComponent)
-		{
-			SaveBaseLocation();
-			PostPhysicsTickFunction.SetTickFunctionEnable(bBaseIsSimulating);
-		}
-		else
-		{
-			BasedMovement.BoneName = NAME_None;
-			BasedMovement.bRelativeRotation = false;
-			CurrentFloor.Clear();
-			PostPhysicsTickFunction.SetTickFunctionEnable(false);
-		}
+		CharacterOwner->SetBase(NewBaseComponent, NewBaseComponent ? InBoneName : NAME_None, bNotifyPawn);
 	}
 }
 
@@ -2780,7 +2732,7 @@ void UCustomMovementComponent::SetBaseFromFloor(const FGroundingStatus& FloorRes
 
 UPrimitiveComponent* UCustomMovementComponent::GetMovementBase() const
 {
-	return BasedMovement.MovementBase;
+	return CharacterOwner ? CharacterOwner->GetMovementBase() : nullptr;
 }
 
 // TODO: Math is right I think (PawnUp to define impart plane)
@@ -2790,16 +2742,16 @@ FVector UCustomMovementComponent::GetImpartedMovementBaseVelocity() const
 	
 	FVector Result = FVector::ZeroVector;
 
-	UPrimitiveComponent* MovementBase = BasedMovement.MovementBase;
+	UPrimitiveComponent* MovementBase = CharacterOwner->GetMovementBase();
 	if (MovementBaseUtility::IsDynamicBase(MovementBase))
 	{
-		FVector BaseVelocity = MovementBaseUtility::GetMovementBaseVelocity(MovementBase, BasedMovement.BoneName);
+		FVector BaseVelocity = MovementBaseUtility::GetMovementBaseVelocity(MovementBase, CharacterOwner->GetBasedMovement().BoneName);
 
 		if (bImpartBaseAngularVelocity)
 		{
 			// TODO: Note, the below used to be MODE_FloorNormal but removed that mdoe since nothing else used it
 			const FVector BasePointPosition = (UpdatedComponent->GetComponentLocation() - GetUpOrientation(MODE_Gravity) * CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
-			const FVector BaseTangentialVel = MovementBaseUtility::GetMovementBaseTangentialVelocity(MovementBase, BasedMovement.BoneName, BasePointPosition);
+			const FVector BaseTangentialVel = MovementBaseUtility::GetMovementBaseTangentialVelocity(MovementBase, CharacterOwner->GetBasedMovement().BoneName, BasePointPosition);
 			BaseVelocity += BaseTangentialVel;
 		}
 		
@@ -2898,7 +2850,7 @@ void UCustomMovementComponent::UpdateBasedMovement(float DeltaTime)
 
 	FQuat NewBaseQuat;
 	FVector NewBaseLocation;
-	if (!MovementBaseUtility::GetMovementBaseTransform(MovementBase, BasedMovement.BoneName, NewBaseLocation, NewBaseQuat))
+	if (!MovementBaseUtility::GetMovementBaseTransform(MovementBase, CharacterOwner->GetBasedMovement().BoneName, NewBaseLocation, NewBaseQuat))
 	{
 		return;
 	}
@@ -2996,29 +2948,25 @@ void UCustomMovementComponent::SaveBaseLocation()
 		if (MovementBase)
 		{
 			// Read transforms into old base location and quat regardless of whether its movable (because mobility can change)
-			MovementBaseUtility::GetMovementBaseTransform(MovementBase, BasedMovement.BoneName, OldBaseLocation, OldBaseQuat);
+			MovementBaseUtility::GetMovementBaseTransform(MovementBase, CharacterOwner->GetBasedMovement().BoneName, OldBaseLocation, OldBaseQuat);
 
 			if (MovementBaseUtility::UseRelativeLocation(MovementBase))
 			{
 				// Relative Location
 				FVector RelativeLocation;
-				MovementBaseUtility::GetLocalMovementBaseLocation(MovementBase, BasedMovement.BoneName, UpdatedComponent->GetComponentLocation(), RelativeLocation);
+				MovementBaseUtility::GetLocalMovementBaseLocation(MovementBase, CharacterOwner->GetBasedMovement().BoneName, UpdatedComponent->GetComponentLocation(), RelativeLocation);
 				
 				// Rotation
 				if (bIgnoreBaseRotation)
 				{
 					// Absolute Rotation
-					BasedMovement.Location = RelativeLocation;
-					BasedMovement.Rotation = UpdatedComponent->GetComponentRotation();
-					BasedMovement.bRelativeRotation = false;
+					CharacterOwner->SaveRelativeBasedMovement(RelativeLocation, UpdatedComponent->GetComponentRotation(), false);
 				}
 				else
 				{
 					// Relative Rotation
 					const FRotator RelativeRotation = (FQuatRotationMatrix(UpdatedComponent->GetComponentQuat()) * FQuatRotationMatrix(OldBaseQuat).GetTransposed()).Rotator();
-					BasedMovement.Location = RelativeLocation;
-					BasedMovement.Rotation = RelativeRotation;
-					BasedMovement.bRelativeRotation = true;
+					CharacterOwner->SaveRelativeBasedMovement(RelativeLocation, RelativeRotation, true);
 				}
 			}
 		}
@@ -3143,8 +3091,8 @@ void UCustomMovementComponent::DisplayDebug(UCanvas* Canvas, const FDebugDisplay
 	T = FString::Printf(TEXT("Extra Probing Distance: %f"), ExtraFloorProbingDistance);
 	DisplayDebugManager.DrawString(T);
 
-	//T = FString::Printf(TEXT("Capsule Radius: %f"), GetCapsuleRadius());
-	//DisplayDebugManager.DrawString(T);
+	T = FString::Printf(TEXT("Capsule Radius: %f"), CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleRadius());
+	DisplayDebugManager.DrawString(T);
 }
 
 

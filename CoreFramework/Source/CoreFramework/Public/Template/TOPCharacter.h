@@ -7,12 +7,19 @@
 #include "GameFramework/Character.h"
 #include "TOPCharacter.generated.h"
 
+/* Delegate Declaration */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnJumpedSignature);
+
+
 UCLASS()
 class COREFRAMEWORK_API ATOPCharacter : public AOPCharacter
 {
 	GENERATED_BODY()
 
 public:
+
+	UPROPERTY(BlueprintAssignable)
+	FOnJumpedSignature OnJumpedDelegate;
 
 #pragma region ACharacter Parameters
 	/** 
@@ -107,6 +114,7 @@ public:
 	void ResetJumpState();
 	
 	bool CanJump() const;
+	
 
 	UFUNCTION(BlueprintNativeEvent, Category=Character, meta=(DisplayName="CanJump"))
 	bool CanJumpInternal() const;
