@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "MovementData.h"
 #include "GameFramework/PawnMovementComponent.h"
 #include "CustomMovementComponent.generated.h"
 
@@ -11,8 +12,14 @@ DECLARE_STATS_GROUP(TEXT("RadicalMovementComponent_Game"), STATGROUP_RadicalMove
 DECLARE_LOG_CATEGORY_EXTERN(LogRMCMovement, Log, All);
 /* ~~~~~~~~ */
 
+/* Events */
+DECLARE_DYNAMIC_DELEGATE_TwoParams(FCalculateVelocitySignature, UCustomMovementComponent*, MovementComponent, float, DeltaTime);
+DECLARE_DYNAMIC_DELEGATE_TwoParams(FUpdateRotationSignature, UCustomMovementComponent*, MovementComponent, float, DeltaTime);
+/* ~~~~~~ */
+
 /* Forward Declarations */
 class AOPCharacter;
+class UMovementData;
 //struct FBasedMovementInfo;
 
 #pragma region Enums
@@ -272,7 +279,7 @@ protected:
 	TEnumAsByte<EMovementState> PhysicsState;
 
 	UPROPERTY(Category="Motor | Physics State", EditAnywhere, BlueprintReadWrite)
-	FVector Gravity;
+	TObjectPtr<UMovementData> MovementData;
 
 	UPROPERTY(Category="Motor | Physics State", EditDefaultsOnly)
 	bool bAlwaysOrientToGravity; // TODO: Temp for debug
@@ -327,13 +334,13 @@ public:
 	///	(3) Ground normal
 	FORCEINLINE FVector GetUpOrientation(EOrientationMode OrientationMode) const /* Perhaps having a fallback be a parameter? */
 	{
-		if (bAlwaysOrientToGravity) return -Gravity.GetSafeNormal();
+		if (bAlwaysOrientToGravity) return -MovementData->GetGravityDir();
 		switch (OrientationMode)
 		{
 			case MODE_PawnUp:
 				return UpdatedComponent->GetUpVector();
 			case MODE_Gravity:
-				return Gravity.IsZero() ? UpdatedComponent->GetUpVector() : -Gravity.GetSafeNormal();
+				return MovementData->GetGravityDir().IsZero() ? UpdatedComponent->GetUpVector() : -MovementData->GetGravityDir();
 			default:
 				return UpdatedComponent->GetUpVector();
 		}
@@ -390,6 +397,9 @@ public:
 
 	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
 	virtual void AddForce(FVector Force);
+
+	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
+	virtual void Launch(const FVector& LaunchVel);
 	
 	/// @brief	Clears forces accumulated through AddImpulse(), AddForce(), and also PendingLaunchVelocity
 	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
@@ -406,25 +416,12 @@ public:
 #pragma region Events
 
 	// TODO: Review these...
+	UPROPERTY()
+	FCalculateVelocitySignature CalculateVelocityDelegate;
+	
+	UPROPERTY()
+	FUpdateRotationSignature UpdateRotationDelegate;
 
-	/// @brief Entry point for gameplay manipulation of rotation via blueprints or child class
-	/// @param CurrentRotation Reference to current rotation to modify
-	/// @param DeltaTime Current sub-step delta time
-	//UFUNCTION(Category="Motor | Movement Controller", BlueprintNativeEvent)
-	virtual void UpdateRotation(FQuat& CurrentRotation, float DeltaTime) {};
-	//virtual void UpdateRotation_Implementation(FQuat& CurrentRotation, float DeltaTime) {};
-
-	/// @brief	Entry point for gameplay manipulation of velocity via blueprints or child class
-	///			Velocity should only be modified through here as the order is important to what updates come after
-	/// @param	CurrentVelocity Reference to current velocity to modify
-	/// @param	DeltaTime Current sub-step delta time
-	//UFUNCTION(Category="Motor | Movement Controller", BlueprintNativeEvent)
-	virtual void UpdateVelocity(FVector& CurrentVelocity, float DeltaTime) {};
-	//virtual void UpdateVelocity_Implementation(FVector& CurrentVelocity, float DeltaTime) {};
-
-	//UFUNCTION(Category="Motor | Movement Controller", BlueprintNativeEvent)
-	virtual void SubsteppedTick(FVector& CurrentVelocity, float DeltaTime) {};
-	//virtual void SubsteppedTick_Implementation(FVector& CurrentVelocity, float DeltaTime) {};
 
 #pragma endregion Events
 

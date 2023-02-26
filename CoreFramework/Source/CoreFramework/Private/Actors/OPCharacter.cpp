@@ -4,7 +4,6 @@
 #include "CFW_PCH.h"
 #include "CustomMovementComponent.h"
 #include "Debug/CFW_LOG.h"
-#include "Template/OPMovementComponent.h"
 
 
 /* Define default component object names */
@@ -63,7 +62,7 @@ AOPCharacter::AOPCharacter() : Super()
 
 	
 	// Movement Component
-	CustomMovement = CreateDefaultSubobject<UOPMovementComponent>(AOPCharacter::CustomMovementComponentName);
+	CustomMovement = CreateDefaultSubobject<UCustomMovementComponent>(AOPCharacter::CustomMovementComponentName);
 	if (CustomMovement)
 	{
 		CustomMovement->UpdatedComponent = CapsuleComponent;

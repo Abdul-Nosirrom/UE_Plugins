@@ -44,7 +44,7 @@ protected:
 	
 	/// @brief Movement component used for movement logic, containing all movement handling logic
 	UPROPERTY(Category=Character, VisibleAnywhere, BlueprintReadOnly, meta=(AllowPrivateAccess="true"))
-	TObjectPtr<UOPMovementComponent> CustomMovement; // TODO: NOTE, temporarily swapped to the child class for testing purposes
+	TObjectPtr<UCustomMovementComponent> CustomMovement; 
 
 	/// @brief Name of the movement component used when creating the subobject 
 	static FName CustomMovementComponentName;
@@ -70,7 +70,7 @@ public:
 	FORCEINLINE USkeletalMeshComponent* GetMesh() const { return Mesh; }
 
 	/// @brief Getter for characters movement component
-	FORCEINLINE UOPMovementComponent* GetCharacterMovement() const { return CustomMovement; } // TODO: NOTE, also swapped this
+	FORCEINLINE UCustomMovementComponent* GetCharacterMovement() const { return CustomMovement; } 
 	
 	/// @brief Getter for characters capsule component
 	FORCEINLINE UCapsuleComponent* GetCapsuleComponent() const { return CapsuleComponent; }
@@ -167,6 +167,9 @@ public:
 
 	UFUNCTION(BlueprintImplementableEvent)
 	void BaseChange();
+
+	UFUNCTION(BlueprintImplementableEvent)
+	void OnLaunched(FVector LaunchVelocity, bool bPlanarOverride, bool bVerticalOverride);
 
 #pragma endregion Events
 

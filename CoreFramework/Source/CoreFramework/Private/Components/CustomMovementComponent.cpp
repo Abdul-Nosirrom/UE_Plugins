@@ -136,6 +136,10 @@ void UCustomMovementComponent::BeginPlay()
 	// Call Super
 	Super::BeginPlay();
 	PhysicsState = STATE_Grounded;
+
+	// Bind default events
+	CalculateVelocityDelegate.BindDynamic(MovementData, &UMovementData::CalculateVelocity);
+	UpdateRotationDelegate.BindDynamic(MovementData, &UMovementData::UpdateRotation);
 }
 
 void UCustomMovementComponent::PostLoad()
@@ -464,6 +468,12 @@ void UCustomMovementComponent::AddForce(FVector Force)
 	}
 }
 
+void UCustomMovementComponent::Launch(const FVector& LaunchVel)
+{
+	PendingLaunchVelocity = LaunchVel;
+}
+
+
 void UCustomMovementComponent::ClearAccumulatedForces()
 {
 	PendingImpulseToApply = FVector::ZeroVector;
@@ -558,8 +568,8 @@ void UCustomMovementComponent::PerformMovement(float DeltaTime)
 		HandlePendingLaunch(); // TODO: This would auto-unground
 		ClearAccumulatedForces();
 		
-
-		UpdateVelocity(Velocity, DeltaTime);
+		// TODO: Offer another delegate that's not substepped?
+		//UpdateVelocity(Velocity, DeltaTime);
 
 		/* Apply root motion after velocity modifications */
 		if (CharacterOwner && CharacterOwner->IsPlayingRootMotion())
@@ -573,9 +583,10 @@ void UCustomMovementComponent::PerformMovement(float DeltaTime)
 
 		if (!HasAnimRootMotion())
 		{
-			FQuat CurrentRotation = UpdatedComponent->GetComponentQuat();
-			UpdateRotation(CurrentRotation, DeltaTime);
-			//MoveUpdatedComponent(FVector::ZeroVector, CurrentRotation, true);
+			if (!UpdateRotationDelegate.ExecuteIfBound(this, DeltaTime))
+			{
+				FLog(Log, "Update Rotation Delegate Not Bound")
+			}
 		}
 		else // Apply physics rotation
 		{
@@ -684,7 +695,11 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 		bJustTeleported = false;
 		const float IterTick = GetSimulationTimeStep(RemainingTime, Iterations);
 		RemainingTime -= IterTick;
-		SubsteppedTick(Velocity, IterTick);
+
+		if (!CalculateVelocityDelegate.ExecuteIfBound(this, IterTick))
+		{
+			FLog(Log, "Calculate Velocity Delegate Not Bound")
+		}
 
 		/* Cache current values */
 		UPrimitiveComponent* const OldBase = GetMovementBase();
@@ -876,7 +891,11 @@ void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteration
 		bJustTeleported = false;
 		const float IterTick = GetSimulationTimeStep(RemainingTime, Iterations);
 		RemainingTime -= IterTick;
-		SubsteppedTick(Velocity, IterTick);
+		
+		if (!CalculateVelocityDelegate.ExecuteIfBound(this, IterTick))
+		{
+			FLog(Log, "Calculate Velocity Delegate Not Bound")
+		}
 		
 		/* Cache current values */
 		const FVector OldLocation = UpdatedComponent->GetComponentLocation();
@@ -2162,7 +2181,7 @@ void UCustomMovementComponent::HandleImpact(const FHitResult& Hit, float TimeSli
 
 	if (bEnablePhysicsInteraction)
 	{
-		const FVector ForceAccel = Acceleration + (IsFalling() ? Gravity * GetGravityZ() : FVector::ZeroVector);
+		const FVector ForceAccel = Acceleration + (IsFalling() ? MovementData->GetGravity() * GetGravityZ() : FVector::ZeroVector);
 		ApplyImpactPhysicsForces(Hit, ForceAccel, Velocity);
 	}
 }
@@ -2591,7 +2610,7 @@ void UCustomMovementComponent::ApplyDownwardForce(float DeltaTime)
 	if (StandingDownwardForceScale != 0.0f && CurrentFloor.HitResult.IsValidBlockingHit())
 	{
 		UPrimitiveComponent* BaseComp = CurrentFloor.HitResult.GetComponent();
-		const FVector SetGravity = -GetUpOrientation(MODE_Gravity) * GetGravityZ();
+		const FVector SetGravity = GetUpOrientation(MODE_Gravity) * GetGravityZ(); // DEBUG: THIS WAS THE BUG
 
 		if (BaseComp && BaseComp->IsAnySimulatingPhysics() && !SetGravity.IsZero())
 		{
