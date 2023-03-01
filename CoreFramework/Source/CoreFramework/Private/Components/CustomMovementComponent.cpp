@@ -63,12 +63,12 @@ namespace RMCCVars
 		ECVF_Default
 	);
 
-	int32 ShowGroundSweep = 0;
+	int32 LogHits = 0;
 	FAutoConsoleVariableRef CVarShowGroundSweep
 	(
-		TEXT("rmc.ShowGroundSweep"),
-		ShowGroundSweep,
-		TEXT("Visualize the result of the ground sweep. 0: Disable, 1: Enable"),
+		TEXT("rmc.LogMovementHits"),
+		LogHits,
+		TEXT("Visualize the result of move hits. 0: Disable, 1: Enable"),
 		ECVF_Default
 	);
 #endif 
@@ -138,8 +138,15 @@ void UCustomMovementComponent::BeginPlay()
 	PhysicsState = STATE_Grounded;
 
 	// Bind default events
-	CalculateVelocityDelegate.BindDynamic(MovementData, &UMovementData::CalculateVelocity);
-	UpdateRotationDelegate.BindDynamic(MovementData, &UMovementData::UpdateRotation);
+	if (MovementData)
+	{
+		CalculateVelocityDelegate.BindDynamic(MovementData, &UMovementData::CalculateVelocity);
+		UpdateRotationDelegate.BindDynamic(MovementData, &UMovementData::UpdateRotation);
+	}
+	else
+	{
+		FLog(Error, "No movement data asset provided")
+	}
 }
 
 void UCustomMovementComponent::PostLoad()
@@ -396,13 +403,13 @@ void UCustomMovementComponent::OnMovementStateChanged(EMovementState PreviousMov
 		FindFloor(UpdatedComponent->GetComponentLocation(), CurrentFloor, false);
 		AdjustFloorHeight();
 		SetBaseFromFloor(CurrentFloor);
-
+		
 		// DEBUG:
 		LOG_HIT(CurrentFloor.HitResult, 2.f);
 		
 		if (CurrentFloor.bWalkableFloor && PreviousMovementState == STATE_Falling)
 		{
-			Velocity = FVector::VectorPlaneProject(Velocity, CurrentFloor.HitResult.Normal); // HACK: Was prev Normal
+			Velocity = FVector::VectorPlaneProject(Velocity, CurrentFloor.HitResult.ImpactNormal);
 		}
 	}
 	else if (PhysicsState == STATE_Falling)
@@ -683,7 +690,6 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 
 	bJustTeleported = false;
 	bool bCheckedFall = false;
-	bool bSteppedUp = false; // Or use bJustTeleported...
 	bool bTriedLedgeMove = false;
 	float RemainingTime = DeltaTime;
 
@@ -693,13 +699,9 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 		/* Setup current move iteration */
 		Iterations++;
 		bJustTeleported = false;
+		bSuccessfulSlideAlongSurface = false;
 		const float IterTick = GetSimulationTimeStep(RemainingTime, Iterations);
 		RemainingTime -= IterTick;
-
-		if (!CalculateVelocityDelegate.ExecuteIfBound(this, IterTick))
-		{
-			FLog(Log, "Calculate Velocity Delegate Not Bound")
-		}
 
 		/* Cache current values */
 		UPrimitiveComponent* const OldBase = GetMovementBase();
@@ -711,6 +713,19 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 		MaintainHorizontalGroundVelocity();
 		const FVector OldVelocity = Velocity;
 
+		/* Apply acceleration after projection */
+		if (!CalculateVelocityDelegate.ExecuteIfBound(this, IterTick))
+		{
+			FLog(Log, "Calculate Velocity Delegate Not Bound")
+		}
+
+		/* Custom CalcVelocity may have swapped us to falling so ensure that before performing the move */
+		if (IsFalling()) // New
+		{
+			StartMovementTick(RemainingTime + IterTick, Iterations-1);
+			return;
+		}
+		
 		/* Compute move parameters */
 		const FVector MoveVelocity = Velocity;
 		const FVector Delta = MoveVelocity * IterTick;
@@ -725,7 +740,7 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 		else
 		{
 			// Perform the actual move
-			MoveAlongFloor(MoveVelocity, IterTick, &StepDownResult);
+			MoveAlongFloor(IterTick, &StepDownResult);
 
 			/* Worth keeping this here if we wanna put the CalcVelocity event after MoveAlongFloor */
 			if (IsFalling())
@@ -733,7 +748,6 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 				const float DesiredDist = Delta.Size();
 				if (DesiredDist > UE_KINDA_SMALL_NUMBER)
 				{
-					// TODO: Perhaps project this onto pawns up plane? CMC uses Size2D so just for math consistency...
 					const float ActualDist = FVector::VectorPlaneProject(UpdatedComponent->GetComponentLocation() - OldLocation, GetUpOrientation(MODE_Gravity)).Size();
 					RemainingTime += IterTick * (1.f - FMath::Min(1.f, ActualDist / DesiredDist));
 				}
@@ -798,7 +812,6 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 				/* Check denivelation angle */
 				if (ShouldCatchAir(OldFloor, CurrentFloor))
 				{
-					// TODO: Events and swtiching to falling
 					HandleWalkingOffLedge(OldFloor.HitResult.ImpactNormal, OldFloor.HitResult.Normal, OldLocation, IterTick);
 					if (IsMovingOnGround())
 					{
@@ -820,7 +833,6 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 				const FVector RequestedAdjustment = GetPenetrationAdjustment(Hit);
 				ResolvePenetration(RequestedAdjustment, Hit, UpdatedComponent->GetComponentQuat());
 				bForceNextFloorCheck = true; // Force us to sweep for a floor next time
-				
 			} // Floor penetration or consumed all time
 
 			/* Check if we need to start falling */
@@ -840,20 +852,9 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 		if (IsMovingOnGround())
 		{
 			/* Make velocity reflect actual move */
-			if (!bJustTeleported && IterTick >= MIN_TICK_TIME)
+			if (!bJustTeleported && !HasAnimRootMotion() && IterTick >= MIN_TICK_TIME) // New: Root motion check
 			{
-				const FVector NewVelocity = (UpdatedComponent->GetComponentLocation() - OldLocation) / IterTick;
-				if ((NewVelocity.GetSafeNormal() | Velocity.GetSafeNormal()) < 0.97f)
-				{
-					if (!(NewVelocity.IsNearlyZero() || Velocity.IsNearlyZero()))
-					{
-						FLog(Error, "1. New Velocity = %s", *NewVelocity.ToCompactString());
-						FLog(Error, "2. Old Velocity = %s", *Velocity.ToCompactString());
-						LOG_HIT(CurrentFloor.HitResult, 1.f);
-					}
-				}
-				//if (!StepDownResult.bComputedFloor) // DEBUG: Skip Z Projection when stepping? Maybe make it a seperate flag? (used bJustTeleported in MaintainGroundVel)
-				MaintainHorizontalGroundVelocity(); //BUG: Could this be it?
+				RecalculateVelocityToReflectMove(OldLocation, IterTick);
 			}
 		}
 
@@ -1030,20 +1031,16 @@ void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteration
 }
 
 
-void UCustomMovementComponent::MoveAlongFloor(const FVector& InVelocity, float DeltaTime, FStepDownFloorResult* OutStepDownResult)
+void UCustomMovementComponent::MoveAlongFloor(const float DeltaTime, FStepDownFloorResult* OutStepDownResult)
 {
 	if (!CurrentFloor.IsWalkableFloor())
 	{
 		return;
 	}
-
-	/* Project Velocity Along Floor? */
-	//MaintainHorizontalGroundVelocity(); // DEBUG: This does nothing here...
 	
 	/* Move along the current Delta */
 	FHitResult Hit(1.f);
-	FVector Delta = InVelocity * DeltaTime; // TODO: Maybe project this to the player plane (passed to SlideAlongSurface)
-	FVector ProjectedDelta; // TODO: And use this for 3D base
+	FVector Delta = Velocity * DeltaTime; 
 	SafeMoveUpdatedComponent(Delta, UpdatedComponent->GetComponentQuat(), true, Hit);
 	float LastMoveTimeSlice = DeltaTime;
 
@@ -1062,11 +1059,7 @@ void UCustomMovementComponent::MoveAlongFloor(const FVector& InVelocity, float D
 	} // Was in penetration
 	else if (Hit.IsValidBlockingHit())
 	{
-		LOG_HIT(Hit, 2.f);
-		
 		float PercentTimeApplied = Hit.Time;
-		/* Could be a walkable floor or ramp, unsure if that would be the case because we prep the velocity for this beforehand */
-		// TODO: May be helpful in the case of using a flat base because of the issues cropping up with that w/ zero step height...
 		
 		/* Impacted a barrier, check if we can use it as stairs */
 		if (CanStepUp(Hit) || (GetMovementBase() != nullptr && Hit.HitObjectHandle == GetMovementBase()->GetOwner()))
@@ -1082,14 +1075,12 @@ void UCustomMovementComponent::MoveAlongFloor(const FVector& InVelocity, float D
 			else
 			{
 				// Perhaps don't recalculate velocity based on StepUp adjustment?
+				bJustTeleported = true;
 				const float StepUpTimeSlice = (1.f - PercentTimeApplied) * DeltaTime;
 				if (!HasAnimRootMotion() && StepUpTimeSlice > UE_KINDA_SMALL_NUMBER)
 				{
-					// BUG: This whole velocity recalculation is kind of broken
-					Velocity = (UpdatedComponent->GetComponentLocation() - PreStepUpLocation) / StepUpTimeSlice;
-					Velocity.Z = 0;
-					//Velocity = FVector::VectorPlaneProject(Velocity, Orientation); // TODO: TEMPORARY
-					//MaintainHorizontalGroundVelocity();
+					// NOTE: Used to be MaintainHorizontalGroundVelocity but that doesn't really make sense as we make the assumption in StepUp that everything is aligned with gravity (though no assumptions on the direction of gravity)
+					RecalculateVelocityToReflectMove(PreStepUpLocation, StepUpTimeSlice);
 				}
 			} // Step up succeeded
 			
@@ -1705,7 +1696,8 @@ bool UCustomMovementComponent::IsValidLandingSpot(const FVector& CapsuleLocation
 bool UCustomMovementComponent::ShouldCheckForValidLandingSpot(const FHitResult& Hit) const
 {
 	LOG_HIT(Hit, 2);
-	/* See if we hit an edge of a surface on the lower portion of the capsule.
+	/*
+	 * See if we hit an edge of a surface on the lower portion of the capsule.
 	 * In this case the normal will not equal the impact normal and a downward sweep may find a walkable surface on top of the edge
 	 */
 	const FVector PawnUp = GetUpOrientation(MODE_PawnUp); // DEBUG: Pawn up should be the right thing here
@@ -1720,17 +1712,35 @@ bool UCustomMovementComponent::ShouldCheckForValidLandingSpot(const FHitResult& 
 	return false;
 }
 
-// DEBUG:
 void UCustomMovementComponent::MaintainHorizontalGroundVelocity()
 {
-	// BUG: Causes a significant increase in velocity when landing at times, very significant especially with stairs (behavior resolved when just setting V.z = 0 (THIS IS RIGHT, SO LOOK FOR THE PROBLEM ELSEWHERE)
-	if (bJustTeleported)
+	// NOTE: Impact normals prevent velocity being weirdly projected on steps (Normals work better on suuuuper exaggerated terrain though but that doesn't really matter since impact normals work fine on relatively uneven terrain)
+	const float VelMag = Velocity.Size();
+	const float AccMag = Acceleration.Size();
+
+	Acceleration = GetDirectionTangentToSurface(Acceleration, CurrentFloor.HitResult.ImpactNormal) * AccMag; 
+	Velocity = GetDirectionTangentToSurface(Velocity, CurrentFloor.HitResult.ImpactNormal) * VelMag;
+}
+
+void UCustomMovementComponent::RecalculateVelocityToReflectMove(const FVector& OldLocation, const float DeltaTime)
+{
+	const float PreVelSize = FMath::Abs(Velocity.Size());
+	const FVector OldVelocity = Velocity;
+	Velocity = (UpdatedComponent->GetComponentLocation() - OldLocation) / DeltaTime; 
+	const float PostVelSize = FMath::Abs(Velocity.Size());
+	if (PostVelSize > PreVelSize && !bSuccessfulSlideAlongSurface && (Velocity | OldVelocity) >= 0) // In case recomputed vel changes direction, makes sense itll be higher mag
 	{
-		Velocity.Z = 0;
-		return;
+		Velocity = Velocity.GetSafeNormal() * PreVelSize;
 	}
-	const float VelMag = Velocity.Size();//FVector::VectorPlaneProject(Velocity, CurrentFloor.HitResult.Normal).Size();
-	Velocity = GetDirectionTangentToSurface(Velocity, CurrentFloor.HitResult.Normal).GetSafeNormal() * VelMag;
+
+	if (bSuccessfulSlideAlongSurface)
+	{
+		Velocity = FVector::VectorPlaneProject(Velocity, CurrentFloor.HitResult.ImpactNormal);
+	}
+	else
+	{
+		MaintainHorizontalGroundVelocity();
+	}
 }
 
 #pragma endregion Ground Stability Handling
@@ -1764,15 +1774,15 @@ bool UCustomMovementComponent::StepUp(const FVector& Orientation, const FHitResu
 	float PawnInitialFloorBaseP = (OldLocation | Orientation) - PawnHalfHeight;
 	float PawnFloorPointP = PawnInitialFloorBaseP;
 
-	/**/
+	/* Further check the validity of the hit before attempting to step up */
 	if (IsMovingOnGround() && CurrentFloor.IsWalkableFloor())
 	{
-		const float FloorDist = FMath::Max(0.f, CurrentFloor.GetDistanceToFloor()); // TODO: Check if DistToFloor is valid...
+		// Since we float a variable amount off the floor, we need to enforce max step height off the actual point of impact with the floor.
+		const float FloorDist = FMath::Max(0.f, CurrentFloor.GetDistanceToFloor());
 		PawnInitialFloorBaseP -= FloorDist;
 		StepTravelUpHeight = FMath::Max(StepTravelUpHeight - FloorDist, 0.f);
 		StepTravelDownHeight = (MaxStepHeight + 2.f * MAX_FLOOR_DIST);
 
-		// TODO: Check IsWithinEdgeTolerance...
 		const bool bHitVerticalFace = !IsWithinEdgeTolerance(StepHit.Location, StepHit.ImpactPoint, PawnRadius);
 		if (!CurrentFloor.bLineTrace && !bHitVerticalFace)
 		{
@@ -1780,6 +1790,7 @@ bool UCustomMovementComponent::StepUp(const FVector& Orientation, const FHitResu
 		}
 		else
 		{
+			// Base floor point is the base of the capsule moved down by how far we are hovering over the surface we are hitting.
 			PawnFloorPointP -= CurrentFloor.FloorDist;
 		}
 	}
@@ -1866,17 +1877,12 @@ bool UCustomMovementComponent::StepUp(const FVector& Orientation, const FHitResu
 		// Check if step down results in a step height larger than the max
 		const float DeltaH = (Hit.ImpactPoint | Orientation) - PawnFloorPointP;
 
-		// DEBUG:
+		// NOTE: This might not actually have been true, the issue might've lied with using Normal instead of ImpactNormal in MaintainHorizontalGroundVelocity()
 		if (DeltaH > MaxStepHeight)
 		{
 			FLog(Warning, "Failed Step Up w/ Height %.3f", DeltaH);
 			ScopedStepUpMovement.RevertMove();
 			return false;
-		}
-		else if (FMath::Abs(DeltaH) < 1.f)
-		{
-			FLog(Error, "Extremely Small Delta w/ Height %.3f", DeltaH);
-
 		}
 		else
 		{
@@ -1910,7 +1916,7 @@ bool UCustomMovementComponent::StepUp(const FVector& Orientation, const FHitResu
 		}
 
 		// Don't step up onto invalid surfaces if traveling higher
-		if (DeltaH > 0.f && !CanStepUp(Hit))
+		if (DeltaH > 0.f && !CanStepUp(Hit)) // Allow stepping down to invalid surfaces tho
 		{
 			ScopedStepUpMovement.RevertMove();
 			return false;
@@ -1925,7 +1931,7 @@ bool UCustomMovementComponent::StepUp(const FVector& Orientation, const FHitResu
 			if (DistanceAlongAxis(OldLocation, Hit.Location, Orientation) > 0.f)
 			{
 				const float MAX_STEP_SIDE_H = 0.08f; // DEBUG: Oh they're referring to normals of the step hit here...
-				if (!StepDownResult.FloorResult.bBlockingHit)// && StepSideP < MAX_STEP_SIDE_H)
+				if (!StepDownResult.FloorResult.bBlockingHit && StepSideP < MAX_STEP_SIDE_H)
 				{
 					FLog(Warning, "Failed Step Up Due To Normal w/ Height  %.3f", DeltaH);
 					ScopedStepUpMovement.RevertMove();
@@ -1942,10 +1948,7 @@ bool UCustomMovementComponent::StepUp(const FVector& Orientation, const FHitResu
 	{
 		*OutStepDownResult = StepDownResult;
 	}
-
-	// Don't recalculate velocity based on this height adjustment if considering vertical adjustment
-	bJustTeleported = true;
-
+	
 	LOG_HIT(Hit, 3.f);
 	
 	return true;
@@ -1995,9 +1998,8 @@ float UCustomMovementComponent::GetValidPerchRadius() const
 };
 
 // TODO: Add 2 denivelation angles, one for when going "down", one for when going "up"
-bool UCustomMovementComponent::ShouldCatchAir(const FGroundingStatus& OldFloor, const FGroundingStatus& NewFloor)
+bool UCustomMovementComponent::ShouldCatchAir(const FGroundingStatus& OldFloor, const FGroundingStatus& NewFloor) const
 {
-	// HACK: These both used to be impact normal
 	const float Angle = FMath::RadiansToDegrees(FMath::Acos(OldFloor.HitResult.ImpactNormal | NewFloor.HitResult.ImpactNormal));
 	if (Angle >= MaxStableDenivelationAngle)
 	{
@@ -2186,6 +2188,7 @@ void UCustomMovementComponent::HandleImpact(const FHitResult& Hit, float TimeSli
 	}
 }
 
+// BUG: This may need revision, returns incorrect result in StepUp i think
 float UCustomMovementComponent::SlideAlongSurface(const FVector& Delta, float Time, const FVector& InNormal, FHitResult& Hit, bool bHandleImpact)
 {
 	SCOPE_CYCLE_COUNTER(STAT_SlideAlongSurface)
@@ -2220,7 +2223,9 @@ float UCustomMovementComponent::SlideAlongSurface(const FVector& Delta, float Ti
 	}
 	
 
-	return Super::SlideAlongSurface(Delta, Time, Normal, Hit, bHandleImpact);
+	const float SlideTime = Super::SlideAlongSurface(Delta, Time, Normal, Hit, bHandleImpact);
+	bSuccessfulSlideAlongSurface = SlideTime > 0.f;
+	return SlideTime;
 }
 
 void UCustomMovementComponent::TwoWallAdjust(FVector& Delta, const FHitResult& Hit, const FVector& OldHitNormal) const
@@ -2768,7 +2773,7 @@ FVector UCustomMovementComponent::GetImpartedMovementBaseVelocity() const
 
 		if (bImpartBaseAngularVelocity)
 		{
-			// TODO: Note, the below used to be MODE_FloorNormal but removed that mdoe since nothing else used it
+			// NOTE: the below used to be MODE_FloorNormal but removed that mode since nothing else used it though I think using that metric makes more sense?
 			const FVector BasePointPosition = (UpdatedComponent->GetComponentLocation() - GetUpOrientation(MODE_Gravity) * CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
 			const FVector BaseTangentialVel = MovementBaseUtility::GetMovementBaseTangentialVelocity(MovementBase, CharacterOwner->GetBasedMovement().BoneName, BasePointPosition);
 			BaseVelocity += BaseTangentialVel;
@@ -3071,6 +3076,9 @@ void UCustomMovementComponent::DisplayDebug(UCanvas* Canvas, const FDebugDisplay
 
 	DisplayDebugManager.SetDrawColor(FColor::White);
 	T = FString::Printf(TEXT("Velocity: %s"), *Velocity.ToCompactString());
+	DisplayDebugManager.DrawString(T);
+
+	T = FString::Printf(TEXT("Speed: %f"), FMath::Abs(Velocity.Size()));
 	DisplayDebugManager.DrawString(T);
 
 	T = FString::Printf(TEXT("Acceleration: %s"), *Acceleration.ToCompactString());

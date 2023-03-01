@@ -133,7 +133,8 @@ void UMovementData::CalculateDefaultVelocity(UCustomMovementComponent* MovementC
 	}
 	else if (MovementComponent->GetMovementState() == STATE_Falling)
 	{
-		FVector FallAcceleration = GetFallingLateralAcceleration(Acceleration, Velocity, DeltaTime);
+		// BUG: Air control broken, disabling it for now...
+		FVector FallAcceleration = Acceleration;//GetFallingLateralAcceleration(Acceleration, Velocity, DeltaTime);
 		FallAcceleration = FVector::VectorPlaneProject(FallAcceleration, GetGravityDir());
 
 		const FVector OldVelocity = Velocity;
@@ -157,18 +158,21 @@ FVector UMovementData::GetFallingLateralAcceleration(const FVector& Acceleration
 	FVector FallAcceleration = FVector(Acceleration.X, Acceleration.Y, 0.f);
 
 	// Bound acceleration, falling object has minimal ability to impact acceleration
-	if (FVector::VectorPlaneProject(FallAcceleration, GetGravityDir()).SizeSquared() > 0.f)
+	if (FallAcceleration.SizeSquared() > 0.f)
 	{
-		float BoostAirControl = AirControl;
-		if (BoostAirControl != 0.f)
+		// Get Air Control
 		{
-			// Boost air control
-			if (AirControlBoostMultiplier > 0.f && FVector::VectorPlaneProject(Velocity, GetGravityDir()).SizeSquared() < FMath::Square(AirControlBoostVelocityThreshold))
+			float BoostAirControl = AirControl;
+			if (BoostAirControl != 0.f)
 			{
-				BoostAirControl = FMath::Min(1.f, AirControlBoostMultiplier * BoostAirControl);
+				// Boost air control
+				if (AirControlBoostMultiplier > 0.f && Velocity.SizeSquared2D() < FMath::Square(AirControlBoostVelocityThreshold))
+				{
+					BoostAirControl = FMath::Min(1.f, AirControlBoostMultiplier * BoostAirControl);
+				}
 			}
+			FallAcceleration *= BoostAirControl;
 		}
-		FallAcceleration *= BoostAirControl;
 		FallAcceleration = FallAcceleration.GetClampedToMaxSize(MaxAcceleration);
 	}
 
@@ -242,14 +246,28 @@ void UMovementData::ApplyGravity(FVector& Velocity, float TerminalLimit, float D
 
 void UMovementData::PhysicsRotation(UCustomMovementComponent* MovementComponent, float DeltaTime)
 {
-	FRotator CurrentRotation = MovementComponent->UpdatedComponent->GetComponentRotation();
+	// If orient to ground, just snap for now
+	if (!ShouldRemainVertical())
+	{
+		if (!MovementComponent->CurrentFloor.bBlockingHit) return;
+
+		const FVector Normal = MovementComponent->CurrentFloor.HitResult.Normal;
+		const FVector Forward = MovementComponent->GetVelocity().IsZero() ? MovementComponent->UpdatedComponent->GetForwardVector() : MovementComponent->GetVelocity().GetSafeNormal();
+		const FRotator Target = UKismetMathLibrary::MakeRotFromXZ(Forward, Normal);
+
+		MovementComponent->MoveUpdatedComponent(FVector::ZeroVector, Target.Quaternion(), false);
+		return;
+	}
+	
+	
+	const FRotator CurrentRotation = MovementComponent->UpdatedComponent->GetComponentRotation();
 	FRotator DeltaRot = FRotator(GetAxisDeltaRotation(RotationRate.Pitch, DeltaTime), GetAxisDeltaRotation(RotationRate.Yaw, DeltaTime), GetAxisDeltaRotation(RotationRate.Roll, DeltaTime));
 	FRotator DesiredRotation = CurrentRotation;
-
+	
 	switch (RotationMethod)
 	{
 		case METHOD_OrientToMovement:
-			DesiredRotation = ComputeOrientToMovementRotation(CurrentRotation, DeltaRot, MovementComponent->GetAcceleration(), DeltaTime);
+			DesiredRotation = ComputeOrientToMovementRotation(CurrentRotation, DeltaRot,  MovementComponent->GetAcceleration(), DeltaTime);
 			break;
 		case METHOD_ControllerDesiredRotation:
 			DesiredRotation = MovementComponent->GetPawnOwner()->Controller->GetDesiredRotation();
@@ -258,18 +276,11 @@ void UMovementData::PhysicsRotation(UCustomMovementComponent* MovementComponent,
 			return;
 	}
 
-	if (ShouldRemainVertical())
-	{
-		DesiredRotation.Pitch = 0.f;
-		DesiredRotation.Yaw = FRotator::NormalizeAxis(DesiredRotation.Yaw);
-		DesiredRotation.Roll = 0.f;
-	}
-	else
-	{
-		// TODO: Just amounts to computing our rotators w.r.t to the plane, so we include the above rotator then project it onto a plane defined by normal
-		// Orient to ground here
-		const FVector Normal = MovementComponent->CurrentFloor.HitResult.ImpactNormal;
-	}
+	// Assuming ShouldRemainVertical() here
+	DesiredRotation.Pitch = 0.f;
+	DesiredRotation.Yaw = FRotator::NormalizeAxis(DesiredRotation.Yaw);
+	DesiredRotation.Roll = 0.f;
+
 
 	// Accumulate desired new rotation
 	const float AngleTolerance = 1e-3f;

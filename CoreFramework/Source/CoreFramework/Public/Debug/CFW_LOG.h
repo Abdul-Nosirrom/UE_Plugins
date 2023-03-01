@@ -48,13 +48,17 @@ template<typename T> T& Unused(T&& Var) { return Var; }
 	#define DEBUG_PRINT_MSG(Duration, FormatStr, ...)
 #endif
 
-#define LOG_HIT(InHit, Duration)
+#define LOG_HIT_DEP(InHit, Duration)
 
-#define LOG_HIT_DIS(InHit, Duration)\
+#define LOG_HIT(InHit, Duration)\
 				{\
+					if (RMCCVars::LogHits) \
+					{\
+					float DHalfHeight = CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();\
+					float DRadius = CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleRadius();\
 					FLog(Warning, "Hit Logged With Vel = %s", *Velocity.ToCompactString());\
-					DrawDebugString(GetWorld(), InHit.Location + GetUpOrientation(MODE_PawnUp) * (GetCapsuleHalfHeight() + 1.1f * GetCapsuleRadius()), FString(__func__), 0, FColor::White, Duration, true);\
-    				DrawDebugCapsule(GetWorld(), InHit.Location, GetCapsuleHalfHeight(), GetCapsuleRadius(), UpdatedComponent->GetComponentQuat(), FColor::Purple, false, Duration);\
+					DrawDebugString(GetWorld(), InHit.Location + GetUpOrientation(MODE_PawnUp) * (DHalfHeight + 1.1f * DRadius), FString(__func__), 0, FColor::White, Duration, true);\
+    				DrawDebugCapsule(GetWorld(), InHit.Location, DHalfHeight, DRadius, UpdatedComponent->GetComponentQuat(), FColor::Purple, false, Duration);\
     				DrawDebugSphere(GetWorld(), InHit.ImpactPoint, 5.f, 3, FColor::Red, false, Duration, 0, 2.f);\
     \
     				DrawDebugString(GetWorld(), InHit.ImpactPoint + 110.f * InHit.Normal, FString("Normal"), 0, FColor::Yellow, Duration, true);\
@@ -62,6 +66,7 @@ template<typename T> T& Unused(T&& Var) { return Var; }
     \
     				DrawDebugString(GetWorld(), InHit.ImpactPoint + 120.f * InHit.ImpactNormal, FString("Impact Normal"), 0, FColor::Orange, Duration, true);\
     				DrawDebugDirectionalArrow(GetWorld(), InHit.ImpactPoint, InHit.ImpactPoint + 100.f*InHit.ImpactNormal, 10.f, FColor::Orange, false, Duration, 0, 5.f);\
+    				}\
     			}
 
 // Specific Logging

@@ -435,7 +435,7 @@ protected:
 	static constexpr float MIN_TICK_TIME				= 1e-6f; 
 	static constexpr float MIN_FLOOR_DIST				= 1.9f; 
 	static constexpr float MAX_FLOOR_DIST				= 2.4f; 
-	static constexpr float SWEEP_EDGE_REJECT_DISTANCE	= 0.15f; 
+	static constexpr float SWEEP_EDGE_REJECT_DISTANCE	= 0.15f;
 
 protected:
 	/// @brief  Used within movement code to determine if a change in position is based on normal movement or a teleport. If not a teleport,
@@ -451,6 +451,10 @@ protected:
 	UPROPERTY(Category="(Radical Movement): Simulation Settings", EditDefaultsOnly)
 	uint8 bEnableScopedMovementUpdates					: 1;
 
+	/// @brief  Flag set when SlideAlongSurface makes a non-zero movement. Used in determining how to recalculate velocity to reflect a move within a tick
+	UPROPERTY(Transient)
+	uint8 bSuccessfulSlideAlongSurface					: 1;
+	
 	/// @brief  Max delta time for each discrete simulation step in the movement simulation. Lowering the value can address issues with fast-moving
 	///			objects or complex collision scenarios, at the cost of performance.
 	///
@@ -502,7 +506,7 @@ protected:
 
 	/// @brief  
 	/// @param  OutStepDownResult Result of a possible StepDown, can be used to compute the floor if valid
-	virtual void MoveAlongFloor(const FVector& InVelocity, float DeltaTime, FStepDownFloorResult* OutStepDownResult = NULL);
+	virtual void MoveAlongFloor(const float DeltaTime, FStepDownFloorResult* OutStepDownResult = NULL);
 
 	/// @brief  
 	void ProcessLanded(FHitResult& Hit, float DeltaTime, uint32 Iterations);
@@ -522,10 +526,6 @@ protected:
 #pragma region Ground Stability Handling
 protected:
 
-	/// @brief	Additional ground probing distance, probe distance will be chosen as the maximum between this and @see MaxStepHeight
-	UPROPERTY(Category="(Radical Movement): Ground Settings", EditDefaultsOnly, BlueprintReadWrite)
-	float ExtraFloorProbingDistance = 20.f;
-
 	/// @brief  Mode to define against what direction to test stability settings
 	UPROPERTY(Category="(Radical Movement): Ground Settings", EditDefaultsOnly, BlueprintReadWrite)
 	TEnumAsByte<EOrientationMode> StabilityOrientationMode; 
@@ -533,20 +533,24 @@ protected:
 	/// @brief  Maximum ground slope angle relative to the actor up direction.
 	UPROPERTY(Category= "(Radical Movement): Ground Settings", EditDefaultsOnly)
 	float MaxStableSlopeAngle = 60.f;
-	
+
+	/// @brief	Additional ground probing distance, probe distance will be chosen as the maximum between this and @see MaxStepHeight
+	UPROPERTY(Category="(Radical Movement): Ground Settings", EditDefaultsOnly, BlueprintReadWrite, AdvancedDisplay)
+	float ExtraFloorProbingDistance = 20.f;
+
 	/// @brief	Will always perform floor sweeps regardless of whether we are moving or not
 	UPROPERTY(Category="(Radical Movement): Ground Settings", EditAnywhere, BlueprintReadWrite, AdvancedDisplay)
-	uint8 bAlwaysCheckFloor				: 1;
+	uint8 bAlwaysCheckFloor					: 1;
 	
 	/// @brief	Performs floor checks as if the collision shape has a flat base. Avoids situations where the character slowly lowers off the
 	///			side of a ledge (as their capsule 'balances' on the edge).
 	UPROPERTY(Category="(Radical Movement): Ground Settings", EditAnywhere, BlueprintReadWrite, AdvancedDisplay)
-	uint8 bUseFlatBaseForFloorChecks	: 1;
+	uint8 bUseFlatBaseForFloorChecks		: 1;
 
 	/// @brief  Force the character (if on ground) to do a check for a valid floor even if it hasn't moved. Cleared after the next floor check.
 	///			Normally if @see bAlwaysCheckFloor is false, floor checks are avoided unless certain conditions are met. This overrides that to force a floor check.
 	UPROPERTY(Category="(Radical Movement): Ground Settings", VisibleInstanceOnly, BlueprintReadWrite, AdvancedDisplay)
-	uint8 bForceNextFloorCheck			: 1;
+	uint8 bForceNextFloorCheck				: 1;
 	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
 public:
 	UPROPERTY(Category="(Radical Movement): Ground Status", VisibleInstanceOnly, BlueprintReadOnly)
@@ -574,6 +578,8 @@ protected:
 	bool ShouldCheckForValidLandingSpot(const FHitResult& Hit) const;
 
 	void MaintainHorizontalGroundVelocity();
+
+	void RecalculateVelocityToReflectMove(const FVector& OldLocation, const float DeltaTime);
 
 #pragma endregion Ground Stability Handling
 
@@ -633,7 +639,7 @@ protected:
 	UFUNCTION(Category= "(Radical Movement): Ledge Settings", BlueprintGetter)
 	float GetValidPerchRadius() const;
 
-	bool ShouldCatchAir(const FGroundingStatus& OldFloor, const FGroundingStatus& NewFloor);
+	bool ShouldCatchAir(const FGroundingStatus& OldFloor, const FGroundingStatus& NewFloor) const;
 	
 	bool ShouldComputePerchResult(const FHitResult& InHit, bool bCheckRadius = true) const;
 	

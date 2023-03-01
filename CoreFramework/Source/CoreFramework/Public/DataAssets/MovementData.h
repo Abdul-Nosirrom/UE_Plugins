@@ -18,12 +18,15 @@ enum EAccelerationMethod
 	METHOD_Legacy						UMETA(DisplayName="Legacy")
 };
 
+
 UENUM(BlueprintType)
 enum ERotationMethod
 {
 	METHOD_OrientToMovement				UMETA(DisplayName="Orient To Movement"),
 
-	METHOD_ControllerDesiredRotation	UMETA(DisplayName="Controller Desired Rotation")
+	METHOD_ControllerDesiredRotation	UMETA(DisplayName="Orient To Controller"),
+
+	METHOD_ThirdRando					UMETA(DisplayName="I swear to god...")
 };
 
 /**
@@ -110,7 +113,7 @@ protected:
 	///			When braking, this allows you to control how much friction is applied when moving, applying an opposing force that scales with current velocity (Linearly).
 	///			Braking is composed of Friction (velocity-dependent drag) and a constant deceleration.
 	///			@note Only used if bUseSeparateBrakingFriction is true. Otherwise, current friction (ground or aerial) is used.
-	UPROPERTY(Category="Acceleration Data | Shared", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="AccelerationMethod==EAccelerationMethod::METHOD_Default && bUseSeperateBrakingFriction", EditConditionHides))
+	UPROPERTY(Category="Acceleration Data | Shared", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="AccelerationMethod==EAccelerationMethod::METHOD_Default && bUseSeparateBrakingFriction", EditConditionHides))
 	float BrakingFriction;
 
 	/// @brief  Deceleration when on ground and not applying acceleration. @see MaxAcceleration
@@ -188,8 +191,6 @@ protected:
 	}
 	
 	void PhysicsRotation(UCustomMovementComponent* MovementComponent, float DeltaTime);
-
-	FRotator GetDeltaRotation(float InAxisRotationRate, float DeltaTime) const;
 
 	FORCEINLINE bool ShouldRemainVertical() const { return !bOrientToGroundNormal; }
 
