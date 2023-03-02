@@ -2188,6 +2188,54 @@ void UCustomMovementComponent::HandleImpact(const FHitResult& Hit, float TimeSli
 	}
 }
 
+FVector UCustomMovementComponent::ComputeSlideVector(const FVector& Delta, const float Time, const FVector& Normal,
+	const FHitResult& Hit) const
+{
+	FVector Result = Super::ComputeSlideVector(Delta, Time, Normal, Hit);
+
+	if (IsFalling())
+	{
+		Result = HandleSlopeBoosting(Result, Delta, Time, Normal, Hit);
+	}
+
+	return Result;
+}
+
+FVector UCustomMovementComponent::HandleSlopeBoosting(const FVector& SlideResult, const FVector& Delta, const float Time, const FVector& Normal,
+	const FHitResult& Hit) const
+{
+	FVector Result = SlideResult;
+	const FVector UpDirection = GetUpOrientation(MODE_Gravity);
+
+	if ((Result | UpDirection) > 0)
+	{
+		// Don't move any higher than we originally intended
+		const float UpLimit = (Delta | UpDirection) * Time;
+		if ((Result | UpDirection) - UpLimit > UE_KINDA_SMALL_NUMBER)
+		{
+			if (UpLimit > 0.f)
+			{
+				// Rescale the entire vector (not just vertical component) otherwise we change the direction and likely head right back into the impact
+				const float UpPercent = UpLimit / (Result | UpDirection);
+				Result *= UpPercent;
+			}
+			else
+			{
+				// We were heading down but were going to reflect upward, just make the deflection horizontal
+				Result = FVector::ZeroVector;
+			}
+
+			// Make remaining portion of original result horizontal and parallel to impact normal
+			const FVector RemainderHoriz = FVector::VectorPlaneProject(SlideResult - Result, UpDirection);
+			const FVector NormalHoriz = FVector::VectorPlaneProject(Normal, UpDirection).GetSafeNormal();
+			const FVector Adjust = Super::ComputeSlideVector(RemainderHoriz, 1.f, NormalHoriz, Hit);
+			Result += Adjust;
+		}
+	}
+
+	return Result;
+}
+
 // BUG: This may need revision, returns incorrect result in StepUp i think
 float UCustomMovementComponent::SlideAlongSurface(const FVector& Delta, float Time, const FVector& InNormal, FHitResult& Hit, bool bHandleImpact)
 {

@@ -2,6 +2,7 @@
 #include "BufferedController.h"
 #include "CFW_PCH.h"
 #include "InputData.h"
+#include "Subsystems/InputBufferSubsystem.h"
 
 namespace BufferUtility
 {
@@ -26,9 +27,6 @@ void ABufferedController::BeginPlay()
 	Super::BeginPlay();
 	//RegisterInputSignature.
 	
-	
-	// Pass map to buffer
-	InputBufferObject = FInputBuffer(BufferSize);
 }
 
 // Called every frame
@@ -36,135 +34,9 @@ void ABufferedController::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	InputBufferObject.UpdateBuffer();
-
-	/* Invoke Action Events */
-	for (auto Action : InputMap->InputActionMap->GetMappings())
-	{
-		const FName ActionID = FName(Action.Action->ActionDescription.ToString());
-		const float HoldThreshold = 0.f;
-
-		// Or could consolidate it into 1 event and have an Enum differentiate it?
-
-		const bool bPressed = InputBufferObject.CheckButtonPressed(ActionID);
-		const bool bHeld = InputBufferObject.CheckButtonHeld(ActionID, HoldThreshold);
-		const bool bReleased = InputBufferObject.CheckButtonReleased(ActionID);
-		
-		if (bPressed)
-		{
-			InputPressedDelegateSignature.Broadcast(Action.Action);
-		}
-		if (bHeld)
-		{
-			float TimeHeld = 0.f;
-			InputHeldDelegateSignature.Broadcast(Action.Action, TimeHeld);
-		}
-		if (bReleased)
-		{
-			InputReleasedDelegateSignature.Broadcast(Action.Action);
-		}
-	}
-
-	/* For Directional Events */
-	for (auto Direction : InputMap->DirectionalActionMap->GetMappings())
-	{
-		
-		const bool bRegistered = InputBufferObject.CheckDirectionRegistered(Direction->GetID());
-		if (bRegistered)
-		{
-			DirectionalRegisteredDelegateSignature.Broadcast(Direction);
-		}
-	}
+	auto IB = GetLocalPlayer()->GetSubsystem<UInputBufferSubsystem>();
 }
 
-void ABufferedController::SetupInputComponent()
-{
-	Super::SetupInputComponent();
-
-	
-
-	BufferUtility::InputIDs.Empty();
-	BufferUtility::RawButtonContainer.Empty();
-	BufferUtility::RawAxisContainer.Empty();
-	
-	/* If no input map has been assigned, we return */
-	if (!InputMap) return;
-	
-	/* Initialize ID array */
-	for (auto Mapping : InputMap->InputActionMap->GetMappings())
-	{
-		if (BufferUtility::InputIDs.Contains(FName(Mapping.Action->ActionDescription.ToString()))) continue;
-		BufferUtility::InputIDs.Add(FName(Mapping.Action->ActionDescription.ToString()));
-		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Blue, Mapping.Action->ActionDescription.ToString());
-	}
-
-	/* Add input map to the EnhancedInput subsystem*/
-	UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer());
-	Subsystem->ClearAllMappings();
-	Subsystem->AddMappingContext(InputMap->InputActionMap, 0);
-	
-	UEnhancedInputComponent* PEI = Cast<UEnhancedInputComponent>(InputComponent);
-	auto Mappings = InputMap->InputActionMap->GetMappings();
-
-	/* Generate Action Bindings */
-	for (auto ActionMap : Mappings)
-	{
-		const FName ActionName = FName(ActionMap.Action->ActionDescription.ToString());
-		switch (ActionMap.Action->ValueType)
-		{
-			case EInputActionValueType::Boolean:
-				BufferUtility::RawButtonContainer.Add(ActionName, false);
-				break;
-			case EInputActionValueType::Axis2D:
-				BufferUtility::RawAxisContainer.Add(ActionName, FVector2D::ZeroVector);
-				break;
-			default:
-				break;
-		}
-		
-		PEI->BindAction(ActionMap.Action, ETriggerEvent::Triggered, this, &ABufferedController::TriggerInput, ActionName);
-		PEI->BindAction(ActionMap.Action, ETriggerEvent::Completed, this, &ABufferedController::CompleteInput, ActionName);
-	}
-}
-
-bool ABufferedController::ConsumeInput(UInputAction* InputAction)
-{
-	return InputBufferObject.UseInput(FName(InputAction->ActionDescription.ToString()));
-}
-
-
-void ABufferedController::TriggerInput(const FInputActionInstance& ActionInstance, const FName InputName)
-{
-	const auto Value = ActionInstance.GetValue();
-
-	switch (Value.GetValueType())
-	{
-		case EInputActionValueType::Boolean:
-			BufferUtility::RawButtonContainer[InputName] = Value.Get<bool>();
-			break;
-		case EInputActionValueType::Axis2D:
-			BufferUtility::RawAxisContainer[InputName] = Value.Get<FVector2D>();
-			break;
-		default:
-			break;
-
-	}
-}
-
-void ABufferedController::CompleteInput(const FInputActionValue& ActionValue, const FName InputName)
-{
-	switch (ActionValue.GetValueType())
-	{
-		case EInputActionValueType::Boolean:
-			BufferUtility::RawButtonContainer[InputName] = false;
-			break;
-		case EInputActionValueType::Axis2D:
-			BufferUtility::RawAxisContainer[InputName] = FVector2D::ZeroVector;
-			break;
-		default:
-			break;
-	}
-}
 
 void ABufferedController::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL,
 	float& YPos)

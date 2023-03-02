@@ -1,4 +1,6 @@
 ﻿#include "Template/TOPCharacter.h"
+
+#include "BufferedController.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/InputComponent.h"
@@ -55,8 +57,10 @@ void ATOPCharacter::BeginPlay()
 	{
 		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PlayerController->GetLocalPlayer()))
 		{
-			Subsystem->AddMappingContext(DefaultMappingContext, 0);
+			Subsystem->AddMappingContext(InputMappingContext, 0);
 		}
+
+		//PlayerController->SetInputMap(DefaultInputBufferMapping);
 	}
 }
 

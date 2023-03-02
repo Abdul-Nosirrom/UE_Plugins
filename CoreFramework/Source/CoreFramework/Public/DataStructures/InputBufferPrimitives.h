@@ -5,9 +5,6 @@
 #include "BufferContainer.h"
 #include "InputBuffer.generated.h"
 
-/* Profiling Groups */
-DECLARE_STATS_GROUP(TEXT("InputBuffer_Game"), STATGROUP_InputBuffer, STATCAT_Advanced);
-/* ~~~~~~~~~~~~~~~~ */
 
 #pragma region Global Macros
 
@@ -90,47 +87,3 @@ public:
 
 #pragma endregion Frame States
 
-#pragma region Input Buffer Core
-
-USTRUCT(BlueprintType)
-struct FInputBuffer
-{
-	GENERATED_BODY()
-
-	FInputBuffer() : BufferSize(0) {};
-	explicit FInputBuffer(uint8 GivenBufferSize);
-
-	/* ~~~~~ Core Data ~~~~~ */
-
-	uint8 BufferSize;
-	
-	/// @brief	The rows of the input buffer, each containing a column corresponding to each input type
-	///			each row is an input buffer frame (FBufferFrame), corresponding to the state of each input
-	///			at the buffer frame (i) 
-	TBufferContainer<FBufferFrame> InputBuffer;
-	
-	/// @brief	Holds the oldest frame of each input in which it can be used. (-1) corresponds to no input that can used,
-	///			meaning its not been registered, or been held for a while such that its no longer valid. Oldest frame to more
-	///			easily check chorded actions/input sequence
-	TMap<FName, int8> ButtonOldestValidFrame;
-
-	/// @brief	Holds the frame of each motion command which it can be used
-	//TMap<FName, int8> MotionInputCurrentState;
-
-	/* ~~~~~ Buffer Update Loop ~~~~~ */
-
-	/// @brief	Called each buffer frame update. Clears out last row and samples recent input in the top-most row.
-	void UpdateBuffer();
-	
-	/// @brief Registers an input in the buffer as used, setting its current state to (-1) which is maintained until it's released
-	/// @param InputID ID of the input
-	/// @return True if the input is consumed
-	bool UseInput(FName InputID);
-
-	bool CheckButtonPressed(FName InputID) const {return false;};
-	bool CheckButtonHeld(FName InputID, float HoldThreshold) const {return false;};
-	bool CheckButtonReleased(FName InputID) const {return false;};
-	bool CheckDirectionRegistered(FName InputID) const {return false;};
-};
-
-#pragma endregion Input Buffer Core
