@@ -27,6 +27,10 @@ public:
 	/// @brief  Directional Input Action Mappings associated with this input buffer data map
 	UPROPERTY(Category="Mappings", BlueprintReadOnly, EditAnywhere)
 	TObjectPtr<UMotionMappingContext> DirectionalActionMap = nullptr;
+
+public:
+	TArray<FName> GetActionIDs();
+	TArray<FName> GetDirectionalIDs();
 };
 
 

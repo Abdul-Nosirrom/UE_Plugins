@@ -4,6 +4,8 @@
 
 #include "InputBufferPrimitives.h"
 
+#include "Subsystems/InputBufferSubsystem.h"
+
 #pragma region Frame States
 
 /* ~~~~~ Buffer Frame ~~~~~ */
@@ -11,8 +13,8 @@
 void FBufferFrame::InitializeFrame()
 {
 	InputsFrameState.Empty();
-
-	for (auto ID : BufferUtility::InputIDs)
+	
+	for (auto ID : UInputBufferSubsystem::InputIDs)
 	{
 		FInputFrameState NewFS = FInputFrameState(ID);
 		InputsFrameState.Add(ID, NewFS);
@@ -29,7 +31,7 @@ void FBufferFrame::UpdateFrameState()
 
 void FBufferFrame::CopyFrameState(FBufferFrame& FrameState)
 {
-	for (auto ID : BufferUtility::InputIDs)
+	for (auto ID : UInputBufferSubsystem::InputIDs)
 	{
 		InputsFrameState[ID].Value = FrameState.InputsFrameState[ID].Value;
 		InputsFrameState[ID].HoldTime = FrameState.InputsFrameState[ID].HoldTime;
@@ -42,16 +44,16 @@ void FBufferFrame::CopyFrameState(FBufferFrame& FrameState)
 void FInputFrameState::ResolveCommand()
 {
 	bUsed = false;
-
-	if (BufferUtility::RawButtonContainer.Contains(ID))
+	
+	if (UInputBufferSubsystem::RawButtonContainer.Contains(ID))
 	{
-		if (BufferUtility::RawButtonContainer[ID]) HoldUp(1.f);
+		if (UInputBufferSubsystem::RawButtonContainer[ID]) HoldUp(1.f);
 		else ReleaseHold();
 	}
-	else if (BufferUtility::RawAxisContainer.Contains(ID))
+	else if (UInputBufferSubsystem::RawAxisContainer.Contains(ID))
 	{
 		// TODO: This is wrong, maybe we can split it up
-		if (!BufferUtility::RawAxisContainer[ID].IsZero()) HoldUp(BufferUtility::RawAxisContainer[ID].Length());
+		if (!UInputBufferSubsystem::RawAxisContainer[ID].IsZero()) HoldUp(UInputBufferSubsystem::RawAxisContainer[ID].Length());
 		else ReleaseHold();
 	}
 }

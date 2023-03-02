@@ -20,6 +20,9 @@ UCLASS(Abstract)
 class COREFRAMEWORK_API UInputBufferSubsystem : public ULocalPlayerSubsystem, public FTickableGameObject
 {
 	GENERATED_BODY()
+
+	friend struct FBufferFrame;
+	friend struct FInputFrameState;
 	
  // USubsystem implementation Begin
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
@@ -28,6 +31,8 @@ class COREFRAMEWORK_API UInputBufferSubsystem : public ULocalPlayerSubsystem, pu
 
 public:
 	/* ~~~~~ Input Buffer API ~~~~~ */
+	void AddMappingContext(UInputBufferMap* TargetInputMap, UEnhancedInputComponent* InputComponent);
+	
 	void UpdateBuffer();
 
 	void EvaluateEvents();
@@ -44,7 +49,9 @@ public:
 
 protected:
 	/* ~~~~~ Input Registration & Initialization ~~~~~ */
-	void InitializeInputMapping(UInputBufferMap* InputMap, UEnhancedInputComponent* InputComponent);
+	void InitializeInputMapping(UEnhancedInputComponent* InputComponent);
+
+	void InitializeInputBufferData();
 
 	/// @brief Event triggered for an input once its been and continues to be triggered
 	/// @param ActionInstance Action Instance From Input Action
@@ -57,12 +64,16 @@ protected:
 	void CompleteInput(const FInputActionValue& ActionValue, const FName InputName);
 
 private:
+	/* References */
+	TObjectPtr<UInputBufferMap> InputMap;
+	
 	/* ~~~~~ Primitive Data ~~~~~ */
 	uint8 BufferSize;
 
-	TArray<FName> InputIDs;
-	TMap<FName, bool> RawButtonContainer;
-	TMap<FName, FVector2D> RawAxisContainer;
+	// NOTE: Static so buffer primitives can access it without having to go through a Subsystem getter (also in our case we're only ever gonna have 1 LocalPlayer)
+	static TArray<FName> InputIDs;					// ID container to index into the below maps
+	static TMap<FName, bool> RawButtonContainer;	// Most recent button state as received from EIC
+	static TMap<FName, FVector2D> RawAxisContainer;	// Most recent axis state as received from EIC
 
 	/* ~~~~~ Managed Data ~~~~~ */
 	/// @brief	The rows of the input buffer, each containing a column corresponding to each input type
@@ -73,29 +84,37 @@ private:
 	/// @brief	Holds the oldest frame of each input in which it can be used. (-1) corresponds to no input that can used,
 	///			meaning its not been registered, or been held for a while such that its no longer valid. Oldest frame to more
 	///			easily check chorded actions/input sequence
-	TMap<FName, int8> ButtonOldestValidFrame;
-	
+	TMap<FName, int8> ButtonInputValidFrame;
+
+	/// @brief	Holds the oldest frame of which a directional input was registered valid. (-1) corresponds to no input that can be used,
+	///			meaning its not been registered (DI have no concept of "held"). Frame held is the oldest frame in the buffer in which the input
+	///			was valid.
+	TMap<FName, int8> DirectionalInputValidFrame;
+
 #pragma region EVENTS
 	
  // EVENT Input Press Ready To Consume
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FInputPress, const UInputAction*, InputAction, const FInputActionValue&, Value); // NOTE: Can maybe get a lot more info passed along, for now this is enough though
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FDirectionalInputRegisteredDelegate, const UMotionAction*, DirectionalInput);
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FInputPressedSignature, const UInputAction*, InputAction, const FInputActionValue&, Value); // NOTE: Can maybe get a lot more info passed along, for now this is enough though
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FDirectionalInputRegisteredSignature, const UMotionAction*, DirectionalInput);
 
  // EVENT Input Held Ready To Consume
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FInputHeld, const UInputAction*, FOnInputAction, const FInputActionValue&, Value, float, TimeHeld);
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FInpueHeldSignature, const UInputAction*, FOnInputAction, const FInputActionValue&, Value, float, TimeHeld);
  // EVENT Input Release Ready To Consume
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FInputReleased);
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FInputReleasedSignature);
 
 	
 public:
 	UPROPERTY(BlueprintAssignable)
-	FInputPress InputPressedDelegateSignature;
+	FInputPressedSignature InputPressedDelegateDelegate;
+
+	UPROPERTY(BlueprintAssignable)
+	FDirectionalInputRegisteredSignature DirectionalInputRegisteredDelegate;
 			  
 	UPROPERTY(BlueprintAssignable)
-	FInputHeld InputHeldDelegateSignature;
+	FInpueHeldSignature InputHeldDelegateDelegate;
 			  
 	UPROPERTY(BlueprintAssignable)
-	FInputReleased InputReleasedDelegateSignature;
+	FInputReleasedSignature InputReleasedDelegateDelegate;
 
 #pragma endregion EVENTS
 };

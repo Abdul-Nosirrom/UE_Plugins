@@ -3,22 +3,10 @@
 
 #include "CoreMinimal.h"
 #include "BufferContainer.h"
-#include "InputBuffer.generated.h"
+#include "InputBufferPrimitives.generated.h"
 
 
-#pragma region Global Macros
 
-/// @brief Collection of data we want to share across all buffer data structures. Keep it global and contained
-///			in its own namespace as to not be messy and keep from consistently passing data around especially since
-///			we'll be creating new structures at a 1/60 frequency
-namespace BufferUtility
-{
-	extern TArray<FName> InputIDs;
-
-	extern TMap<FName, bool> RawButtonContainer;
-	extern TMap<FName, FVector2D> RawAxisContainer;
-}
-#pragma endregion Global Macros
 
 #pragma region Frame States
 

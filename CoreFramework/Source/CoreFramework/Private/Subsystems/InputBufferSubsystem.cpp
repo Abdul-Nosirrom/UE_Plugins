@@ -18,6 +18,14 @@ void UInputBufferSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
+
+void UInputBufferSubsystem::AddMappingContext(UInputBufferMap* TargetInputMap, UEnhancedInputComponent* InputComponent)
+{
+	InputMap = TargetInputMap;
+	InitializeInputMapping(InputComponent);
+}
+
+
 void UInputBufferSubsystem::UpdateBuffer()
 {
 	SCOPE_CYCLE_COUNTER(STAT_UpdateBuffer)
@@ -35,11 +43,11 @@ void UInputBufferSubsystem::UpdateBuffer()
 	/* Store the frame value in which each input can be used */
 	for (auto InputID : InputIDs)
 	{
-		ButtonOldestValidFrame[InputID] = -1;
+		ButtonInputValidFrame[InputID] = -1;
 		for (int frame = 0; frame < BufferSize; frame++)
 		{
 			/* Set the button state to the frame it can be used */
-			if (InputBuffer[frame].InputsFrameState[InputID].CanExecute()) ButtonOldestValidFrame[InputID] = frame;
+			if (InputBuffer[frame].InputsFrameState[InputID].CanExecute()) ButtonInputValidFrame[InputID] = frame;
 		}
 	}
 }
@@ -77,10 +85,10 @@ void UInputBufferSubsystem::EvaluateEvents()
 	for (auto Direction : InputMap->DirectionalActionMap->GetMappings())
 	{
 		
-		const bool bRegistered = InputBufferObject.CheckDirectionRegistered(Direction->GetID());
+		const bool bRegistered = true;//InputBufferObject.CheckDirectionRegistered(Direction->GetID());
 		if (bRegistered)
 		{
-			DirectionalRegisteredDelegateSignature.Broadcast(Direction);
+			DirectionalInputRegisteredDelegate.Broadcast(Direction);
 		}
 	}
 }
@@ -89,11 +97,11 @@ bool UInputBufferSubsystem::ConsumeButtonInput(const UInputAction* Input)
 {
 	const FName InputID = FName(Input->ActionDescription.ToString());
 	
-	if (ButtonOldestValidFrame[InputID] < 0) return false;
-	if (InputBuffer[ButtonOldestValidFrame[InputID]].InputsFrameState[InputID].CanExecute())
+	if (ButtonInputValidFrame[InputID] < 0) return false;
+	if (InputBuffer[ButtonInputValidFrame[InputID]].InputsFrameState[InputID].CanExecute())
 	{
-		InputBuffer[ButtonOldestValidFrame[InputID]].InputsFrameState[InputID].bUsed = true;
-		ButtonOldestValidFrame[InputID] = -1;
+		InputBuffer[ButtonInputValidFrame[InputID]].InputsFrameState[InputID].bUsed = true;
+		ButtonInputValidFrame[InputID] = -1;
 		return true;
 	}
 	return false;
@@ -103,18 +111,19 @@ bool UInputBufferSubsystem::ConsumeDirectionalInput(const UMotionAction* Input)
 {
 	const FName InputID = Input->GetID();
 	
-	if (ButtonOldestValidFrame[InputID] < 0) return false;
-	if (InputBuffer[ButtonOldestValidFrame[InputID]].InputsFrameState[InputID].CanExecute())
+	if (DirectionalInputValidFrame[InputID] < 0) return false;
+	if (InputBuffer[DirectionalInputValidFrame[InputID]].InputsFrameState[InputID].CanExecute())
 	{
-		InputBuffer[ButtonOldestValidFrame[InputID]].InputsFrameState[InputID].bUsed = true;
-		ButtonOldestValidFrame[InputID] = -1;
+		InputBuffer[DirectionalInputValidFrame[InputID]].InputsFrameState[InputID].bUsed = true;
+		DirectionalInputValidFrame[InputID] = -1;
 		return true;
 	}
 	return false;
 }
 
-void UInputBufferSubsystem::InitializeInputMapping(UInputBufferMap* InputMap, UEnhancedInputComponent* InputComponent)
+void UInputBufferSubsystem::InitializeInputMapping(UEnhancedInputComponent* InputComponent)
 {
+	/* Empty our tracking data, we're gonna override it with current InputMap */
 	InputIDs.Empty();
 	RawButtonContainer.Empty();
 	RawAxisContainer.Empty();
@@ -127,7 +136,6 @@ void UInputBufferSubsystem::InitializeInputMapping(UInputBufferMap* InputMap, UE
 	{
 		if (InputIDs.Contains(FName(Mapping.Action->ActionDescription.ToString()))) continue;
 		InputIDs.Add(FName(Mapping.Action->ActionDescription.ToString()));
-		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Blue, Mapping.Action->ActionDescription.ToString());
 	}
 
 	/* Add input map to the EnhancedInput subsystem*/
@@ -136,7 +144,7 @@ void UInputBufferSubsystem::InitializeInputMapping(UInputBufferMap* InputMap, UE
 	Subsystem->AddMappingContext(InputMap->InputActionMap, 0);
 	
 	auto Mappings = InputMap->InputActionMap->GetMappings();
-
+	
 	/* Generate Action Bindings */
 	for (auto ActionMap : Mappings)
 	{
@@ -156,7 +164,36 @@ void UInputBufferSubsystem::InitializeInputMapping(UInputBufferMap* InputMap, UE
 		InputComponent->BindAction(ActionMap.Action, ETriggerEvent::Triggered, this, &UInputBufferSubsystem::TriggerInput, ActionName);
 		InputComponent->BindAction(ActionMap.Action, ETriggerEvent::Completed, this, &UInputBufferSubsystem::CompleteInput, ActionName);
 	}
+
+	InitializeInputBufferData();
 }
+
+void UInputBufferSubsystem::InitializeInputBufferData()
+{
+	InputBuffer = TBufferContainer<FBufferFrame>(BufferSize);
+
+	/* Populate the buffer */
+	for (int i = 0; i < BufferSize; i++)
+	{
+		FBufferFrame NewFrame = FBufferFrame();
+		NewFrame.InitializeFrame();
+		InputBuffer.PushBack(NewFrame);
+	}
+	
+	/* Setup "tracking" data */
+	ButtonInputValidFrame.Empty();
+	for (auto ID : InputMap->GetActionIDs())
+	{
+		ButtonInputValidFrame.Add(ID, -1);
+	}
+
+	DirectionalInputValidFrame.Empty();
+	for (auto ID : InputMap->GetDirectionalIDs())
+	{
+		DirectionalInputValidFrame.Add(ID, -1);
+	}
+}
+
 
 void UInputBufferSubsystem::TriggerInput(const FInputActionInstance& ActionInstance, const FName InputName)
 {
