@@ -6,7 +6,6 @@
 
 #include "Subsystems/InputBufferSubsystem.h"
 
-#pragma region Frame States
 
 /* ~~~~~ Buffer Frame ~~~~~ */
 
@@ -14,7 +13,7 @@ void FBufferFrame::InitializeFrame()
 {
 	InputsFrameState.Empty();
 	
-	for (auto ID : UInputBufferSubsystem::InputIDs)
+	for (auto ID : UInputBufferSubsystem::InputActionIDs)
 	{
 		FInputFrameState NewFS = FInputFrameState(ID);
 		InputsFrameState.Add(ID, NewFS);
@@ -31,7 +30,7 @@ void FBufferFrame::UpdateFrameState()
 
 void FBufferFrame::CopyFrameState(FBufferFrame& FrameState)
 {
-	for (auto ID : UInputBufferSubsystem::InputIDs)
+	for (auto ID : UInputBufferSubsystem::InputActionIDs)
 	{
 		InputsFrameState[ID].Value = FrameState.InputsFrameState[ID].Value;
 		InputsFrameState[ID].HoldTime = FrameState.InputsFrameState[ID].HoldTime;
@@ -52,13 +51,13 @@ void FInputFrameState::ResolveCommand()
 	}
 	else if (UInputBufferSubsystem::RawAxisContainer.Contains(ID))
 	{
-		// TODO: This is wrong, maybe we can split it up
+		RegisterVector(UInputBufferSubsystem::RawAxisContainer[ID]);
 		if (!UInputBufferSubsystem::RawAxisContainer[ID].IsZero()) HoldUp(UInputBufferSubsystem::RawAxisContainer[ID].Length());
 		else ReleaseHold();
 	}
 }
 
-// TODO: The condition for HoldTime == 1 is kind of rigid
+// TODO: The condition for HoldTime == 1 is kind of rigid but makes sense because we don't wanna use old inputs
 bool FInputFrameState::CanExecute() const
 {
 	return (HoldTime == 1 && !bUsed);
@@ -83,6 +82,3 @@ void FInputFrameState::ReleaseHold()
 	}
 	else HoldTime = 0;
 }
-
-
-#pragma endregion Frame States

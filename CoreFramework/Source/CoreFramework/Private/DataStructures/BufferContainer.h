@@ -16,7 +16,8 @@
  *
  * @param T The type of elements held in the queue.
  */
-template<typename T> class TBufferContainer
+template<typename T>
+class TBufferContainer
 {
 public:
 	using FElementType = T;

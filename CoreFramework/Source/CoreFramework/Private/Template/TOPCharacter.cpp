@@ -9,6 +9,7 @@
 #include "GameFramework/SpringArmComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "Subsystems/InputBufferSubsystem.h"
 
 
 ATOPCharacter::ATOPCharacter() : Super() 
@@ -53,15 +54,13 @@ void ATOPCharacter::BeginPlay()
 	Super::BeginPlay();
 
 	//Add Input Mapping Context
-	if (APlayerController* PlayerController = Cast<APlayerController>(Controller))
-	{
-		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PlayerController->GetLocalPlayer()))
-		{
-			Subsystem->AddMappingContext(InputMappingContext, 0);
-		}
-
-		//PlayerController->SetInputMap(DefaultInputBufferMapping);
-	}
+	//if (ABufferedController* PlayerController = Cast<ABufferedController>(Controller))
+	//{
+	//	if (UInputBufferSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UInputBufferSubsystem>(PlayerController->GetLocalPlayer()))
+	//	{
+	//		Subsystem->AddMappingContext(DefaultInputBufferMapping, Cast<UEnhancedInputComponent>(PlayerController->InputComponent));
+	//	}
+	//}
 }
 
 
@@ -71,13 +70,28 @@ void ATOPCharacter::BeginPlay()
 void ATOPCharacter::SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent)
 {
 	// Set up action bindings
-	if (UEnhancedInputComponent* EnhancedInputComponent = CastChecked<UEnhancedInputComponent>(PlayerInputComponent)) {
-		
-		//Jumping
-		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Triggered, this, &ATOPCharacter::Jump);
-		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ATOPCharacter::StopJumping);
+	if (UEnhancedInputComponent* EnhancedInputComponent = CastChecked<UEnhancedInputComponent>(PlayerInputComponent)) 
+	{
+		//Add Input Mapping Context
+		if (ABufferedController* PlayerController = Cast<ABufferedController>(Controller))
+		{
+			if (UInputBufferSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UInputBufferSubsystem>(PlayerController->GetLocalPlayer()))
+			{
+				Subsystem->AddMappingContext(DefaultInputBufferMapping, EnhancedInputComponent);
 
-		//Moving
+				// Bind Input Buffer Shit
+				//Subsystem->InputPressedDelegate.AddDynamic(this, &ATOPCharacter::InputTriggered);
+				Subsystem->DirectionalAndButtonDelegate.AddDynamic(this, &ATOPCharacter::DirectionalRegistered);
+				//Subsystem->InputPressedDelegate.AddUFunction(this, &ATOPCharacter::InputTriggered);
+				//Subsystem->InputPressedDelegate.Add()
+				Subsystem->InputReleasedDelegate.AddDynamic(this, &ATOPCharacter::InputReleased);
+			}
+		}
+		//Jumping
+		//EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Triggered, this, &ATOPCharacter::Jump);
+		//EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ATOPCharacter::StopJumping);
+
+		//Moving NOTE: "Look" we can leave out of the input buffer. Move
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &ATOPCharacter::Move);
 
 		//Looking
@@ -86,6 +100,29 @@ void ATOPCharacter::SetupPlayerInputComponent(class UInputComponent* PlayerInput
 	}
 
 }
+
+
+void ATOPCharacter::InputTriggered(const UInputAction* InputAction, const FInputActionValue& Value)
+{
+	UE_LOG(LogTemp, Error, TEXT("Recieved buffer event for %s"), *InputAction->ActionDescription.ToString());
+	if (InputAction == JumpAction) Jump(Value);
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("Action comparison failed for %s == %s"), *JumpAction->ActionDescription.ToString(), *InputAction->ActionDescription.ToString());
+	}
+}
+
+void ATOPCharacter::DirectionalRegistered(const UInputAction* InputAction, const UMotionAction* Motion)
+{
+	if (InputAction == JumpAction && DirectionalInput == Motion) Jump(FInputActionValue());
+}
+
+
+void ATOPCharacter::InputReleased(const UInputAction* InputAction)
+{
+	if (InputAction == JumpAction) StopJumping(FInputActionValue());
+}
+
 
 void ATOPCharacter::Move(const FInputActionValue& Value)
 {
@@ -127,6 +164,8 @@ void ATOPCharacter::Jump(const FInputActionValue& Value)
 {
 	if (GetMovementComponent()->IsMovingOnGround())
 	{
+		APlayerController* PC = Cast<APlayerController>(GetController());
+		ULocalPlayer::GetSubsystem<UInputBufferSubsystem>(PC->GetLocalPlayer())->ConsumeButtonInput(JumpAction);
 		OnJumpedDelegate.Broadcast();
 		LaunchCharacter(FVector(0,0, JumpZVelocity), false, true);
 	}

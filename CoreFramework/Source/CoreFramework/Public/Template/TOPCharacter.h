@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "InputData.h"
 #include "OPCharacter.h"
 #include "GameFramework/Character.h"
 #include "TOPCharacter.generated.h"
@@ -41,14 +42,14 @@ private:
 	/** Follow camera */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Camera, meta = (AllowPrivateAccess = "true"))
 	class UCameraComponent* FollowCamera;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
-	class UInputMappingContext* InputMappingContext;
 	
 	/** Buffered Input Map */
-	//UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
-	//class UInputBufferMap* DefaultInputBufferMapping;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	class UInputBufferMap* DefaultInputBufferMapping;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	class UMotionAction* DirectionalInput;
+	
 	/** Jump Input Action */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
 	class UInputAction* JumpAction;
@@ -66,6 +67,14 @@ public:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	
 protected:
+
+	/** General Input Registration Binding */
+	UFUNCTION()
+	void InputTriggered(const UInputAction* InputAction, const FInputActionValue& Value);
+	UFUNCTION()
+	void InputReleased(const UInputAction* InputAction);
+	UFUNCTION()
+	void DirectionalRegistered(const UInputAction* InputAction, const UMotionAction* Motion);
 
 	/** Action Binding */
 	void Move(const FInputActionValue& Value);

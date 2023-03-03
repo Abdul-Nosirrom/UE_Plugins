@@ -17,7 +17,7 @@ class UInputBufferMap : public UDataAsset
 
 public:
 	// Localized context descriptor
-	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = "Description", DisplayName = "Description")
+	UPROPERTY(Category = "Description", BlueprintReadOnly, EditAnywhere, DisplayName = "Description")
 	FText ContextDescription;
 
 	/// @brief  Input Action Mappings associated with this input buffer data map
@@ -31,6 +31,13 @@ public:
 public:
 	TArray<FName> GetActionIDs();
 	TArray<FName> GetDirectionalIDs();
+
+private:
+	UPROPERTY(Transient)
+	TArray<FName> ActionIDs;
+	
+	UPROPERTY(Transient)
+	TArray<FName> DirectionalIDs;
 };
 
 
@@ -45,16 +52,25 @@ class UMotionMappingContext : public UDataAsset
 	GENERATED_BODY()
 
 public:
-	TArray<TObjectPtr<UMotionAction>> GetMappings() { return Mapping; }
+	FORCEINLINE TArray<TObjectPtr<UMotionAction>> GetMappings() { return Mapping; }
+
+	FORCEINLINE FName GetDirectionalActionID() const
+	{
+		return FName(DirectionalAction->ActionDescription.ToString());
+	}
 	
 public:
 	/// @brief Localized context descriptor
-	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category="Description", DisplayName="Description")
+	UPROPERTY(Category="Description", BlueprintReadOnly, EditAnywhere, DisplayName="Description")
 	FText ContextDescription;
 	
 protected:
+	/// @brief  Axis InputAction you want to use to evaluate directional input
+	UPROPERTY(Category= "Mappings", BlueprintReadOnly, EditAnywhere)
+	TObjectPtr<UInputAction> DirectionalAction;
+	
 	/// @brief Holds a collection of motion actions to define the maps motion action map
-	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category= "Mappings")
+	UPROPERTY(Category= "Mappings", BlueprintReadOnly, EditAnywhere)
 	TArray<TObjectPtr<UMotionAction>> Mapping;
 };
 
@@ -81,7 +97,7 @@ enum ETurnDirection
 
 #pragma endregion Enum Primitives
 
-// TODO: This should be a data asset similar to ActionMaps, much better organization than tacking it onto the controller
+
 UCLASS()
 class UMotionAction : public UDataAsset
 {
@@ -89,49 +105,68 @@ class UMotionAction : public UDataAsset
 	
 protected:
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Description", DisplayName="Action Name")
+	UPROPERTY(Category="Description", EditDefaultsOnly, BlueprintReadOnly, DisplayName="Action Name")
 	FName ActionName{"None"};
 
-	/// @brief Whether to check the input direction relative to the player, or just evaluate the raw direction values
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Motion Command")
-	bool bRelativeToPlayer;
-
-	/// @brief Sequence of directions defining this motion command
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Motion Command", meta=(EditCondition="!bAngleChange", EditConditionHides))
-	TArray<TEnumAsByte<EMotionCommandDirection>> MotionCommandSequence;
-
 	/// @brief Whether to examine an angle change instead of just evaluating directions. Can define more detailed directional input
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Motion Command")
+	UPROPERTY(Category="Motion Command", EditDefaultsOnly, BlueprintReadOnly)
 	bool bAngleChange;
 
+	/// @brief Whether to check the input direction relative to the player, or just evaluate the raw direction values
+	UPROPERTY(Category="Motion Command", EditDefaultsOnly, BlueprintReadOnly, meta=(EditCondition="!bAngleChange", EditConditionHides))
+	bool bRelativeToPlayer;
+	
+	/// @brief Sequence of directions defining this motion command
+	UPROPERTY(Category="Motion Command", EditDefaultsOnly, BlueprintReadOnly, meta=(EditCondition="!bAngleChange", EditConditionHides))
+	TArray<TEnumAsByte<EMotionCommandDirection>> MotionCommandSequence;
+	
 	/// @brief If evaluating angle change, begin checking the angle delta from which direction
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Motion Command", meta=(EditCondition="bAngleChange", EditConditionHides))
+	UPROPERTY(Category="Motion Command", EditDefaultsOnly, BlueprintReadOnly, meta=(EditCondition="bAngleChange", EditConditionHides))
 	TEnumAsByte<EFacingDirection> FromDirection;
 
 	/// @brief If evaluating angle change, in which direction should the turn be evaluated
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Motion Command", meta=(EditCondition="bAngleChange", EditConditionHides))
+	UPROPERTY(Category="Motion Command", EditDefaultsOnly, BlueprintReadOnly, meta=(EditCondition="bAngleChange", EditConditionHides))
 	TEnumAsByte<ETurnDirection> TurnDirection;
 
 	/// @brief If evaluating angle change, how big of an angle delta to check
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Motion Command", meta=(EditCondition="bAngleChange", EditConditionHides))
+	UPROPERTY(Category="Motion Command", EditDefaultsOnly, BlueprintReadOnly, meta=(EditCondition="bAngleChange", EditConditionHides))
 	int AngleDelta{0};
 
+private: // Vars to keep track of current directional input state
+
 	/// @brief Current Step In The Command Sequence To Check
+	UPROPERTY(Transient)
 	int CheckStep{0};
 
 	/// @brief Previous Registered Angle Delta
-	float PrevAngle;
+	UPROPERTY(Transient)
+	float PrevAngle{0};
 
 	/// @brief Current Registered Angle Delta
-	float CurAngle;
+	UPROPERTY(Transient)
+	float CurAngle{0};
+
+	/// @brief  Set to true when stick input aligns with FromDirection, used to track angle changes
+	UPROPERTY(Transient)
+	bool bAngleChangeInitialized;
 	
 public:
 
 	FName GetID() const { return ActionName; }
 
-	bool CheckMotionDirection(FVector2D AxisInput);
+	// NOTE: We wanna pass in the RAW axis input here. We then dictate which basis to evaluate it against
 	
-	EMotionCommandDirection GetAxisDirection(FVector2D AxisInput);
+	bool CheckMotionDirection(const FVector2D& AxisInput);
+
+	void UpdateCurrentAngle(const FVector2D& AxisInput);
+	
+	EMotionCommandDirection GetAxisDirection(const FVector2D& AxisInput);
+
+	FORCEINLINE void Reset() 
+	{
+		CurAngle = 0;
+		CheckStep = 0;
+	}
 	
 };
 
