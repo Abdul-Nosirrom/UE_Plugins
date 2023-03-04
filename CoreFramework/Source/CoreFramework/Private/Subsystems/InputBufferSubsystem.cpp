@@ -3,9 +3,12 @@
 
 #include "Subsystems/InputBufferSubsystem.h"
 #include "InputBufferPrimitives.h"
+#include "Debug/IB_LOG.h"
 
 DECLARE_CYCLE_STAT(TEXT("Update Buffer"), STAT_UpdateBuffer, STATGROUP_InputBuffer)
 DECLARE_CYCLE_STAT(TEXT("Eval Events"), STAT_EvalEvents, STATGROUP_InputBuffer)
+
+DEFINE_LOG_CATEGORY(LogInputBuffer)
 
 /*~~~~~ Initialize Static Members ~~~~~*/
 TArray<FName> UInputBufferSubsystem::CachedActionIDs;
@@ -27,7 +30,10 @@ void UInputBufferSubsystem::Deinitialize()
 void UInputBufferSubsystem::Tick(float DeltaTime)
 {
 	// Ensure we've been initialized, otherwise don't update the buffer
-	if (!bInitialized) return;
+	if (!bInitialized)
+	{
+		return;
+	}
 
 	// Increment our timer and update the buffer if we've met our tick interval
 	ElapsedTime += DeltaTime;
@@ -50,6 +56,8 @@ void UInputBufferSubsystem::AddMappingContext(UInputBufferMap* TargetInputMap, U
 	CachedActionIDs = InputMap->GetActionIDs();
 	InputComponent->bBlockInput = false;
 	InitializeInputMapping(InputComponent);
+
+	IB_FLog(Log, "Input Buffer Initialized")
 }
 
 void UInputBufferSubsystem::InitializeInputMapping(UEnhancedInputComponent* InputComponent)
@@ -97,12 +105,14 @@ void UInputBufferSubsystem::InitializeInputBufferData()
 	ButtonInputValidFrame.Empty();
 	for (auto ID : InputMap->GetActionIDs())
 	{
+		IB_FLog(Display, "[%s] - Action Added To Buffer", *ID.ToString())
 		ButtonInputValidFrame.Add(ID, -1);
 	}
 
 	DirectionalInputValidFrame.Empty();
 	for (auto ID : InputMap->GetDirectionalIDs())
 	{
+		IB_FLog(Display, "[%s] - Directional Added To Buffer", *ID.ToString())
 		DirectionalInputValidFrame.Add(ID, -1);
 	}
 }
@@ -212,6 +222,7 @@ void UInputBufferSubsystem::EvaluateEvents()
 		{
 			DirectionalInputRegisteredDelegate.Broadcast(Direction);
 
+			/*
 			for (auto Action : InputMap->GetInputActions())
 			{
 				const FName ActionID = FName(Action->ActionDescription.ToString());
@@ -222,6 +233,7 @@ void UInputBufferSubsystem::EvaluateEvents()
 					DirectionalAndButtonDelegate.Broadcast(Action, Direction);
 				}
 			}
+			*/
 		}
 	}
 }
@@ -233,7 +245,11 @@ bool UInputBufferSubsystem::ConsumeButtonInput(const UInputAction* Input)
 	const FName InputID = FName(Input->ActionDescription.ToString());
 
 	// TODO: Logging...
-	if (!ButtonInputValidFrame.Contains(InputID)) return false;
+	if (!ButtonInputValidFrame.Contains(InputID))
+	{
+		IB_FLog(Error, "%s - Input Action Registered But Not Collected In Buffer", *InputID.ToString())
+		return false;
+	}
 	
 	if (ButtonInputValidFrame[InputID] < 0) return false;
 	if (InputBuffer[ButtonInputValidFrame[InputID]].InputsFrameState[InputID].CanExecute())
@@ -285,10 +301,6 @@ void UInputBufferSubsystem::ProcessDirectionVector(const FVector2D& DirectionInp
 		{
 			OutPlayerForward = Owner->GetActorForwardVector();
 			OutPlayerRight = Owner->GetActorRightVector();
-		}
-		else
-		{
-			UE_LOG(LogTemp, Error, TEXT("Controller Has No Valid Pawn Owner"))
 		}
 	}
 }

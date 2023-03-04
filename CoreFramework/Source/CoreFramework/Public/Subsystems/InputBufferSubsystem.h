@@ -8,9 +8,11 @@
 #include "InputData.h"
 #include "InputBufferSubsystem.generated.h"
 
-/* Profiling Groups */
+/* Profiling & Log Groups */
 DECLARE_STATS_GROUP(TEXT("InputBuffer_Game"), STATGROUP_InputBuffer, STATCAT_Advanced);
+DECLARE_LOG_CATEGORY_EXTERN(LogInputBuffer, Log, All);
 /* ~~~~~~~~~~~~~~~~ */
+
 
 /* FORWARD DECLARATIONS */
 struct FBufferFrame;
@@ -95,7 +97,10 @@ protected:
 	static constexpr float TICK_INTERVAL	= 0.0167;
 	
 	/* ~~~~~ Initialization & Update Tracking ~~~~~ */
+	UPROPERTY(Transient)
 	bool bInitialized;
+
+	UPROPERTY(Transient)
 	double ElapsedTime;
 
 	// NOTE: Static so buffer primitives can access it without having to go through a Subsystem getter (also in our case we're only ever gonna have 1 LocalPlayer)

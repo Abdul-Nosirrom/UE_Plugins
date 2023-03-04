@@ -31,5 +31,9 @@ public class CoreFramework : ModuleRules
 	    PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "Private/DataAssets"));
 	    PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "Private/DataStructures"));
 	    PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "Private/Debug"));
+	    
+	    // Specify Defs (For Logging)
+	    PrivateDefinitions.Add("CFW_MOVEMENT_LOG");
+	    PrivateDefinitions.Add("CFW_BUFFER_LOG");
 	}
 }

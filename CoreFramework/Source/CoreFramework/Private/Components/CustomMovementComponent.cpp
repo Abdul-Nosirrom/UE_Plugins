@@ -1,7 +1,7 @@
 // Copyright 2023 Abdulrahmen Almodaimegh. All Rights Reserved.
 #include "CustomMovementComponent.h"
 #include "GameFramework/Character.h"
-#include "Debug/CFW_LOG.h"
+#include "Debug/RMC_LOG.h"
 #include "CFW_PCH.h"
 #include "OPCharacter.h"
 
@@ -145,7 +145,7 @@ void UCustomMovementComponent::BeginPlay()
 	}
 	else
 	{
-		FLog(Error, "No movement data asset provided")
+		RMC_FLog(Error, "No movement data asset provided")
 	}
 }
 
@@ -592,7 +592,7 @@ void UCustomMovementComponent::PerformMovement(float DeltaTime)
 		{
 			if (!UpdateRotationDelegate.ExecuteIfBound(this, DeltaTime))
 			{
-				FLog(Log, "Update Rotation Delegate Not Bound")
+				RMC_FLog(Log, "Update Rotation Delegate Not Bound")
 			}
 		}
 		else // Apply physics rotation
@@ -716,7 +716,7 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 		/* Apply acceleration after projection */
 		if (!CalculateVelocityDelegate.ExecuteIfBound(this, IterTick))
 		{
-			FLog(Log, "Calculate Velocity Delegate Not Bound")
+			RMC_FLog(Log, "Calculate Velocity Delegate Not Bound")
 		}
 
 		/* Custom CalcVelocity may have swapped us to falling so ensure that before performing the move */
@@ -895,7 +895,7 @@ void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteration
 		
 		if (!CalculateVelocityDelegate.ExecuteIfBound(this, IterTick))
 		{
-			FLog(Log, "Calculate Velocity Delegate Not Bound")
+			RMC_FLog(Log, "Calculate Velocity Delegate Not Bound")
 		}
 		
 		/* Cache current values */
@@ -1183,11 +1183,11 @@ void UCustomMovementComponent::OnStuckInGeometry(const FHitResult* Hit)
 {
 	if (Hit == nullptr)
 	{
-		FLog(Log, "%s is stuck and failed to move!", *CharacterOwner->GetName());
+		RMC_FLog(Log, "%s is stuck and failed to move!", *CharacterOwner->GetName());
 	}
 	else
 	{
-		FLog(Log, "%s is stuck and failed to move! Velocity: X=%3.2f Y=%3.2f Z=%3.2f Location: X=%3.2f Y=%3.2f Z=%3.2f Normal: X=%3.2f Y=%3.2f Z=%3.2f PenetrationDepth:%.3f Actor:%s Component:%s BoneName:%s",
+		RMC_FLog(Log, "%s is stuck and failed to move! Velocity: X=%3.2f Y=%3.2f Z=%3.2f Location: X=%3.2f Y=%3.2f Z=%3.2f Normal: X=%3.2f Y=%3.2f Z=%3.2f PenetrationDepth:%.3f Actor:%s Component:%s BoneName:%s",
 			*GetNameSafe(CharacterOwner),
 			Velocity.X, Velocity.Y, Velocity.Z,
 			Hit->Location.X, Hit->Location.Y, Hit->Location.Z,
@@ -1233,7 +1233,7 @@ bool UCustomMovementComponent::IsFloorStable(const FHitResult& Hit) const
 	
 	if (Angle > TestStableAngle)
 	{
-		FLog(Warning, "Angle Limit Hit For (%f) Along Direction (%s): %f", TestStableAngle, *Orientation.ToCompactString(), Angle);
+		RMC_FLog(Warning, "Angle Limit Hit For (%f) Along Direction (%s): %f", TestStableAngle, *Orientation.ToCompactString(), Angle);
 		LOG_HIT(Hit, 2);
 		return false;
 	}
@@ -1511,7 +1511,7 @@ void UCustomMovementComponent::FindFloor(const FVector& CapsuleLocation, FGround
 		LOG_HIT((*DownwardSweepResult), 2);
 	}
 
-	FLog(Display, "At Location [%s]", *CapsuleLocation.ToString())
+	RMC_FLog(Display, "At Location [%s]", *CapsuleLocation.ToString())
 	
 	const float CapsuleRadius = CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleRadius();
 
@@ -1551,7 +1551,7 @@ void UCustomMovementComponent::FindFloor(const FVector& CapsuleLocation, FGround
 
 			if (!bForceNextFloorCheck && !bActorBasePendingKill && MovementBase)
 			{
-				FLog(Display, "Skipping. Floor Sweep not required")
+				RMC_FLog(Display, "Skipping. Floor Sweep not required")
 				
 				OutFloorResult = CurrentFloor;
 				bNeedToValidateFloor = false;
@@ -1880,13 +1880,13 @@ bool UCustomMovementComponent::StepUp(const FVector& Orientation, const FHitResu
 		// NOTE: This might not actually have been true, the issue might've lied with using Normal instead of ImpactNormal in MaintainHorizontalGroundVelocity()
 		if (DeltaH > MaxStepHeight)
 		{
-			FLog(Warning, "Failed Step Up w/ Height %.3f", DeltaH);
+			RMC_FLog(Warning, "Failed Step Up w/ Height %.3f", DeltaH);
 			ScopedStepUpMovement.RevertMove();
 			return false;
 		}
 		else
 		{
-			FLog(Warning, "Succesful Step Up w/ Height %.3f", DeltaH)
+			RMC_FLog(Warning, "Succesful Step Up w/ Height %.3f", DeltaH)
 		}
 		
 		// Reject unstable surface normals
@@ -1933,7 +1933,7 @@ bool UCustomMovementComponent::StepUp(const FVector& Orientation, const FHitResu
 				const float MAX_STEP_SIDE_H = 0.08f; // DEBUG: Oh they're referring to normals of the step hit here...
 				if (!StepDownResult.FloorResult.bBlockingHit && StepSideP < MAX_STEP_SIDE_H)
 				{
-					FLog(Warning, "Failed Step Up Due To Normal w/ Height  %.3f", DeltaH);
+					RMC_FLog(Warning, "Failed Step Up Due To Normal w/ Height  %.3f", DeltaH);
 					ScopedStepUpMovement.RevertMove();
 					return false;
 				}
@@ -2715,7 +2715,7 @@ void UCustomMovementComponent::ApplyRepulsionForce(float DeltaTime)
 
 				if (!OverlapBody)
 				{
-					FLog(Warning, "%s Could not find overlap body for body index %d", *GetName(), OverlapBodyIndex);
+					RMC_FLog(Warning, "%s Could not find overlap body for body index %d", *GetName(), OverlapBodyIndex);
 					continue;
 				}
 
