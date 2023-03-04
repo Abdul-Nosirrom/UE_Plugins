@@ -13,7 +13,7 @@ void FBufferFrame::InitializeFrame()
 {
 	InputsFrameState.Empty();
 	
-	for (auto ID : UInputBufferSubsystem::InputActionIDs)
+	for (auto ID : UInputBufferSubsystem::CachedActionIDs)
 	{
 		FInputFrameState NewFS = FInputFrameState(ID);
 		InputsFrameState.Add(ID, NewFS);
@@ -30,7 +30,7 @@ void FBufferFrame::UpdateFrameState()
 
 void FBufferFrame::CopyFrameState(FBufferFrame& FrameState)
 {
-	for (auto ID : UInputBufferSubsystem::InputActionIDs)
+	for (auto ID : UInputBufferSubsystem::CachedActionIDs)
 	{
 		InputsFrameState[ID].Value = FrameState.InputsFrameState[ID].Value;
 		InputsFrameState[ID].HoldTime = FrameState.InputsFrameState[ID].HoldTime;
@@ -43,17 +43,17 @@ void FBufferFrame::CopyFrameState(FBufferFrame& FrameState)
 void FInputFrameState::ResolveCommand()
 {
 	bUsed = false;
-	
-	if (UInputBufferSubsystem::RawButtonContainer.Contains(ID))
+
+	if (UInputBufferSubsystem::RawValueContainer.Contains(ID))
 	{
-		if (UInputBufferSubsystem::RawButtonContainer[ID]) HoldUp(1.f);
-		else ReleaseHold();
-	}
-	else if (UInputBufferSubsystem::RawAxisContainer.Contains(ID))
-	{
-		RegisterVector(UInputBufferSubsystem::RawAxisContainer[ID]);
-		if (!UInputBufferSubsystem::RawAxisContainer[ID].IsZero()) HoldUp(UInputBufferSubsystem::RawAxisContainer[ID].Length());
-		else ReleaseHold();
+		if (UInputBufferSubsystem::RawValueContainer[ID].IsThereInput())
+		{
+			HoldUp(UInputBufferSubsystem::RawValueContainer[ID].GetValue());
+		}
+		else
+		{
+			ReleaseHold();
+		}
 	}
 }
 
@@ -63,9 +63,9 @@ bool FInputFrameState::CanExecute() const
 	return (HoldTime == 1 && !bUsed);
 }
 
-void FInputFrameState::HoldUp(float Val)
+void FInputFrameState::HoldUp(FInputActionValue InValue)
 {
-	Value = Val;
+	Value = InValue;
 
 	if (HoldTime < 0) HoldTime = 1;
 	else HoldTime += 1;

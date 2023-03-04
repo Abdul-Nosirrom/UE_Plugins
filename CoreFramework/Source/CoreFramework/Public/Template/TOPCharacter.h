@@ -74,7 +74,7 @@ protected:
 	UFUNCTION()
 	void InputReleased(const UInputAction* InputAction);
 	UFUNCTION()
-	void DirectionalRegistered(const UInputAction* InputAction, const UMotionAction* Motion);
+	void DirectionalRegistered(const UMotionAction* Motion);
 
 	/** Action Binding */
 	void Move(const FInputActionValue& Value);

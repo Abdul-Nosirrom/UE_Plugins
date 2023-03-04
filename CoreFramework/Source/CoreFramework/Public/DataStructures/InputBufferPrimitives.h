@@ -6,6 +6,31 @@
 #include "InputBufferPrimitives.generated.h"
 
 
+USTRUCT()
+struct FRawInputValue
+{
+	GENERATED_BODY()
+	
+protected:
+	FInputActionValue InputValue;
+
+	float ElapsedTriggeredTime = 0.f;
+
+public:
+	FRawInputValue() : InputValue(FInputActionValue()), ElapsedTriggeredTime(0) {}
+
+	explicit FRawInputValue(const FInputActionInstance& ValueInstance)
+				: InputValue(ValueInstance.GetValue()), ElapsedTriggeredTime(ValueInstance.GetTriggeredTime()) {}
+	
+	// General accessors
+	bool IsThereInput() const { return InputValue.IsNonZero(); }
+	FInputActionValue GetValue() const { return InputValue; }
+	EInputActionValueType GetValueType() const { return InputValue.GetValueType(); }
+	bool GetBoolValue() const { return InputValue.Get<bool>(); }
+	FVector2D GetVectorValue() const { return InputValue.Get<FVector2D>(); }
+	float GetTriggeredTime() const { return ElapsedTriggeredTime; }
+};
+
 /* Struct defining the state of a given input in a frame, whether its been used, being held, and so on  */
 USTRUCT()
 struct FInputFrameState
@@ -15,16 +40,9 @@ struct FInputFrameState
 public:
 	/// @brief	Input Action ID Associated With This Object
 	FName ID;
-
-	// NOTE: Should we just store the FInputActionValue here instead of Value & Vector Value? I think so.
 	
-	/// @brief	The value of the input. If an axis, the value will be the accentuation along that axis. If a button,
-	///			the value will be 1 or 0 depending on the state of the button.
-	float Value{0};
-
-	/// @brief  If an axis value, we register the actual normalized axis vector value here (we can retrieve the non-normalized
-	///			one too given that we have @see Value which represents the accentuation/magnitude)
-	FVector2D VectorValue;
+	/// @brief  Register the raw input action value from EIC into this frame state
+	FInputActionValue Value;
 	
 	/// @brief	Input state value. (0) if no input, (-1) if the input was released the last frame, and time in which
 	///			input has been held otherwise.
@@ -42,11 +60,9 @@ public:
 	void ResolveCommand();
 
 	/// @brief Called when the input is being held
-	/// @param Val Current value of the input in seconds
-	void HoldUp(float Val);
-
-	void RegisterVector(const FVector2D RawAxis) { VectorValue = RawAxis; }
-
+	/// @param InValue Current value of the input in seconds
+	void HoldUp(FInputActionValue InValue);
+	
 	/// @brief Called when the assigned input has been released or has not been registered
 	void ReleaseHold();
 

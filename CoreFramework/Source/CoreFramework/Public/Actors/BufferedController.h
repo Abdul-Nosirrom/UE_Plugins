@@ -18,17 +18,7 @@ public:
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
-	
-	TObjectPtr<class UInputBufferSubsystem> InputBufferSubsystem;
-	
-public:
-	// Called every frame
-	virtual void Tick(float DeltaTime) override;
-
 
 private:
-	double BufferUpdateTimer;
-	double BufferTickInterval;
-	
 	virtual void DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL, float& YPos) override;
 };

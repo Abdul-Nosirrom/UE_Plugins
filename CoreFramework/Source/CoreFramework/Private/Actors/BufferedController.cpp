@@ -17,31 +17,7 @@ ABufferedController::ABufferedController() : Super()
 // Called when the game starts or when spawned
 void ABufferedController::BeginPlay()
 {
-	BufferUpdateTimer = 0.f;
-	BufferTickInterval = 0.0167;
 	Super::BeginPlay();
-	InputBufferSubsystem = ULocalPlayer::GetSubsystem<UInputBufferSubsystem>(GetLocalPlayer());
-
-	if (!InputBufferSubsystem)
-	{
-		UE_LOG(LogTemp, Fatal, TEXT("Subsystem Not Initialized On Begin Play!!!!"))
-	}
-}
-
-// Called every frame
-void ABufferedController::Tick(float DeltaTime)
-{
-	Super::Tick(DeltaTime);
-
-	if (InputBufferSubsystem->bInitialized && BufferUpdateTimer >= BufferTickInterval)
-	{
-		BufferUpdateTimer = 0.f;
-		InputBufferSubsystem->UpdateBuffer();
-	}
-
-	InputBufferSubsystem->EvaluateEvents();
-
-	BufferUpdateTimer += DeltaTime;
 }
 
 
@@ -50,6 +26,6 @@ void ABufferedController::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo&
 {
 	if (DebugDisplay.IsDisplayOn(TEXT("INPUTBUFFER")))
 	{
-		InputBufferSubsystem->DisplayDebug(Canvas, DebugDisplay, YL, YPos);
+		GetLocalPlayer()->GetSubsystem<UInputBufferSubsystem>()->DisplayDebug(Canvas, DebugDisplay, YL, YPos);
 	}
 }

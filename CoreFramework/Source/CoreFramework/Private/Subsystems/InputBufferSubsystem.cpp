@@ -5,17 +5,18 @@
 #include "InputBufferPrimitives.h"
 
 DECLARE_CYCLE_STAT(TEXT("Update Buffer"), STAT_UpdateBuffer, STATGROUP_InputBuffer)
+DECLARE_CYCLE_STAT(TEXT("Eval Events"), STAT_EvalEvents, STATGROUP_InputBuffer)
 
 /*~~~~~ Initialize Static Members ~~~~~*/
-TArray<FName> UInputBufferSubsystem::InputActionIDs;
-TMap<FName, bool> UInputBufferSubsystem::RawButtonContainer;
-TMap<FName, FVector2D> UInputBufferSubsystem::RawAxisContainer;
+TArray<FName> UInputBufferSubsystem::CachedActionIDs;
+TMap<FName, FRawInputValue> UInputBufferSubsystem::RawValueContainer;
 
 void UInputBufferSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
-	bInitialized = false;
 	Super::Initialize(Collection);
-	BufferSize = 20;
+
+	bInitialized = false;
+	ElapsedTime = 0;
 }
 
 void UInputBufferSubsystem::Deinitialize()
@@ -23,11 +24,30 @@ void UInputBufferSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
+void UInputBufferSubsystem::Tick(float DeltaTime)
+{
+	// Ensure we've been initialized, otherwise don't update the buffer
+	if (!bInitialized) return;
+
+	// Increment our timer and update the buffer if we've met our tick interval
+	ElapsedTime += DeltaTime;
+	if (ElapsedTime >= TICK_INTERVAL)
+	{
+		UpdateBuffer();
+		ElapsedTime = 0.f;
+	}
+
+	// Evaluate Events (More frequently than buffer updates)
+	EvaluateEvents();
+}
+
+
 
 void UInputBufferSubsystem::AddMappingContext(UInputBufferMap* TargetInputMap, UEnhancedInputComponent* InputComponent)
 {
 	InputMap = TargetInputMap;
-	InputActionIDs = InputMap->GetActionIDs();
+	InputMap->GenerateInputActions(); // We generate input actions once just so we dont have to go through GetMappings()
+	CachedActionIDs = InputMap->GetActionIDs();
 	InputComponent->bBlockInput = false;
 	InitializeInputMapping(InputComponent);
 }
@@ -35,8 +55,7 @@ void UInputBufferSubsystem::AddMappingContext(UInputBufferMap* TargetInputMap, U
 void UInputBufferSubsystem::InitializeInputMapping(UEnhancedInputComponent* InputComponent)
 {
 	/* Empty our tracking data, we're gonna override it with current InputMap */
-	RawButtonContainer.Empty();
-	RawAxisContainer.Empty();
+	RawValueContainer.Empty();
 	
 	/* If no input map has been assigned, we return */
 	if (!InputMap) return;
@@ -46,26 +65,16 @@ void UInputBufferSubsystem::InitializeInputMapping(UEnhancedInputComponent* Inpu
 	Subsystem->ClearAllMappings();
 	Subsystem->AddMappingContext(InputMap->InputActionMap, 0);
 	
-	auto Mappings = InputMap->InputActionMap->GetMappings();
+	auto InputActionCache = InputMap->GetInputActions();
 	
 	/* Generate Action Bindings */
-	for (auto ActionMap : Mappings)
+	for (auto Action : InputActionCache)
 	{
-		const FName ActionName = FName(ActionMap.Action->ActionDescription.ToString());
-		switch (ActionMap.Action->ValueType)
-		{
-			case EInputActionValueType::Boolean:
-				RawButtonContainer.Add(ActionName, false);
-			break;
-			case EInputActionValueType::Axis2D:
-				RawAxisContainer.Add(ActionName, FVector2D::ZeroVector);
-			break;
-			default:
-				break;
-		}
-		
-		InputComponent->BindAction(ActionMap.Action, ETriggerEvent::Triggered, this, &UInputBufferSubsystem::TriggerInput, ActionName);
-		InputComponent->BindAction(ActionMap.Action, ETriggerEvent::Completed, this, &UInputBufferSubsystem::CompleteInput, ActionName);
+		const FName ActionName = FName(Action->ActionDescription.ToString());
+		RawValueContainer.Add(ActionName, FRawInputValue());
+
+		InputComponent->BindAction(Action, ETriggerEvent::Triggered, this, &UInputBufferSubsystem::TriggerInput, ActionName);
+		InputComponent->BindAction(Action, ETriggerEvent::Completed, this, &UInputBufferSubsystem::CompleteInput, ActionName);
 	}
 
 	InitializeInputBufferData();
@@ -73,11 +82,11 @@ void UInputBufferSubsystem::InitializeInputMapping(UEnhancedInputComponent* Inpu
 
 void UInputBufferSubsystem::InitializeInputBufferData()
 {
-	//BufferSize = 20;
-	InputBuffer = TBufferContainer<FBufferFrame>(BufferSize);
+	bInitialized = true;
+	InputBuffer = TBufferContainer<FBufferFrame>(BUFFER_SIZE);
 
 	/* Populate the buffer */
-	for (int i = 0; i < BufferSize; i++)
+	for (int i = 0; i < BUFFER_SIZE; i++)
 	{
 		FBufferFrame NewFrame = FBufferFrame();
 		NewFrame.InitializeFrame();
@@ -96,42 +105,17 @@ void UInputBufferSubsystem::InitializeInputBufferData()
 	{
 		DirectionalInputValidFrame.Add(ID, -1);
 	}
-
-	bInitialized = true;
 }
 
 //BEGIN Input Registration Events
 void UInputBufferSubsystem::TriggerInput(const FInputActionInstance& ActionInstance, const FName InputName)
 {
-	const auto Value = ActionInstance.GetValue();
-
-	switch (Value.GetValueType())
-	{
-		case EInputActionValueType::Boolean:
-			RawButtonContainer[InputName] = Value.Get<bool>();
-		break;
-		case EInputActionValueType::Axis2D:
-			RawAxisContainer[InputName] = Value.Get<FVector2D>();
-		break;
-		default:
-			break;
-
-	}
+	RawValueContainer[InputName] = FRawInputValue(ActionInstance);
 }
 
-void UInputBufferSubsystem::CompleteInput(const FInputActionValue& ActionValue, const FName InputName)
+void UInputBufferSubsystem::CompleteInput(const FInputActionInstance& ActionInstance, const FName InputName)
 {
-	switch (ActionValue.GetValueType())
-	{
-		case EInputActionValueType::Boolean:
-			RawButtonContainer[InputName] = false;
-		break;
-		case EInputActionValueType::Axis2D:
-			RawAxisContainer[InputName] = FVector2D::ZeroVector;
-		break;
-		default:
-			break;
-	}
+	RawValueContainer[InputName] = FRawInputValue(ActionInstance);
 }
 //END Input Registration Events
 
@@ -146,14 +130,14 @@ void UInputBufferSubsystem::UpdateBuffer()
 	NewFrame.CopyFrameState(FrontFrame);
 	NewFrame.UpdateFrameState();
 	
-	/* Push newly updated frame to the buffer, and delete oldest frame from heap */
+	/* Push newly updated frame to the buffer */
 	InputBuffer.PushFront(NewFrame);
 	
 	/* Store the frame value in which each action input can be used */
 	for (const auto InputID : InputMap->GetActionIDs())
 	{
 		ButtonInputValidFrame[InputID] = -1;
-		for (int frame = 0; frame < BufferSize; frame++)
+		for (int frame = 0; frame > BUFFER_SIZE; frame++) // Iterating From Newest To Oldest Input (Most Valid Oldest Input Takes Prescedence)
 		{
 			/* First set release, let press override it though */
 			if (InputBuffer[frame].InputsFrameState[InputID].HoldTime == -1) ButtonInputValidFrame[InputID] = -2; // NOTE: temp to recognize release
@@ -171,15 +155,17 @@ void UInputBufferSubsystem::UpdateBuffer()
 		const FName DirectionInputAxisID = InputMap->DirectionalActionMap->GetDirectionalActionID();
 		
 		DirectionalInputValidFrame[InputID] = -1;
-		DirectionalInput->Reset();
-		// Reset CheckStep and CurAngle, their requirements must be satisfied within the buffer time-frame
-		for (int frame = 0; frame < BufferSize; frame++)
+		DirectionalInput->Reset(); // Resets transient values that are to be checked during the buffer window
+
+		for (int frame = BUFFER_SIZE-1; frame >= 0; frame--) // Iterating From Oldest To Newest (To Check Sequence Order)
 		{
-			const FVector2D DirectionInputVector = InputBuffer[frame].InputsFrameState[DirectionInputAxisID].VectorValue;
+			const FVector2D DirectionInputVector = InputBuffer[frame].InputsFrameState[DirectionInputAxisID].Value.Get<FVector2D>();
+			FVector ProcessedInputVector, PlayerForward, PlayerRight;
+			ProcessDirectionVector(DirectionInputVector, ProcessedInputVector, PlayerForward, PlayerRight);
 			
-			if (DirectionalInput->CheckMotionDirection(DirectionInputVector))
+			if (DirectionalInput->CheckMotionDirection(DirectionInputVector, ProcessedInputVector, PlayerForward, PlayerRight))
 			{
-				DirectionalInputValidFrame[InputID] = frame;
+				DirectionalInputValidFrame[InputID] = frame; // Will usually be zero, the frame in which the input was satisfied
 			}
 		}
 	}
@@ -188,11 +174,12 @@ void UInputBufferSubsystem::UpdateBuffer()
 
 void UInputBufferSubsystem::EvaluateEvents()
 {
+	SCOPE_CYCLE_COUNTER(STAT_EvalEvents)
 	
 	/* Invoke Action Events */
-	for (auto Action : InputMap->InputActionMap->GetMappings())
+	for (auto Action : InputMap->GetInputActions())
 	{
-		const FName ActionID = FName(Action.Action->ActionDescription.ToString());
+		const FName ActionID = FName(Action->ActionDescription.ToString());
 		const float HoldThreshold = 0.f;
 
 		// Or could consolidate it into 1 event and have an Enum differentiate it?
@@ -203,8 +190,7 @@ void UInputBufferSubsystem::EvaluateEvents()
 		
 		if (bPressed)
 		{
-			UE_LOG(LogTemp, Error, TEXT("Broadcasting pressed event for action %s"), *Action.Action->ActionDescription.ToString());
-			InputPressedDelegate.Broadcast(Action.Action, FInputActionValue());
+			InputPressedDelegate.Broadcast(Action, FInputActionValue());
 		}
 		//if (bHeld)
 		//{
@@ -213,7 +199,7 @@ void UInputBufferSubsystem::EvaluateEvents()
 		//}
 		if (bReleased)
 		{
-			InputReleasedDelegate.Broadcast(Action.Action);
+			InputReleasedDelegate.Broadcast(Action);
 		}
 	}
 
@@ -221,19 +207,19 @@ void UInputBufferSubsystem::EvaluateEvents()
 	for (auto Direction : InputMap->DirectionalActionMap->GetMappings())
 	{
 		
-		const bool bRegistered = DirectionalInputValidFrame[Direction->GetID()] > 0;
+		const bool bRegistered = DirectionalInputValidFrame[Direction->GetID()] >= 0;
 		if (bRegistered)
 		{
 			DirectionalInputRegisteredDelegate.Broadcast(Direction);
 
-			for (auto Action : InputMap->InputActionMap->GetMappings())
+			for (auto Action : InputMap->GetInputActions())
 			{
-				const FName ActionID = FName(Action.Action->ActionDescription.ToString());
+				const FName ActionID = FName(Action->ActionDescription.ToString());
 				const bool bPressed = ButtonInputValidFrame[ActionID] > 0 && DirectionalInputValidFrame[Direction->GetID()] > ButtonInputValidFrame[ActionID];
 
 				if (bPressed)
 				{
-					DirectionalAndButtonDelegate.Broadcast(Action.Action, Direction);
+					DirectionalAndButtonDelegate.Broadcast(Action, Direction);
 				}
 			}
 		}
@@ -277,6 +263,37 @@ bool UInputBufferSubsystem::ConsumeDirectionalInput(const UMotionAction* Input)
 	return false;
 }
 
+void UInputBufferSubsystem::ProcessDirectionVector(const FVector2D& DirectionInputVector, FVector& ProcessedInputVector, FVector& OutPlayerForward, FVector& OutPlayerRight) const
+{
+	const auto Controller = GetLocalPlayer<ULocalPlayer>()->GetPlayerController(GetWorld());
+	
+	if (Controller != nullptr)
+	{
+		// find out which way is forward
+		const FRotator Rotation = Controller->GetControlRotation();
+		const FRotator YawRotation(0, Rotation.Yaw, 0);
+
+		// get forward vector
+		const FVector ForwardDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
+	
+		// get right vector 
+		const FVector RightDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
+
+		ProcessedInputVector = ForwardDirection * DirectionInputVector.Y + RightDirection * DirectionInputVector.X;
+
+		if (const auto Owner = Controller->GetPawn())
+		{
+			OutPlayerForward = Owner->GetActorForwardVector();
+			OutPlayerRight = Owner->GetActorRightVector();
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("Controller Has No Valid Pawn Owner"))
+		}
+	}
+}
+
+
 void UInputBufferSubsystem::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL, float& YPos)
 {
 	FDisplayDebugManager& DisplayDebugManager = Canvas->DisplayDebugManager;
@@ -286,6 +303,7 @@ void UInputBufferSubsystem::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInf
 	DisplayDebugManager.SetDrawColor(FColor::Yellow);
 	
 	DisplayDebugManager.DrawString(TEXT("-----INPUT BUFFER DEBUG-----"));
+	
 	/* Draw Buffer Oldest Frame Vals*/
 	FString InputFrames = "";
 	for (auto ID : InputMap->GetActionIDs())
@@ -312,7 +330,7 @@ void UInputBufferSubsystem::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInf
 	XOffset *= 0.75 * InputNames.Len();
 	
 	/* Next we iterate through each row of the input buffer, drawing it to the screen */
-	for (int i = 0; i < BufferSize; i++)
+	for (int i = 0; i < BUFFER_SIZE; i++)
 	{
 		auto BufferRow = InputBuffer[i].InputsFrameState;
 		FString BufferRowText = "";
@@ -341,9 +359,10 @@ void UInputBufferSubsystem::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInf
 	
 	DisplayDebugManager.SetYPos(YPosD);
 	FString DirectionalValues = "";	
-	for (auto ID : InputMap->GetDirectionalIDs())
+	for (const auto DirectionalAction : InputMap->DirectionalActionMap->GetMappings())
 	{
-		DirectionalValues = FString::FromInt(DirectionalInputValidFrame[ID]);
+		DirectionalValues = FString::FromInt(DirectionalInputValidFrame[DirectionalAction->GetID()]);
+		if (DirectionalAction->bAngleChange) DirectionalValues += "     " + FString::SanitizeFloat(DirectionalAction->CurAngle);
 		DisplayDebugManager.DrawString(DirectionalValues, XOffset);
 	}
 }

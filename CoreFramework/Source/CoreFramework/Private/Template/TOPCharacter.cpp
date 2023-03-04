@@ -81,7 +81,8 @@ void ATOPCharacter::SetupPlayerInputComponent(class UInputComponent* PlayerInput
 
 				// Bind Input Buffer Shit
 				//Subsystem->InputPressedDelegate.AddDynamic(this, &ATOPCharacter::InputTriggered);
-				Subsystem->DirectionalAndButtonDelegate.AddDynamic(this, &ATOPCharacter::DirectionalRegistered);
+				//Subsystem->DirectionalAndButtonDelegate.AddDynamic(this, &ATOPCharacter::DirectionalRegistered);
+				Subsystem->DirectionalInputRegisteredDelegate.AddDynamic(this, &ATOPCharacter::DirectionalRegistered);
 				//Subsystem->InputPressedDelegate.AddUFunction(this, &ATOPCharacter::InputTriggered);
 				//Subsystem->InputPressedDelegate.Add()
 				Subsystem->InputReleasedDelegate.AddDynamic(this, &ATOPCharacter::InputReleased);
@@ -112,9 +113,9 @@ void ATOPCharacter::InputTriggered(const UInputAction* InputAction, const FInput
 	}
 }
 
-void ATOPCharacter::DirectionalRegistered(const UInputAction* InputAction, const UMotionAction* Motion)
+void ATOPCharacter::DirectionalRegistered(const UMotionAction* Motion)
 {
-	if (InputAction == JumpAction && DirectionalInput == Motion) Jump(FInputActionValue());
+	if (DirectionalInput == Motion) Jump(FInputActionValue());
 }
 
 
