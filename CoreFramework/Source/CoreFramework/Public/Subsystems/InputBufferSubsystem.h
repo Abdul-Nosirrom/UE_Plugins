@@ -6,6 +6,7 @@
 #include "Subsystems/LocalPlayerSubsystem.h"
 #include "BufferContainer.h"
 #include "InputData.h"
+#include "InputBufferPrimitives.h"
 #include "InputBufferSubsystem.generated.h"
 
 /* Profiling & Log Groups */

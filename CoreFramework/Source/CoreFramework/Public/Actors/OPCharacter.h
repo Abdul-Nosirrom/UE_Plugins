@@ -12,9 +12,10 @@ class UCustomMovementComponent;
 class UCapsuleComponent;
 class UArrowComponent;
 class UOPMovementComponent;
+enum EMovementState;
 
 /* Delegate Declarations */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FMovementStateChangedSignature, class AOPCharacter*, Character, enum EMovementState, PrevMovementState);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FMovementStateChangedSignature, class AOPCharacter*, Character, EMovementState, PrevMovementState);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOPLandedSignature, const FHitResult&, Hit);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FLostFloorStabilitySignature, const FHitResult&, Hit);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FWalkedOffLedge, const FVector&, PreviousFloorImpactNormal, const FVector&, PreviousFloorContactNormal, const FVector&, PreviousLocation, float, DeltaTime);
