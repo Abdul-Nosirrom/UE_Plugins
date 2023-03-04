@@ -70,6 +70,11 @@ bool UMotionAction::CheckMotionDirection(const FVector2D& AxisInput, const FVect
 		// This call will update CurAngle, ensure angle change was initialized first (Meaning an earlier frame aligned with FromDirection)
 		if (bInputAlignmentInitialized) // Progression should go [NEUTRAL->ALIGNED->Start Checking Angle Deltas]
 		{
+			if (AxisInput.IsZero())
+			{
+				Reset();
+				return false;
+			}
 			UpdateCurrentAngle(AxisInput);
 			return CurAngle >= AngleDelta;
 		}
