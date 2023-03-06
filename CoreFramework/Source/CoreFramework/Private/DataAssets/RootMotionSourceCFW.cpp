@@ -6,6 +6,7 @@
 #include "Components/RadicalMovementComponent.h"
 #include "Curves/CurveVector.h"
 #include "Curves/CurveFloat.h"
+#include "RootMotionTasks/RootMotionTask_Base.h"
 
 #pragma region Utility
 
@@ -371,6 +372,20 @@ bool FRootMotionSourceGroupCFW::GetOverrideRootMotionRotation
 		}
 	}
 	return false;
+}
+
+void FRootMotionSourceGroupCFW::ClearAndDestroy()
+{
+	/* Delete tasks */
+	for (auto Source : RootMotionSources)
+	{
+		if (auto Cast = StaticCastSharedPtr<FRootMotionSourceCFW>(Source))
+		{
+			if (Cast->AssociatedTask) Cast->AssociatedTask->OnDestroy();
+		}
+	}
+
+	Clear();
 }
 
 

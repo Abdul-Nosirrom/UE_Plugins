@@ -94,6 +94,7 @@ void URootMotionTask_ConstantForce::SharedInitAndApply()
 			ConstantForce->FinishVelocityParams.Mode = FinishVelocityMode;
 			ConstantForce->FinishVelocityParams.SetVelocity = FinishSetVelocity;
 			ConstantForce->FinishVelocityParams.ClampVelocity = FinishClampVelocity;
+			ConstantForce->AssociatedTask = this;
 			if (bEnableGravity)
 			{
 				ConstantForce->Settings.SetFlag(ERootMotionSourceSettingsFlags::IgnoreZAccumulate);

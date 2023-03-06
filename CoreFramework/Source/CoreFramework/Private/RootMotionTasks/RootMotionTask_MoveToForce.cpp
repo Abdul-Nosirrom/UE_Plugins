@@ -122,6 +122,7 @@ void URootMotionTask_MoveToForce::SharedInitAndApply()
 			MoveToForce->FinishVelocityParams.Mode = FinishVelocityMode;
 			MoveToForce->FinishVelocityParams.SetVelocity = FinishSetVelocity;
 			MoveToForce->FinishVelocityParams.ClampVelocity = FinishClampVelocity;
+			MoveToForce->AssociatedTask = this;
 			RootMotionSourceID = MovementComponent->ApplyRootMotionSource(MoveToForce);
 		}
 	}

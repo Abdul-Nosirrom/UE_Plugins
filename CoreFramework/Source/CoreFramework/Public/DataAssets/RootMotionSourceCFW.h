@@ -9,6 +9,7 @@
 /* FORWARD DECLARATIONS */
 class ARadicalCharacter;
 class URadicalMovementComponent;
+class URootMotionTask_Base;
 
 #define ROOT_MOTION_DEBUG (1 && !(UE_BUILD_SHIPPING || UE_BUILD_TEST))
 
@@ -29,6 +30,9 @@ struct COREFRAMEWORK_API FRootMotionSourceCFW : public FRootMotionSource
 	virtual void PrepareCustomRootMotion(float SimulationTime, float MovementTickTime, const ARadicalCharacter& Character, const URadicalMovementComponent& MoveComponent);
 
 	virtual void AddReferencedObjects(FReferenceCollector& Collector) override {}
+
+	UPROPERTY()
+	TObjectPtr<URootMotionTask_Base> AssociatedTask;
 };
 
 USTRUCT()
@@ -54,7 +58,9 @@ struct COREFRAMEWORK_API FRootMotionSourceGroupCFW : public FRootMotionSourceGro
 
 	/** Get rotation output of current override root motion source, returns true if OutRotation was filled */
 	bool GetOverrideRootMotionRotation(float DeltaTime, const ARadicalCharacter& Character, const URadicalMovementComponent& MoveComponent, FQuat& OutRotation) const;
-
+	
+	void ClearAndDestroy(); 
+	
 protected:
 
 	/** Accumulates contributions for velocity into InOutVelocity for a given type of root motion from this group */

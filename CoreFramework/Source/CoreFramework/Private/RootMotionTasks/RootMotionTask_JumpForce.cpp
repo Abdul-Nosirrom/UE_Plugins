@@ -154,6 +154,7 @@ void URootMotionTask_JumpForce::SharedInitAndApply()
 			JumpForce->FinishVelocityParams.Mode = FinishVelocityMode;
 			JumpForce->FinishVelocityParams.SetVelocity = FinishSetVelocity;
 			JumpForce->FinishVelocityParams.ClampVelocity = FinishClampVelocity;
+			JumpForce->AssociatedTask = this;
 			RootMotionSourceID = MovementComponent->ApplyRootMotionSource(JumpForce);
 		}
 	}

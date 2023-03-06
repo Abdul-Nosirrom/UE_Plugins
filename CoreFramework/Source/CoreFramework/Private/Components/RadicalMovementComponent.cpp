@@ -2548,6 +2548,10 @@ void URadicalMovementComponent::InitApplyRootMotionToVelocity(float DeltaTime)
 	// Animation root motion overrides velocity and doesn't allow for any other root motion sources
 	if (HasAnimRootMotion())
 	{
+		// Get rid of root motion sources if we have any, this will always override it so we don't get weird behavior (esp because we have no "GAS" stuff so we have to manually handle them here)
+		// NOTE: Clear() will just clear the root motion but tasks will still fire off delegates, ClearAndDestroy destroys the Task objects so its delegates wont be fired
+		CurrentRootMotion.ClearAndDestroy();
+		
 		// Convert to world space
 		USkeletalMeshComponent* SkeletalMesh = CharacterOwner->GetMesh();
 		if (SkeletalMesh)

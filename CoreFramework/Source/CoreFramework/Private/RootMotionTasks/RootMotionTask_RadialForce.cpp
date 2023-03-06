@@ -105,6 +105,7 @@ inline void URootMotionTask_RadialForce::SharedInitAndApply()
 			RadialForce->FinishVelocityParams.Mode = FinishVelocityMode;
 			RadialForce->FinishVelocityParams.SetVelocity = FinishSetVelocity;
 			RadialForce->FinishVelocityParams.ClampVelocity = FinishClampVelocity;
+			RadialForce->AssociatedTask = this;
 			RootMotionSourceID = MovementComponent->ApplyRootMotionSource(RadialForce);
 		}
 	}
