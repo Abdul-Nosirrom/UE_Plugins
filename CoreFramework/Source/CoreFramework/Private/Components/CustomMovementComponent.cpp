@@ -359,7 +359,6 @@ void UCustomMovementComponent::OnTeleported()
 	UPrimitiveComponent* OldBase = GetMovementBase();
 	UPrimitiveComponent* NewBase = nullptr;
 
-	// TODO: Maybe an extra vertical velocity check against floor normal
 	if (OldBase && CurrentFloor.IsWalkableFloor() && CurrentFloor.FloorDist <= MAX_FLOOR_DIST)
 	{
 		NewBase = CurrentFloor.HitResult.Component.Get();
@@ -408,7 +407,6 @@ void UCustomMovementComponent::OnMovementStateChanged(EMovementState PreviousMov
 	
 	if (PhysicsState == STATE_Grounded)
 	{
-		// TODO: Project velocity in a way that makes sense
 		/* Update floor/base on initial entry of the walking physics */
 		FindFloor(UpdatedComponent->GetComponentLocation(), CurrentFloor, false);
 		AdjustFloorHeight();
@@ -424,10 +422,11 @@ void UCustomMovementComponent::OnMovementStateChanged(EMovementState PreviousMov
 	}
 	else if (PhysicsState == STATE_Falling)
 	{
-		// DEBUG:
-		LOG_HIT(CurrentFloor.HitResult, 2.f);
-
-		CurrentFloor.Clear();
+		
+		if (!CurrentFloor.bBlockingHit)
+		{
+			CurrentFloor.Clear();
+		}
 
 		if (!CharacterOwner->HasBasedMovementOverride())
 		{
@@ -498,13 +497,14 @@ void UCustomMovementComponent::ClearAccumulatedForces()
 	PendingLaunchVelocity = FVector::ZeroVector;
 }
 
-// TODO:
 void UCustomMovementComponent::ApplyAccumulatedForces(float DeltaTime)
 {
-	if (PendingImpulseToApply.Z != 0.f || PendingForceToApply.Z != 0.f)
+	const float PendingVertImpulse = PendingImpulseToApply | GetUpOrientation(MODE_Gravity);
+	const float PendignVertForce = PendingForceToApply | GetUpOrientation(MODE_Gravity);
+	if (PendingVertImpulse != 0.f || PendingVertImpulse != 0.f)
 	{
 		// check to see if applied momentum is enough to overcome gravity
-		if ( IsMovingOnGround() && (PendingImpulseToApply.Z + (PendingForceToApply.Z * DeltaTime) + (GetGravityZ() * DeltaTime) > UE_SMALL_NUMBER))
+		if ( IsMovingOnGround() && (PendingVertImpulse + (PendignVertForce * DeltaTime) + (GetGravityZ() * DeltaTime) > UE_SMALL_NUMBER))
 		{
 			SetMovementState(STATE_Falling);
 		}
@@ -517,14 +517,14 @@ void UCustomMovementComponent::ApplyAccumulatedForces(float DeltaTime)
 	PendingForceToApply = FVector::ZeroVector;
 }
 
-// TODO:
+
 bool UCustomMovementComponent::HandlePendingLaunch()
 {
 	if (!PendingLaunchVelocity.IsZero())
 	{
 		Velocity = PendingLaunchVelocity;
 		PendingLaunchVelocity = FVector::ZeroVector;
-		if (Velocity.Z > 0)
+		if ((Velocity | GetUpOrientation(MODE_Gravity)) > 0)
 			SetMovementState(STATE_Falling);
 		return true;
 	}
@@ -564,13 +564,10 @@ void UCustomMovementComponent::PerformMovement(float DeltaTime)
 	SCOPE_CYCLE_COUNTER(STAT_PerformMovement)
 	
 	// Setup movement, and do not progress if setup fails
-	// TODO: Looking at CMC in UE4.10, there's no need to consume root motion and all that. It just returns...
 	if (!PreMovementUpdate(DeltaTime))
 	{
 		return;
 	}
-
-	// TODO: Temp removed the OldVelocity/Location stuff because it doesn't really have any relevance atm
 	
 	// Internal Character Move - looking at CMC, it applies UpdateVelocity, RootMotion, etc... before the character move...
 	{
@@ -586,15 +583,15 @@ void UCustomMovementComponent::PerformMovement(float DeltaTime)
 			if (bHasRootMotionSources)
 			{
 				const FVector VelocityBeforeCleanup = Velocity;
-				CurrentRootMotion.CleanUpInvalidRootMotion(DeltaTime, *CharacterOwner, *this); // TODO: Does this fuck with our Z velocity?
+				CurrentRootMotion.CleanUpInvalidRootMotion(DeltaTime, *CharacterOwner, *this);
 			}
 		}
 		
 		FVector OldVelocity = Velocity; // Used to check for AdditiveRootMotion (would apply accumulated forces to root motion)
 		
 		/* Trigger gameplay event for velocity modification & apply pending impulses and forces*/
-		ApplyAccumulatedForces(DeltaTime); // TODO: Here's where we'd also check for bMustUnground
-		HandlePendingLaunch(); // TODO: This would auto-unground
+		ApplyAccumulatedForces(DeltaTime); 
+		HandlePendingLaunch(); 
 		ClearAccumulatedForces();
 
 		/* Updated saved LastPreAdditiveVelocity with any external changes to character velocity from the above methods */
@@ -606,15 +603,12 @@ void UCustomMovementComponent::PerformMovement(float DeltaTime)
 			}
 		}
 		
-		// TODO: Offer another delegate that's not substepped?
-		//UpdateVelocity(Velocity, DeltaTime);
-
 		/* Apply root motion after velocity modifications */
 		if (bHasRootMotionSources)
 		{
 			if (CharacterOwner && CharacterOwner->IsPlayingRootMotion())
 			{
-				TickPose(DeltaTime); // TODO: Remove applying root motion velocity from here, we do this below
+				TickPose(DeltaTime);
 			}
 
 			/* Generates root motion to be used this frame from sources other than animation */
@@ -630,7 +624,7 @@ void UCustomMovementComponent::PerformMovement(float DeltaTime)
 		}
 
 		// Nan check
-		ensureMsgf(!Velocity.ContainsNaN(), TEXT("UCustomMovementComponent::PerformMovement: Velocity contains NaN (%s)\n%s"), *GetPathNameSafe(this), *Velocity.ToString());
+		ensureMsgf(!Velocity.ContainsNaN(), TEXT("URadicalMovementComponent::PerformMovement: Velocity contains NaN (%s)\n%s"), *GetPathNameSafe(this), *Velocity.ToString());
 		
 		/* Perform actual move */
 		StartMovementTick(DeltaTime, 0);
@@ -855,7 +849,7 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 		if (bCheckLedges && !CurrentFloor.IsWalkableFloor())
 		{
 			// Calculate possible alternate movement
-			const FVector DownDir = -GetUpOrientation(MODE_Gravity); // TODO: We're on ground, so assume our rotation is oriented correctly
+			const FVector DownDir = -GetUpOrientation(MODE_Gravity); 
 			const FVector NewDelta = bTriedLedgeMove ? FVector::ZeroVector : GetLedgeMove(OldLocation, Delta, DownDir);
 			if (!NewDelta.IsZero())
 			{
@@ -968,7 +962,7 @@ void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteration
 	
 	float RemainingTime = DeltaTime;
 	// NOTE: Not much way to get the ShouldLimitAirControl equivalent here :/
-	const bool bHasLimitedAirControl = true;
+
 	const FVector Orientation = GetUpOrientation(MODE_Gravity);
 	while ((RemainingTime >= MIN_TICK_TIME) && (Iterations < MaxSimulationIterations))
 	{
@@ -1000,7 +994,7 @@ void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteration
 		DecayFormerBaseVelocity(IterTick);
 
 		/* Compute move parameters (if no root motion this just reduces to velocity * dt) */
-		FVector Adjusted = 0.5f * (OldVelocityWithRootMotion * Velocity) * IterTick;
+		FVector Adjusted = 0.5f * (OldVelocityWithRootMotion + Velocity) * IterTick;
 
 		/* Perform the move */
 		FHitResult Hit(1.f);
@@ -1321,7 +1315,7 @@ void UCustomMovementComponent::ProcessLanded(FHitResult& Hit, float DeltaTime, u
 void UCustomMovementComponent::StartFalling(uint32 Iterations, float RemainingTime, float IterTick, const FVector& Delta, const FVector SubLoc)
 {
 	const float DesiredDist = Delta.Size();
-	const float ActualDist = FVector::VectorPlaneProject(UpdatedComponent->GetComponentLocation() - SubLoc, GetUpOrientation(MODE_PawnUp)).Size(); // TODO: Doesn't respect arbitrary rotation, but we're transitioning to a fall
+	const float ActualDist = FVector::VectorPlaneProject(UpdatedComponent->GetComponentLocation() - SubLoc, GetUpOrientation(MODE_PawnUp)).Size(); // NOTE: Doesn't respect arbitrary rotation, but we're transitioning to a fall
 	RemainingTime = (DesiredDist < UE_KINDA_SMALL_NUMBER ? 0.f : RemainingTime + IterTick * (1.f - FMath::Min(1.f, ActualDist/DesiredDist)));
 
 	if (IsMovingOnGround())
@@ -1403,7 +1397,6 @@ bool UCustomMovementComponent::IsFloorStable(const FHitResult& Hit) const
 {
 	if (!Hit.IsValidBlockingHit()) return false;
 
-	// TODO: Ideally we'd check both
 	const FVector Orientation = StabilityOrientationMode == MODE_Gravity ? GetUpOrientation(MODE_Gravity) : GetUpOrientation(MODE_PawnUp);
 	float TestStableAngle = MaxStableSlopeAngle;
 	
@@ -1512,7 +1505,7 @@ void UCustomMovementComponent::AdjustFloorHeight()
 		} // Above MAX_FLOOR_DIST, could be a new floor value so we set that if its walkable
 
 		/* Don't recalculate velocity based on snapping, also avoid if we moved out of penetration */
-		bJustTeleported |= (OldFloorDist < 0.f); // TODO: This could affect projection if we don't do it manually (Old TODO, irrelevant maybe)
+		bJustTeleported |= (OldFloorDist < 0.f); 
 
 		/* If something caused us to adjust our height (especially a depenetration), we should ensure another check next frame or we will keep a stale result */
 		bForceNextFloorCheck = true;
@@ -1541,7 +1534,7 @@ void UCustomMovementComponent::ComputeFloorDist(const FVector& CapsuleLocation, 
 	if (DownwardSweepResult != nullptr && DownwardSweepResult->IsValidBlockingHit())
 	{
 		/* Accept it only if the supplied sweep was vertical and downwards relative to character orientation */
-		float TraceStartHeight = DownwardSweepResult->TraceStart | GetUpOrientation(MODE_PawnUp); // TODO: Gravity Orientation if ungrounded?
+		float TraceStartHeight = DownwardSweepResult->TraceStart | GetUpOrientation(MODE_PawnUp); 
 		float TraceEndHeight = DownwardSweepResult->TraceEnd | GetUpOrientation(MODE_PawnUp);
 		float TracePlaneProjection = FVector::VectorPlaneProject(DownwardSweepResult->TraceStart - DownwardSweepResult->TraceStart, GetUpOrientation(MODE_PawnUp)).SizeSquared();
 
@@ -1860,7 +1853,6 @@ bool UCustomMovementComponent::IsValidLandingSpot(const FVector& CapsuleLocation
 	} // Not in penetration
 	else
 	{
-		// TODO: Right orientation? This is for penetration anyways...
 		/* Normal is nearly horizontal or downward, that's a penetration adjustment next to a vertical or overhanging wall. Don't pop to the floor */
 		if ((Hit.ImpactNormal | GetUpOrientation(MODE_Gravity)) < UE_KINDA_SMALL_NUMBER) 
 		{
@@ -2594,10 +2586,9 @@ void UCustomMovementComponent::ApplyRootMotionToVelocity(float DeltaTime)
 	// Animation root motion is distinct from root motion sources and takes precedence (NOTE: UE comment mentions "right now" so maybe they'll be mixed later?)
 	if (HasAnimRootMotion() && DeltaTime > 0.f)
 	{
-		// TODO:
 		if (IsFalling())
 		{
-			Velocity += DecayingFormerBaseVelocity;
+			Velocity += CurrentRootMotion.HasOverrideVelocityWithIgnoreZAccumulate() ? FVector::VectorPlaneProject(DecayingFormerBaseVelocity, GetUpOrientation(MODE_Gravity)) : DecayingFormerBaseVelocity;
 		}
 		return;
 	}
@@ -2611,21 +2602,12 @@ void UCustomMovementComponent::ApplyRootMotionToVelocity(float DeltaTime)
 	{
 		CurrentRootMotion.AccumulateOverrideRootMotionVelocity(DeltaTime, *CharacterOwner, *this, Velocity);
 
-		// TODO:
 		if (IsFalling())
 		{
-			Velocity += CurrentRootMotion.HasOverrideVelocityWithIgnoreZAccumulate() ? FVector(DecayingFormerBaseVelocity.X, DecayingFormerBaseVelocity.Y, 0.f) : DecayingFormerBaseVelocity;
+			Velocity += CurrentRootMotion.HasOverrideVelocityWithIgnoreZAccumulate() ? FVector::VectorPlaneProject(DecayingFormerBaseVelocity, GetUpOrientation(MODE_Gravity)) : DecayingFormerBaseVelocity;
 		}
 		bAppliedRootMotion = true;
-
-#if ROOT_MOTION_DEBUG
-		if (OPRootMotionSourceDebug::CVarDebugRootMotionSources.GetValueOnGameThread() == 1)
-		{
-			FString AdjustedDebugString = FString::Printf(TEXT("ApplyRootMotionToVelocity HasOverrideVelocity Velocity(%s)"),
-				*Velocity.ToCompactString());
-			OPRootMotionSourceDebug::PrintOnScreen(*CharacterOwner, AdjustedDebugString);
-		}
-#endif
+		
 	}
 
 	// Next apply additive root motion
@@ -2636,20 +2618,11 @@ void UCustomMovementComponent::ApplyRootMotionToVelocity(float DeltaTime)
 		CurrentRootMotion.bIsAdditiveVelocityApplied = true; // Remember that we have it applied
 		bAppliedRootMotion = true;
 
-#if ROOT_MOTION_DEBUG
-		if (OPRootMotionSourceDebug::CVarDebugRootMotionSources.GetValueOnGameThread() == 1)
-		{
-			FString AdjustedDebugString = FString::Printf(TEXT("ApplyRootMotionToVelocity HasAdditiveVelocity Velocity(%s) LastPreAdditiveVelocity(%s)"),
-				*Velocity.ToCompactString(), *CurrentRootMotion.LastPreAdditiveVelocity.ToCompactString());
-			OPRootMotionSourceDebug::PrintOnScreen(*CharacterOwner, AdjustedDebugString);
-		}
-#endif
 	}
 
-	// TODO:
 	// Switch to Falling if we have vertical velocity from root motion so we can lift off the ground
 	const FVector AppliedVelocityDelta = Velocity - OldVelocity;
-	if( bAppliedRootMotion && AppliedVelocityDelta.Z != 0.f && IsMovingOnGround() )
+	if( bAppliedRootMotion && (AppliedVelocityDelta | GetUpOrientation(MODE_Gravity)) != 0.f && IsMovingOnGround() )
 	{
 		float LiftoffBound;
 		if( CurrentRootMotion.LastAccumulatedSettings.HasFlag(ERootMotionSourceSettingsFlags::UseSensitiveLiftoffCheck) )
@@ -2660,10 +2633,10 @@ void UCustomMovementComponent::ApplyRootMotionToVelocity(float DeltaTime)
 		else
 		{
 			// Default bounds - the amount of force gravity is applying this tick
-			LiftoffBound = FMath::Max(-GetGravityZ() * DeltaTime, UE_SMALL_NUMBER);
+			LiftoffBound = FMath::Max(-GetGravityZ() * DeltaTime, UE_SMALL_NUMBER); // TODO: Custom GetGravityZ to incorporate MovementData adjustments
 		}
 
-		if( AppliedVelocityDelta.Z > LiftoffBound )
+		if( (AppliedVelocityDelta | GetUpOrientation(MODE_Gravity)) > LiftoffBound )
 		{
 			SetMovementState(STATE_Falling);
 		}
@@ -2676,15 +2649,6 @@ void UCustomMovementComponent::RestorePreAdditiveRootMotionVelocity()
 	// so that we're not adding more additive velocity than intended
 	if( CurrentRootMotion.bIsAdditiveVelocityApplied )
 	{
-#if ROOT_MOTION_DEBUG
-		if (OPRootMotionSourceDebug::CVarDebugRootMotionSources.GetValueOnGameThread() == 1)
-		{
-			FString AdjustedDebugString = FString::Printf(TEXT("RestorePreAdditiveRootMotionVelocity Velocity(%s) LastPreAdditiveVelocity(%s)"), 
-				*Velocity.ToCompactString(), *CurrentRootMotion.LastPreAdditiveVelocity.ToCompactString());
-			OPRootMotionSourceDebug::PrintOnScreen(*CharacterOwner, AdjustedDebugString);
-		}
-#endif
-
 		Velocity = CurrentRootMotion.LastPreAdditiveVelocity;
 		CurrentRootMotion.bIsAdditiveVelocityApplied = false;
 	}
@@ -3198,7 +3162,6 @@ void UCustomMovementComponent::UpdateBasedMovement(float DeltaTime)
 			const FQuat TargetQuat = DeltaQuat * FinalQuat;
 			FRotator TargetRotator(TargetQuat);
 
-			// TODO: Option to only take planar ?
 			MoveUpdatedComponent(FVector::ZeroVector, TargetRotator, false);
 			FinalQuat = UpdatedComponent->GetComponentQuat();
 			
