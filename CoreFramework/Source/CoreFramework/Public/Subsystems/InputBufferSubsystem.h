@@ -52,11 +52,13 @@ public:
 	/// @brief Registers an input in the buffer as used, setting its current state to (-1) which is maintained until it's released
 	/// @param Input Data asset corresponding to input to be consumed
 	/// @return True if the input is consumed
+	UFUNCTION(BlueprintCallable)
 	bool ConsumeButtonInput(const UInputAction* Input);
 
 	/// @brief Registers an input in the buffer as used, setting its current state to (-1) which is maintained until it's released
 	/// @param Input Data asset corresponding to input to be consumed
 	/// @return True if the input is consumed
+	UFUNCTION(BlueprintCallable)
 	bool ConsumeDirectionalInput(const UMotionAction* Input);
 
 protected:
@@ -94,8 +96,9 @@ protected:
 	TObjectPtr<UInputBufferMap> InputMap;
 
 	/* CONSTANT BUFFER SETTINGS */
-	static constexpr uint8 BUFFER_SIZE		= 15;
-	static constexpr float TICK_INTERVAL	= 0.0167;
+	static constexpr uint8 BUFFER_SIZE		= 50;
+	static constexpr float TICK_INTERVAL	= 0.02;
+	uint32 LastFrameNumberWeTicked = INDEX_NONE;
 	
 	/* ~~~~~ Initialization & Update Tracking ~~~~~ */
 	UPROPERTY(Transient)
@@ -114,11 +117,13 @@ protected:
 	///			at the buffer frame (i)
 	TBufferContainer<FBufferFrame> InputBuffer;
 
+	// TODO: For the below, maybe having a "BufferState"
+
 	/// @brief	Holds the oldest frame of each input in which it can be used. (-1) corresponds to no input that can used,
 	///			meaning its not been registered, or been held for a while such that its no longer valid. Oldest frame to more
 	///			easily check chorded actions/input sequence
 	UPROPERTY(Transient)
-	TMap<FName, int8> ButtonInputValidFrame;
+	TMap<FName, FBufferState> ButtonInputValidFrame;
 
 	/// @brief	Holds the oldest frame of which a directional input was registered valid. (-1) corresponds to no input that can be used,
 	///			meaning its not been registered (DI have no concept of "held"). Frame held is the oldest frame in the buffer in which the input

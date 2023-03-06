@@ -42,8 +42,6 @@ void FBufferFrame::CopyFrameState(FBufferFrame& FrameState)
 
 void FInputFrameState::ResolveCommand()
 {
-	bUsed = false;
-
 	if (UInputBufferSubsystem::RawValueContainer.Contains(ID))
 	{
 		if (UInputBufferSubsystem::RawValueContainer[ID].IsThereInput())
@@ -52,16 +50,27 @@ void FInputFrameState::ResolveCommand()
 		}
 		else
 		{
+			bUsed = false; // NOTE: Let bUsed carry over from previous frames (to invoke valid Holds), it's reset when the input is released (if never consumed that carries over so its fine)
 			ReleaseHold();
 		}
 	}
 }
 
-// TODO: The condition for HoldTime == 1 is kind of rigid but makes sense because we don't wanna use old inputs
-bool FInputFrameState::CanExecute() const
+bool FInputFrameState::CanInvokePress() const
 {
 	return (HoldTime == 1 && !bUsed);
 }
+
+bool FInputFrameState::CanInvokeHold() const
+{
+	return (HoldTime > 1 && bUsed);
+}
+
+bool FInputFrameState::CanInvokeRelease() const
+{
+	return (HoldTime == -1 && bUsed);
+}
+
 
 void FInputFrameState::HoldUp(FInputActionValue InValue)
 {

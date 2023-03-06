@@ -89,7 +89,7 @@ static FVector EvaluateVectorCurveAtFraction(const UCurveVector& Curve, const fl
 
 #pragma endregion Utility
 
-void FOPRootMotionSource::PrepareRootMotion(float SimulationTime, float MovementTickTime, const AOPCharacter& Character, const UCustomMovementComponent& MoveComponent)
+void FOPRootMotionSource::PrepareCustomRootMotion(float SimulationTime, float MovementTickTime, const AOPCharacter& Character, const UCustomMovementComponent& MoveComponent)
 {
 	RootMotionParams.Clear();
 }
@@ -240,7 +240,7 @@ void FOPRootMotionSourceGroup::PrepareRootMotion(float DeltaTime, const AOPChara
 					// Do the Preparation (calculates root motion transforms to be applied)
 
 					OPRootMotionSource->bSimulatedNeedsSmoothing = false;
-					OPRootMotionSource->PrepareRootMotion(SimulationTime, DeltaTime, Character, MoveComponent);
+					OPRootMotionSource->PrepareCustomRootMotion(SimulationTime, DeltaTime, Character, MoveComponent);
 					LastAccumulatedSettings += OPRootMotionSource->Settings;
 					OPRootMotionSource->Status.SetFlag(ERootMotionSourceStatusFlags::Prepared);	
 					
@@ -444,7 +444,7 @@ bool FOPRootMotionSource_ConstantForce::UpdateStateFrom(const FRootMotionSource*
 	return true; // ConstantForce has no unique state other than Time which is handled by FRootMotionSource
 }
 
-void FOPRootMotionSource_ConstantForce::PrepareRootMotion
+void FOPRootMotionSource_ConstantForce::PrepareCustomRootMotion
 	(
 		float SimulationTime, 
 		float MovementTickTime,
@@ -573,7 +573,7 @@ bool FOPRootMotionSource_RadialForce::UpdateStateFrom(const FRootMotionSource* S
 	return true; // RadialForce has no unique state other than Time which is handled by FRootMotionSource
 }
 
-void FOPRootMotionSource_RadialForce::PrepareRootMotion
+void FOPRootMotionSource_RadialForce::PrepareCustomRootMotion
 	(
 		float SimulationTime, 
 		float MovementTickTime,
@@ -743,7 +743,7 @@ FVector FOPRootMotionSource_MoveToForce::GetPathOffsetInWorldSpace(const float M
 	return FVector::ZeroVector;
 }
 
-void FOPRootMotionSource_MoveToForce::PrepareRootMotion
+void FOPRootMotionSource_MoveToForce::PrepareCustomRootMotion
 	(
 		float SimulationTime, 
 		float MovementTickTime,
@@ -917,7 +917,7 @@ FVector FOPRootMotionSource_MoveToDynamicForce::GetPathOffsetInWorldSpace(const 
 	return FVector::ZeroVector;
 }
 
-void FOPRootMotionSource_MoveToDynamicForce::PrepareRootMotion
+void FOPRootMotionSource_MoveToDynamicForce::PrepareCustomRootMotion
 	(
 		float SimulationTime, 
 		float MovementTickTime,
@@ -1131,7 +1131,7 @@ FVector FOPRootMotionSource_JumpForce::GetRelativeLocation(float MoveFraction) c
 	return FacingRotation.RotateVector(RelativeLocationFacingSpace);
 }
 
-void FOPRootMotionSource_JumpForce::PrepareRootMotion
+void FOPRootMotionSource_JumpForce::PrepareCustomRootMotion
 	(
 		float SimulationTime, 
 		float MovementTickTime,

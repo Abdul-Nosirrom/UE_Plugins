@@ -8,26 +8,33 @@
 #pragma region Profiling & CVars
 /* Core Update Loop */
 DECLARE_CYCLE_STAT(TEXT("Tick Component"), STAT_TickComponent, STATGROUP_RadicalMovementComp)
-DECLARE_CYCLE_STAT(TEXT("On Movement Mode Changed"), STAT_OnMovementModeChanged, STATGROUP_RadicalMovementComp)
+DECLARE_CYCLE_STAT(TEXT("On Movement State Changed"), STAT_OnMovementStateChanged, STATGROUP_RadicalMovementComp)
 DECLARE_CYCLE_STAT(TEXT("Perform Movement"), STAT_PerformMovement, STATGROUP_RadicalMovementComp)
 DECLARE_CYCLE_STAT(TEXT("Pre Movement Update"), STAT_PreMovementUpdate, STATGROUP_RadicalMovementComp)
-DECLARE_CYCLE_STAT(TEXT("Movement Update"), STAT_MovementUpdate, STATGROUP_RadicalMovementComp)
 
-/* Movement Tick */
+/* Movement Ticks */
+DECLARE_CYCLE_STAT(TEXT("Ground Movement Tick"), STAT_GroundTick, STATGROUP_RadicalMovementComp)
+DECLARE_CYCLE_STAT(TEXT("Air Movement Tick"), STAT_AirTick, STATGROUP_RadicalMovementComp)
+DECLARE_CYCLE_STAT(TEXT("General Movement Tick"), STAT_GenTick, STATGROUP_RadicalMovementComp)
+
+/* Collision Resolution */
 DECLARE_CYCLE_STAT(TEXT("Slide Along Surface"), STAT_SlideAlongSurface, STATGROUP_RadicalMovementComp)
 DECLARE_CYCLE_STAT(TEXT("Two Wall Adjust"), STAT_TwoWallAdjust, STATGROUP_RadicalMovementComp)
 DECLARE_CYCLE_STAT(TEXT("Handle Impact"), STAT_HandleImpact, STATGROUP_RadicalMovementComp)
 DECLARE_CYCLE_STAT(TEXT("Step Up"), STAT_StepUp, STATGROUP_RadicalMovementComp)
 
+/* Events */
+DECLARE_CYCLE_STAT(TEXT("Calculate Velocity"), STAT_CalcVel, STATGROUP_RadicalMovementComp)
+DECLARE_CYCLE_STAT(TEXT("Update Rotation"), STAT_UpdateRot, STATGROUP_RadicalMovementComp)
+
+
 /* Hit Queries */
-DECLARE_CYCLE_STAT(TEXT("Resolve Penetration"), STAT_ResolvePenetration, STATGROUP_RadicalMovementComp)
-DECLARE_CYCLE_STAT(TEXT("Probe Ground"), STAT_ProbeGround, STATGROUP_RadicalMovementComp)
-DECLARE_CYCLE_STAT(TEXT("Ground Sweep"), STAT_GroundSweep, STATGROUP_RadicalMovementComp)
-DECLARE_CYCLE_STAT(TEXT("Line Casts"), STAT_LineCasts, STATGROUP_RadicalMovementComp )
-DECLARE_CYCLE_STAT(TEXT("Evaluate Hit Stability"), STAT_EvalHitStability, STATGROUP_RadicalMovementComp)
+DECLARE_CYCLE_STAT(TEXT("Find Floor"), STAT_FindFloor, STATGROUP_RadicalMovementComp)
+DECLARE_CYCLE_STAT(TEXT("Process Landed"), STAT_ProcessLanded, STATGROUP_RadicalMovementComp)
 
 /* Features */
 DECLARE_CYCLE_STAT(TEXT("Tick Pose"), STAT_TickPose, STATGROUP_RadicalMovementComp)
+DECLARE_CYCLE_STAT(TEXT("Apply Root Motion"), STAT_RootMotion, STATGROUP_RadicalMovementComp)
 DECLARE_CYCLE_STAT(TEXT("Move With Base"), STAT_MoveWithBase, STATGROUP_RadicalMovementComp)
 DECLARE_CYCLE_STAT(TEXT("Physics Interaction"), STAT_PhysicsInteraction, STATGROUP_RadicalMovementComp)
 
@@ -101,7 +108,7 @@ UCustomMovementComponent::UCustomMovementComponent()
 	PendingImpulseToApply = FVector::ZeroVector;
 	PendingLaunchVelocity = FVector::ZeroVector;
 
-	PhysicsState = STATE_Grounded;
+	PhysicsState = STATE_Falling;
 	bForceNextFloorCheck = true;
 	bAlwaysCheckFloor = true;
 
@@ -170,8 +177,9 @@ void UCustomMovementComponent::Deactivate()
 /* FUNCTIONAL */
 void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
+	SCOPED_NAMED_EVENT(URadicalMovementComponent_TickComponent, FColor::Yellow)
 	SCOPE_CYCLE_COUNTER(STAT_TickComponent)
-	
+
 	InputVector = ConsumeInputVector();
 
 	if (ShouldSkipUpdate(DeltaTime))
@@ -396,6 +404,8 @@ void UCustomMovementComponent::SetMovementState(EMovementState NewMovementState)
 
 void UCustomMovementComponent::OnMovementStateChanged(EMovementState PreviousMovementState)
 {
+	SCOPE_CYCLE_COUNTER(STAT_OnMovementStateChanged);
+	
 	if (PhysicsState == STATE_Grounded)
 	{
 		// TODO: Project velocity in a way that makes sense
@@ -569,33 +579,71 @@ void UCustomMovementComponent::PerformMovement(float DeltaTime)
 		
 		/* Update Based Movement */
 		TryUpdateBasedMovement(DeltaTime);
+
+		/* Clean up invalid root motion sources (including ones that ended naturally) */
+		const bool bHasRootMotionSources = HasRootMotionSources();
+		{
+			if (bHasRootMotionSources)
+			{
+				const FVector VelocityBeforeCleanup = Velocity;
+				CurrentRootMotion.CleanUpInvalidRootMotion(DeltaTime, *CharacterOwner, *this); // TODO: Does this fuck with our Z velocity?
+			}
+		}
+		
+		FVector OldVelocity = Velocity; // Used to check for AdditiveRootMotion (would apply accumulated forces to root motion)
 		
 		/* Trigger gameplay event for velocity modification & apply pending impulses and forces*/
 		ApplyAccumulatedForces(DeltaTime); // TODO: Here's where we'd also check for bMustUnground
 		HandlePendingLaunch(); // TODO: This would auto-unground
 		ClearAccumulatedForces();
+
+		/* Updated saved LastPreAdditiveVelocity with any external changes to character velocity from the above methods */
+		{
+			if (CurrentRootMotion.HasAdditiveVelocity())
+			{
+				const FVector Adjustment = (Velocity - OldVelocity);
+				CurrentRootMotion.LastPreAdditiveVelocity += Adjustment;
+			}
+		}
 		
 		// TODO: Offer another delegate that's not substepped?
 		//UpdateVelocity(Velocity, DeltaTime);
 
 		/* Apply root motion after velocity modifications */
-		if (CharacterOwner && CharacterOwner->IsPlayingRootMotion())
+		if (bHasRootMotionSources)
 		{
-			TickPose(DeltaTime);
+			if (CharacterOwner && CharacterOwner->IsPlayingRootMotion())
+			{
+				TickPose(DeltaTime); // TODO: Remove applying root motion velocity from here, we do this below
+			}
+
+			/* Generates root motion to be used this frame from sources other than animation */
+			{
+				CurrentRootMotion.PrepareRootMotion(DeltaTime, *CharacterOwner, *this, true);
+			}
 		}
-		
+
+		/* Apply Root motion To Velocity */
+		if (CurrentRootMotion.HasOverrideVelocity() || HasAnimRootMotion())
+		{
+			InitApplyRootMotionToVelocity(DeltaTime);
+		}
+
+		// Nan check
+		ensureMsgf(!Velocity.ContainsNaN(), TEXT("UCustomMovementComponent::PerformMovement: Velocity contains NaN (%s)\n%s"), *GetPathNameSafe(this), *Velocity.ToString());
 		
 		/* Perform actual move */
 		StartMovementTick(DeltaTime, 0);
 
 		if (!HasAnimRootMotion())
 		{
+			SCOPE_CYCLE_COUNTER(STAT_UpdateRot);
 			if (!UpdateRotationDelegate.ExecuteIfBound(this, DeltaTime))
 			{
 				RMC_FLog(Log, "Update Rotation Delegate Not Bound")
 			}
 		}
-		else // Apply physics rotation
+		else if (HasAnimRootMotion()) // Apply physics rotation
 		{
 			const FQuat OldActorRotationQuat = UpdatedComponent->GetComponentQuat();
 			const FQuat RootMotionRotationQuat = RootMotionParams.GetRootMotionTransform().GetRotation();
@@ -607,6 +655,16 @@ void UCustomMovementComponent::PerformMovement(float DeltaTime)
 
 			RootMotionParams.Clear();
 		} // Apply root motion rotation
+		else if (CurrentRootMotion.HasActiveRootMotionSources())
+		{
+			FQuat RootMotionRotationQuat;
+			if (CharacterOwner && UpdatedComponent && CurrentRootMotion.GetOverrideRootMotionRotation(DeltaTime, *CharacterOwner, *this, RootMotionRotationQuat))
+			{
+				const FQuat OldActorRotationQuat = UpdatedComponent->GetComponentQuat();
+				const FQuat NewActorRotationQuat = RootMotionRotationQuat * OldActorRotationQuat;
+				MoveUpdatedComponent(FVector::ZeroVector, NewActorRotationQuat, true);
+			}
+		} // Rotation from root motion sources
 		
 	}
 	
@@ -635,6 +693,10 @@ bool UCustomMovementComponent::PreMovementUpdate(float DeltaTime)
 			TickPose(DeltaTime);
 			RootMotionParams.Clear();
 		}
+		if (CurrentRootMotion.HasActiveRootMotionSources())
+		{
+			CurrentRootMotion.Clear();
+		}
 		/* Clear pending physics forces*/
 		ClearAccumulatedForces();
 
@@ -643,6 +705,13 @@ bool UCustomMovementComponent::PreMovementUpdate(float DeltaTime)
 
 	/* Setup */
 	bForceNextFloorCheck |= (IsMovingOnGround() && bTeleportedSinceLastUpdate);
+
+	// Update saved LastPreAdditiveVelocity with any external changes to character Velocity that happened since last update.
+	if( CurrentRootMotion.HasAdditiveVelocity() )
+	{
+		const FVector Adjustment = (Velocity - LastUpdateVelocity);
+		CurrentRootMotion.LastPreAdditiveVelocity += Adjustment;
+	}
 	
 	return true;
 }
@@ -671,6 +740,9 @@ void UCustomMovementComponent::StartMovementTick(float DeltaTime, uint32 Iterati
 		case STATE_Falling:
 			AirMovementTick(DeltaTime, Iterations);
 			break;
+		case STATE_General:
+			GeneralMovementTick(DeltaTime, Iterations);
+			break;
 		default:
 			SetMovementState(STATE_None);
 			break;
@@ -680,7 +752,7 @@ void UCustomMovementComponent::StartMovementTick(float DeltaTime, uint32 Iterati
 
 void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterations)
 {
-	SCOPE_CYCLE_COUNTER(STAT_MovementUpdate)
+	SCOPE_CYCLE_COUNTER(STAT_GroundTick)
 
 	/* Validate everything before doing anything */
 	if (DeltaTime < MIN_TICK_TIME)
@@ -709,15 +781,26 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 		const FVector OldLocation = UpdatedComponent->GetComponentLocation();
 		const FGroundingStatus OldFloor = CurrentFloor;
 
+		/* Restore */
+		RestorePreAdditiveRootMotionVelocity();
+
 		/* Project Velocity To Ground Before Computing Move Deltas */
 		MaintainHorizontalGroundVelocity();
 		const FVector OldVelocity = Velocity;
 
 		/* Apply acceleration after projection */
-		if (!CalculateVelocityDelegate.ExecuteIfBound(this, IterTick))
+		if (!HasAnimRootMotion() && !CurrentRootMotion.HasOverrideVelocity())
 		{
-			RMC_FLog(Log, "Calculate Velocity Delegate Not Bound")
+			SCOPE_CYCLE_COUNTER(STAT_CalcVel);
+			
+			if (!CalculateVelocityDelegate.ExecuteIfBound(this, IterTick))
+			{
+				RMC_FLog(Log, "Calculate Velocity Delegate Not Bound")
+			}
 		}
+
+		/* Apply root motion sources as they can work alongside existing velocity calculations */
+		ApplyRootMotionToVelocity(IterTick);
 
 		/* Custom CalcVelocity may have swapped us to falling so ensure that before performing the move */
 		if (IsFalling()) // New
@@ -852,7 +935,7 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 		if (IsMovingOnGround())
 		{
 			/* Make velocity reflect actual move */
-			if (!bJustTeleported && !HasAnimRootMotion() && IterTick >= MIN_TICK_TIME) // New: Root motion check
+			if (!bJustTeleported && !HasAnimRootMotion() && !CurrentRootMotion.HasOverrideVelocity() && IterTick >= MIN_TICK_TIME) // New: Root motion check
 			{
 				RecalculateVelocityToReflectMove(OldLocation, IterTick);
 			}
@@ -875,7 +958,7 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 
 void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iterations)
 {
-	SCOPE_CYCLE_COUNTER(STAT_MovementUpdate)
+	SCOPE_CYCLE_COUNTER(STAT_AirTick)
 
 	/* Validate everything before doing anything */
 	if (DeltaTime < MIN_TICK_TIME)
@@ -884,7 +967,9 @@ void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteration
 	}
 	
 	float RemainingTime = DeltaTime;
-
+	// NOTE: Not much way to get the ShouldLimitAirControl equivalent here :/
+	const bool bHasLimitedAirControl = true;
+	const FVector Orientation = GetUpOrientation(MODE_Gravity);
 	while ((RemainingTime >= MIN_TICK_TIME) && (Iterations < MaxSimulationIterations))
 	{
 		/* Setup current move iteration */
@@ -893,29 +978,33 @@ void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteration
 		const float IterTick = GetSimulationTimeStep(RemainingTime, Iterations);
 		RemainingTime -= IterTick;
 		
-		if (!CalculateVelocityDelegate.ExecuteIfBound(this, IterTick))
-		{
-			RMC_FLog(Log, "Calculate Velocity Delegate Not Bound")
-		}
-		
 		/* Cache current values */
 		const FVector OldLocation = UpdatedComponent->GetComponentLocation();
 		const FQuat PawnRotation = UpdatedComponent->GetComponentQuat();
+		const FVector OldVelocityWithRootMotion = Velocity;
+		RestorePreAdditiveRootMotionVelocity();
 		const FVector OldVelocity = Velocity;
-
-		/* Compute move parameters */
-		const FVector MoveVelocity = Velocity;
-		FVector Delta = MoveVelocity * IterTick;
-		const bool bZeroDelta = Delta.IsNearlyZero();
 		
 		/* Gameplay stuff like applying gravity */
-
+		if (!HasAnimRootMotion() && !CurrentRootMotion.HasOverrideVelocity())
+		{
+			SCOPE_CYCLE_COUNTER(STAT_CalcVel);
+			if (!CalculateVelocityDelegate.ExecuteIfBound(this, IterTick))
+			{
+				RMC_FLog(Log, "Calculate Velocity Delegate Not Bound")
+			}
+		}
+		
 		/* Applying root motion to velocity & Decaying former base velocity */
+		ApplyRootMotionToVelocity(IterTick);
 		DecayFormerBaseVelocity(IterTick);
+
+		/* Compute move parameters (if no root motion this just reduces to velocity * dt) */
+		FVector Adjusted = 0.5f * (OldVelocityWithRootMotion * Velocity) * IterTick;
 
 		/* Perform the move */
 		FHitResult Hit(1.f);
-		SafeMoveUpdatedComponent(Delta, PawnRotation, true, Hit);
+		SafeMoveUpdatedComponent(Adjusted, PawnRotation, true, Hit);
 
 		/* Account for time of the move */
 		float LastMoveTimeSlice = IterTick;
@@ -933,6 +1022,9 @@ void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteration
 			} // Valid Landing Spot
 			else 
 			{
+				/* Compute impact deflection based on final velocity */
+				Adjusted = Velocity * IterTick;
+				
 				/* Check if we can convert a normally invalid landing spot to a valid one */
 				if (!Hit.bStartPenetrating && ShouldCheckForValidLandingSpot(Hit))
 				{
@@ -948,22 +1040,36 @@ void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteration
 				}
 
 				/* Hit could not be interpreted as a floor, adjust accordingly */
-				HandleImpact(Hit, LastMoveTimeSlice, Delta);
+				HandleImpact(Hit, LastMoveTimeSlice, Adjusted);
+
+				// DEBUG: Skipping the air control thing here, may come back to it once MovementData API is better figured out
 
 				/* Adjust delta based on hit */
 				const FVector OldHitNormal = Hit.Normal;
 				const FVector OldHitImpactNormal = Hit.ImpactNormal;
-				// TODO: Can only do this on Planar, then re-add vertical to ensure gravity is in full effect? But that makes an assumption about gravity being used here which it may not be...
-				FVector AdjustedDelta = ComputeSlideVector(Delta, 1.f - Hit.Time, OldHitNormal, Hit);
+				FVector Delta = ComputeSlideVector(Adjusted, 1.f - Hit.Time, OldHitNormal, Hit);
 
 				/* Compute the velocity after the deflection */
 				const UPrimitiveComponent* HitComponent = Hit.GetComponent();
-				// TODO: Stuff here regarding recalculating the velocity based on the delta and managing it w/ root motion or a moving base
 
-				/* Perform a move in the deflected direction and solve accordingly */
-				if (SubTimeTickRemaining > UE_KINDA_SMALL_NUMBER && (AdjustedDelta | Delta) > 0.f)
+				// NOTE: Look at CharacterMovementCVars to understand the first scope here
+				if (!Velocity.IsNearlyZero() && MovementBaseUtility::IsSimulatedBase(HitComponent))
 				{
-					SafeMoveUpdatedComponent(AdjustedDelta, PawnRotation, true, Hit);
+					const FVector ContactVelocity = MovementBaseUtility::GetMovementBaseVelocity(HitComponent, NAME_None) + MovementBaseUtility::GetMovementBaseTangentialVelocity(HitComponent, NAME_None, Hit.ImpactPoint);
+					const FVector NewVelocity = Velocity - Hit.ImpactNormal * FVector::DotProduct(Velocity - ContactVelocity, Hit.ImpactNormal);
+					Velocity = HasAnimRootMotion() || CurrentRootMotion.HasOverrideVelocityWithIgnoreZAccumulate() ? FVector::VectorPlaneProject(Velocity, Orientation) + NewVelocity.ProjectOnToNormal(Orientation) : NewVelocity;
+				}
+				else if (SubTimeTickRemaining > UE_KINDA_SMALL_NUMBER && !bJustTeleported)
+				{
+					const FVector NewVelocity = (Delta / SubTimeTickRemaining);
+					Velocity = HasAnimRootMotion() || CurrentRootMotion.HasOverrideVelocityWithIgnoreZAccumulate() ? FVector::VectorPlaneProject(Velocity, Orientation) + NewVelocity.ProjectOnToNormal(Orientation) : NewVelocity;
+				}
+				
+				/* Perform a move in the deflected direction and solve accordingly */
+				if (SubTimeTickRemaining > UE_KINDA_SMALL_NUMBER && (Delta | Adjusted) > 0.f)
+				{
+					/* Move in deflected direction */
+					SafeMoveUpdatedComponent(Delta, PawnRotation, true, Hit);
 
 					/* Hit a second wall */
 					if (Hit.bBlockingHit)
@@ -981,37 +1087,34 @@ void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteration
 						HandleImpact(Hit, LastMoveTimeSlice, Delta);
 
 						/* Compute new deflection using old velocity */
-						if ((Hit.Normal | GetUpOrientation(MODE_Gravity)) > 0.001f) // TODO:  If normal of hit is slightly vertically upwards 
+						if ((Hit.Normal | Orientation) > 0.001f) // NOTE:  If normal of hit is slightly vertically upwards 
 						{
 							const FVector LastMoveDelta = OldVelocity * LastMoveTimeSlice;
-							AdjustedDelta = ComputeSlideVector(LastMoveDelta, 1.f, OldHitNormal, Hit);
+							Delta = ComputeSlideVector(LastMoveDelta, 1.f, OldHitNormal, Hit);
 						}
 
-						FVector PreTwoWallDelta = AdjustedDelta;
-						TwoWallAdjust(AdjustedDelta, Hit, OldHitNormal);
+						TwoWallAdjust(Delta, Hit, OldHitNormal);
 
-						/* Confused as to how to incorporate the stuff w/ the bHasLimitedAirControl condition */
-						// TODO: Figure that out, skipping it for now
+						// DEBUG: Another air control thing here im not sure how to handle just yet
 
 						/* Compute velocity after deflection */
 						if (SubTimeTickRemaining > UE_KINDA_SMALL_NUMBER && !bJustTeleported)
 						{
-							const FVector NewVelocity = (AdjustedDelta / SubTimeTickRemaining);
+							const FVector NewVelocity = (Delta / SubTimeTickRemaining);
 							/* Might move this to an event for PostProcessRootMotion Velocity because we don't want to make assumptions */
-							Velocity = HasAnimRootMotion() ? FVector::VectorPlaneProject(Velocity, GetUpOrientation(MODE_Gravity)) + NewVelocity.ProjectOnToNormal(GetUpOrientation(MODE_Gravity)): NewVelocity;
+							Velocity = HasAnimRootMotion() || CurrentRootMotion.HasOverrideVelocityWithIgnoreZAccumulate() ? FVector::VectorPlaneProject(Velocity, Orientation) + NewVelocity.ProjectOnToNormal(Orientation): NewVelocity;
 						}
 
 						/* bDitch = true means the pawn is straddling between two slopes neither of which it can stand on */
-						const FVector PawnUp = GetUpOrientation(MODE_Gravity);
-						bool bDitch = (((OldHitImpactNormal | PawnUp) > 0.f) && ((Hit.ImpactNormal | PawnUp) > 0.f) && (FMath::Abs(AdjustedDelta | PawnUp) <= UE_KINDA_SMALL_NUMBER) && ((Hit.ImpactNormal | OldHitImpactNormal) < 0.f));
-						SafeMoveUpdatedComponent(AdjustedDelta, PawnRotation, true, Hit);
+						bool bDitch = (((OldHitImpactNormal | Orientation) > 0.f) && ((Hit.ImpactNormal | Orientation) > 0.f) && (FMath::Abs(Delta | Orientation) <= UE_KINDA_SMALL_NUMBER) && ((Hit.ImpactNormal | OldHitImpactNormal) < 0.f));
+						SafeMoveUpdatedComponent(Delta, PawnRotation, true, Hit);
 						if (Hit.Time == 0.f)
 						{
 							/* If we're stuck, try to side step */
-							FVector SideDelta = FVector::VectorPlaneProject(OldHitNormal + Hit.ImpactNormal, PawnUp).GetSafeNormal();
+							FVector SideDelta = FVector::VectorPlaneProject(OldHitNormal + Hit.ImpactNormal, Orientation).GetSafeNormal();
 							if (SideDelta.IsNearlyZero())
 							{
-								SideDelta = FVector::ZeroVector;//FVector(OldHitNormal.Y, -OldHitNormal.X, 0).GetSafeNormal(); // HACK: TEMP CHANGE THIS LATER?
+								SideDelta = FVector(OldHitNormal.Y, -OldHitNormal.X, 0).GetSafeNormal(); // HACK: TEMP CHANGE THE MATH HERE LATER
 							}
 							SafeMoveUpdatedComponent(SideDelta, PawnRotation, true, Hit);
 						}
@@ -1028,6 +1131,90 @@ void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteration
 			} // Not a landing spot, solve for hit adjustment
 		}
 	}
+}
+
+void UCustomMovementComponent::GeneralMovementTick(float DeltaTime, uint32 Iterations)
+{
+	SCOPE_CYCLE_COUNTER(STAT_GenTick);
+	
+	if (DeltaTime < MIN_TICK_TIME) return;
+
+
+	bJustTeleported = false;
+	float RemainingTime = DeltaTime;
+	
+	while ((RemainingTime >= MIN_TICK_TIME) && (Iterations < MaxSimulationIterations))
+	{
+		/* Setup current move iteration */
+		Iterations++;
+		bJustTeleported = false;
+		bSuccessfulSlideAlongSurface = false;
+		const float IterTick = GetSimulationTimeStep(RemainingTime, Iterations);
+		RemainingTime -= IterTick;
+
+		/* Restore */
+		RestorePreAdditiveRootMotionVelocity();
+
+		/* Apply acceleration after projection */
+		if (!HasAnimRootMotion() && !CurrentRootMotion.HasOverrideVelocity())
+		{
+			SCOPE_CYCLE_COUNTER(STAT_CalcVel);
+			
+			if (!CalculateVelocityDelegate.ExecuteIfBound(this, IterTick))
+			{
+				RMC_FLog(Log, "Calculate Velocity Delegate Not Bound")
+			}
+		}
+
+		/* Apply root motion (always after) */
+		ApplyRootMotionToVelocity(IterTick);
+
+		/* Cache current values & Perform Move */
+		FVector OldLocation = UpdatedComponent->GetComponentLocation();
+		const FVector Delta = Velocity * IterTick;
+		FHitResult Hit(1.f);
+		SafeMoveUpdatedComponent(Delta, UpdatedComponent->GetComponentQuat(), true, Hit);
+
+		/* Evaluate Hit */
+		if (Hit.Time < 1.f)
+		{
+			const FVector GravDir = MovementData->GetGravityDir();
+			const FVector VelDir = Velocity.GetSafeNormal();
+			const float UpDown = GravDir | VelDir;
+
+			bool bSteppedUp = false;
+			if ((FMath::Abs(Hit.ImpactNormal | GravDir) < 0.2f) && (UpDown < 0.5f) && (UpDown > -0.2f) && CanStepUp(Hit))
+			{
+				float StepH = UpdatedComponent->GetComponentLocation() | (-GravDir);
+				bSteppedUp = StepUp(GravDir, Hit, Delta * (1.f - Hit.Time));
+				if (bSteppedUp) 
+				{
+					OldLocation = FVector::VectorPlaneProject(OldLocation, -GravDir) + (((UpdatedComponent->GetComponentLocation() + OldLocation) | (-GravDir)) - StepH);
+				}
+			}
+
+			if (!bSteppedUp)
+			{
+				// Adjust and try again
+				HandleImpact(Hit, DeltaTime, Delta);
+				SlideAlongSurface(Delta, (1.f-Hit.Time), Hit.Normal, Hit, true);
+			}
+		}
+		
+		/* Make velocity reflect actual move */
+		if (!bJustTeleported && !HasAnimRootMotion() && !CurrentRootMotion.HasOverrideVelocity() && IterTick >= MIN_TICK_TIME) 
+		{
+			RecalculateVelocityToReflectMove(OldLocation, IterTick);
+		}
+
+		/* If we didn't move at all, abort since future iterations will also be stuck */
+		if (UpdatedComponent->GetComponentLocation() == OldLocation)
+		{
+			RemainingTime = 0.f;
+			break;
+		}
+	}
+
 }
 
 
@@ -1109,7 +1296,7 @@ void UCustomMovementComponent::PostMovementUpdate(float DeltaTime)
 
 void UCustomMovementComponent::ProcessLanded(FHitResult& Hit, float DeltaTime, uint32 Iterations)
 {
-	LOG_HIT(Hit, 2.f);
+	SCOPE_CYCLE_COUNTER(STAT_ProcessLanded);
 
 	if (CharacterOwner) CharacterOwner->Landed(Hit);
 
@@ -1496,7 +1683,7 @@ void UCustomMovementComponent::ComputeFloorDist(const FVector& CapsuleLocation, 
 void UCustomMovementComponent::FindFloor(const FVector& CapsuleLocation, FGroundingStatus& OutFloorResult,
 	bool bCanUseCachedLocation, const FHitResult* DownwardSweepResult) const
 {
-	SCOPE_CYCLE_COUNTER(STAT_ProbeGround)
+	SCOPE_CYCLE_COUNTER(STAT_FindFloor)
 	
 	/* If collision is not enabled, or bSolveGrounding is not set, we don't care */
 	if (!UpdatedComponent->IsQueryCollisionEnabled())
@@ -1747,7 +1934,6 @@ void UCustomMovementComponent::RecalculateVelocityToReflectMove(const FVector& O
 
 #pragma region Step Handling
 
-// DEBUG:
 bool UCustomMovementComponent::StepUp(const FVector& Orientation, const FHitResult& StepHit, const FVector& Delta, FStepDownFloorResult* OutStepDownResult)
 {
 	SCOPE_CYCLE_COUNTER(STAT_StepUp)
@@ -2313,44 +2499,6 @@ void UCustomMovementComponent::TickPose(float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_TickPose)
 
-	/*
-	UAnimMontage* RootMotionMontage = nullptr;
-	float RootMotionMontagePosition = -1.f;
-	if (const auto RootMotionMontageInstance = GetRootMotionMontageInstance())
-	{
-		RootMotionMontage = RootMotionMontageInstance->Montage;
-		RootMotionMontagePosition = RootMotionMontageInstance->GetPosition();
-	}
-	
-	const bool bWasPlayingRootMotion = IsPlayingRootMotion();
-	SkeletalMesh->TickPose(DeltaTime, true);
-	const bool bIsPlayingRootMotion = IsPlayingRootMotion();
-
-	if (bWasPlayingRootMotion || bIsPlayingRootMotion)
-	{
-		RootMotionParams = SkeletalMesh->ConsumeRootMotion();
-	}
-
-	if (RootMotionParams.bHasRootMotion)
-	{
-		if (ShouldDiscardRootMotion(RootMotionMontage, RootMotionMontagePosition))
-		{
-			RootMotionParams = FRootMotionMovementParams();
-			return;
-		}
-		bHasAnimRootMotion = true;
-
-		// Scale root motion translation by user value
-		RootMotionParams.ScaleRootMotionTranslation(GetAnimRootMotionTranslationScale());
-		// Save root motion transform in world space
-		RootMotionParams.Set(SkeletalMesh->ConvertLocalRootMotionToWorld(RootMotionParams.GetRootMotionTransform()));
-		// Calculate the root motion velocity from world space root motion translation
-		CalculateAnimRootMotionVelocity(DeltaTime);
-		// Apply the root motion rotation now. Translation is applied in the next tick from calculated velocity
-		ApplyAnimRootMotionRotation(DeltaTime);
-	}
-*/
-
 	check(CharacterOwner && CharacterOwner->GetMesh());
 	USkeletalMeshComponent* SkeletalMesh = CharacterOwner->GetMesh();
 
@@ -2382,18 +2530,10 @@ void UCustomMovementComponent::TickPose(float DeltaTime)
 			RootMotionMontagePosition = RootMotionMontageInstance->GetPosition();
 		}
 		
-		if (ShouldDiscardRootMotion(RootMotionMontage, RootMotionMontagePosition))
+		if (ShouldDiscardRootMotion(RootMotionMontage, RootMotionMontagePosition)) 
 		{
 			RootMotionParams = FRootMotionMovementParams();
 			return;
-		}
-		
-		// Convert local space root motion to world space before physics
-		RootMotionParams.Set(SkeletalMesh->ConvertLocalRootMotionToWorld(RootMotionParams.GetRootMotionTransform()));
-
-		if (DeltaTime > 0.f)
-		{
-			Velocity = CalcRootMotionVelocity(RootMotionParams.GetRootMotionTransform().GetTranslation(), DeltaTime, Velocity);
 		}
 	}
 }
@@ -2407,6 +2547,147 @@ FVector UCustomMovementComponent::CalcRootMotionVelocity(FVector RootMotionDelta
 
 	const FVector RootMotionVelocity = RootMotionDeltaMove / DeltaTime;
 	return RootMotionVelocity; // TODO: Post process event
+}
+
+void UCustomMovementComponent::InitApplyRootMotionToVelocity(float DeltaTime)
+{
+	SCOPE_CYCLE_COUNTER(STAT_RootMotion);
+	
+	// Animation root motion overrides velocity and doesn't allow for any other root motion sources
+	if (HasAnimRootMotion())
+	{
+		// Convert to world space
+		USkeletalMeshComponent* SkeletalMesh = CharacterOwner->GetMesh();
+		if (SkeletalMesh)
+		{
+			// Convert local space root motion to world space. Do it right before physics to make sure transforms are up to date
+			RootMotionParams.Set(SkeletalMesh->ConvertLocalRootMotionToWorld(RootMotionParams.GetRootMotionTransform()));
+		}
+
+		// Then turn root motion to velocity
+		if (DeltaTime > 0.f)
+		{
+			Velocity = CalcRootMotionVelocity(RootMotionParams.GetRootMotionTransform().GetTranslation(), DeltaTime, Velocity);
+		}
+	} // Have root motion from animation
+	else 
+	{
+		if (DeltaTime > 0.f)
+		{
+			const FVector VelocityBeforeOverride = Velocity;
+			FVector NewVelocity = Velocity;
+			CurrentRootMotion.AccumulateOverrideRootMotionVelocity(DeltaTime, *CharacterOwner, *this, NewVelocity);
+			if (IsFalling()) // TODO:
+			{
+				NewVelocity += CurrentRootMotion.HasOverrideVelocityWithIgnoreZAccumulate() ? FVector(DecayingFormerBaseVelocity.X, DecayingFormerBaseVelocity.Y, 0.f) : DecayingFormerBaseVelocity;
+			}
+			Velocity = NewVelocity;
+		}
+	} // Have root motion from sources
+}
+
+
+void UCustomMovementComponent::ApplyRootMotionToVelocity(float DeltaTime)
+{
+	SCOPE_CYCLE_COUNTER(STAT_RootMotion);
+	
+	// Animation root motion is distinct from root motion sources and takes precedence (NOTE: UE comment mentions "right now" so maybe they'll be mixed later?)
+	if (HasAnimRootMotion() && DeltaTime > 0.f)
+	{
+		// TODO:
+		if (IsFalling())
+		{
+			Velocity += DecayingFormerBaseVelocity;
+		}
+		return;
+	}
+
+	const FVector OldVelocity = Velocity;
+
+	bool bAppliedRootMotion = false;
+
+	// Apply Override Velocity
+	if (CurrentRootMotion.HasOverrideVelocity())
+	{
+		CurrentRootMotion.AccumulateOverrideRootMotionVelocity(DeltaTime, *CharacterOwner, *this, Velocity);
+
+		// TODO:
+		if (IsFalling())
+		{
+			Velocity += CurrentRootMotion.HasOverrideVelocityWithIgnoreZAccumulate() ? FVector(DecayingFormerBaseVelocity.X, DecayingFormerBaseVelocity.Y, 0.f) : DecayingFormerBaseVelocity;
+		}
+		bAppliedRootMotion = true;
+
+#if ROOT_MOTION_DEBUG
+		if (OPRootMotionSourceDebug::CVarDebugRootMotionSources.GetValueOnGameThread() == 1)
+		{
+			FString AdjustedDebugString = FString::Printf(TEXT("ApplyRootMotionToVelocity HasOverrideVelocity Velocity(%s)"),
+				*Velocity.ToCompactString());
+			OPRootMotionSourceDebug::PrintOnScreen(*CharacterOwner, AdjustedDebugString);
+		}
+#endif
+	}
+
+	// Next apply additive root motion
+	if( CurrentRootMotion.HasAdditiveVelocity() )
+	{
+		CurrentRootMotion.LastPreAdditiveVelocity = Velocity; // Save off pre-additive Velocity for restoration next tick
+		CurrentRootMotion.AccumulateAdditiveRootMotionVelocity(DeltaTime, *CharacterOwner, *this, Velocity);
+		CurrentRootMotion.bIsAdditiveVelocityApplied = true; // Remember that we have it applied
+		bAppliedRootMotion = true;
+
+#if ROOT_MOTION_DEBUG
+		if (OPRootMotionSourceDebug::CVarDebugRootMotionSources.GetValueOnGameThread() == 1)
+		{
+			FString AdjustedDebugString = FString::Printf(TEXT("ApplyRootMotionToVelocity HasAdditiveVelocity Velocity(%s) LastPreAdditiveVelocity(%s)"),
+				*Velocity.ToCompactString(), *CurrentRootMotion.LastPreAdditiveVelocity.ToCompactString());
+			OPRootMotionSourceDebug::PrintOnScreen(*CharacterOwner, AdjustedDebugString);
+		}
+#endif
+	}
+
+	// TODO:
+	// Switch to Falling if we have vertical velocity from root motion so we can lift off the ground
+	const FVector AppliedVelocityDelta = Velocity - OldVelocity;
+	if( bAppliedRootMotion && AppliedVelocityDelta.Z != 0.f && IsMovingOnGround() )
+	{
+		float LiftoffBound;
+		if( CurrentRootMotion.LastAccumulatedSettings.HasFlag(ERootMotionSourceSettingsFlags::UseSensitiveLiftoffCheck) )
+		{
+			// Sensitive bounds - "any positive force"
+			LiftoffBound = UE_SMALL_NUMBER;
+		}
+		else
+		{
+			// Default bounds - the amount of force gravity is applying this tick
+			LiftoffBound = FMath::Max(-GetGravityZ() * DeltaTime, UE_SMALL_NUMBER);
+		}
+
+		if( AppliedVelocityDelta.Z > LiftoffBound )
+		{
+			SetMovementState(STATE_Falling);
+		}
+	}
+}
+
+void UCustomMovementComponent::RestorePreAdditiveRootMotionVelocity()
+{
+	// Restore last frame's pre-additive Velocity if we had additive applied 
+	// so that we're not adding more additive velocity than intended
+	if( CurrentRootMotion.bIsAdditiveVelocityApplied )
+	{
+#if ROOT_MOTION_DEBUG
+		if (OPRootMotionSourceDebug::CVarDebugRootMotionSources.GetValueOnGameThread() == 1)
+		{
+			FString AdjustedDebugString = FString::Printf(TEXT("RestorePreAdditiveRootMotionVelocity Velocity(%s) LastPreAdditiveVelocity(%s)"), 
+				*Velocity.ToCompactString(), *CurrentRootMotion.LastPreAdditiveVelocity.ToCompactString());
+			OPRootMotionSourceDebug::PrintOnScreen(*CharacterOwner, AdjustedDebugString);
+		}
+#endif
+
+		Velocity = CurrentRootMotion.LastPreAdditiveVelocity;
+		CurrentRootMotion.bIsAdditiveVelocityApplied = false;
+	}
 }
 
 
@@ -2436,6 +2717,57 @@ bool UCustomMovementComponent::ShouldDiscardRootMotion(const UAnimMontage* RootM
 	return false;
 }
 
+bool UCustomMovementComponent::HasRootMotionSources() const
+{
+	return CurrentRootMotion.HasActiveRootMotionSources() || (CharacterOwner && CharacterOwner->IsPlayingRootMotion() && CharacterOwner->GetMesh());
+}
+
+uint16 UCustomMovementComponent::ApplyRootMotionSource(TSharedPtr<FOPRootMotionSource> SourcePtr)
+{
+	if (ensure(SourcePtr.IsValid()))
+	{
+		// Set default StartTime if it hasn't been set manually
+		if (!SourcePtr->IsStartTimeValid())
+		{
+			if (CharacterOwner)
+			{
+				SourcePtr->StartTime = GetWorld()->GetTimeSeconds();
+			}
+		}
+
+		OnRootMotionSourceBeingApplied(SourcePtr.Get());
+
+		return CurrentRootMotion.ApplyRootMotionSource(SourcePtr);
+	}
+
+	return (uint16)ERootMotionSourceID::Invalid;
+}
+
+void UCustomMovementComponent::OnRootMotionSourceBeingApplied(const FRootMotionSource* Source)
+{
+	// TODO: This is an event
+}
+
+TSharedPtr<FOPRootMotionSource> UCustomMovementComponent::GetRootMotionSource(FName InstanceName)
+{
+	return StaticCastSharedPtr<FOPRootMotionSource>(CurrentRootMotion.GetRootMotionSource(InstanceName));
+}
+
+TSharedPtr<FOPRootMotionSource> UCustomMovementComponent::GetRootMotionSourceByID(uint16 RootMotionSourceID)
+{
+	return StaticCastSharedPtr<FOPRootMotionSource>(CurrentRootMotion.GetRootMotionSourceByID(RootMotionSourceID));
+}
+
+void UCustomMovementComponent::RemoveRootMotionSource(FName InstanceName)
+{
+	CurrentRootMotion.RemoveRootMotionSource(InstanceName);
+}
+
+void UCustomMovementComponent::RemoveRootMotionSourceByID(uint16 RootMotionSourceID)
+{
+	CurrentRootMotion.RemoveRootMotionSourceByID(RootMotionSourceID);
+}
+
 
 /*
 void UCustomMovementComponent::BlockSkeletalMeshPoseTick() const
@@ -2444,94 +2776,8 @@ void UCustomMovementComponent::BlockSkeletalMeshPoseTick() const
 	SkeletalMesh->bIsAutonomousTickPose = false;
 	SkeletalMesh->bOnlyAllowAutonomousTickPose = true;
 }
-
-void UCustomMovementComponent::ApplyAnimRootMotionRotation(float DeltaTime)
-{
-	
-}
-
-void UCustomMovementComponent::CalculateAnimRootMotionVelocity(float DeltaTime)
-{
-	FVector RootMotionDelta = RootMotionParams.GetRootMotionTransform().GetTranslation();
-
-	// Ignore components with very small delta values
-	RootMotionDelta.X = FMath::IsNearlyEqual(RootMotionDelta.X, 0.f, 0.01f) ? 0.f : RootMotionDelta.X;
-	RootMotionDelta.Y = FMath::IsNearlyEqual(RootMotionDelta.Y, 0.f, 0.01f) ? 0.f : RootMotionDelta.Y;
-	RootMotionDelta.Z = FMath::IsNearlyEqual(RootMotionDelta.Z, 0.f, 0.01f) ? 0.f : RootMotionDelta.Z;
-
-	const FVector RootMotionVelocity = RootMotionDelta / DeltaTime;
-	SetVelocity(PostProcessAnimRootMotionVelocity(RootMotionVelocity, DeltaTime));
-}
-
-bool UCustomMovementComponent::ShouldDiscardRootMotion(UAnimMontage* RootMotionMontage, float RootMotionMontagePosition) const
-{
-	if (!RootMotionMontage || RootMotionMontagePosition < 0.f)
-	{
-		return true;
-	}
-
-	const float MontageLength = RootMotionMontage->GetPlayLength();
-	if (RootMotionMontagePosition >= MontageLength)
-	{
-		return true;
-	}
-
-	if (!bApplyRootMotionDuringBlendIn)
-	{
-		if (RootMotionMontagePosition <= RootMotionMontage->BlendIn.GetBlendTime())
-		{
-			return true;
-		}
-	}
-
-	if (!bApplyRootMotionDuringBlendOut)
-	{
-		if (RootMotionMontagePosition >= MontageLength - RootMotionMontage->BlendOut.GetBlendTime())
-		{
-			return true;
-		}
-	}
-
-	return false;
-}
-
-
-void UCustomMovementComponent::SetSkeletalMeshReference(USkeletalMeshComponent* Mesh)
-{
-	if (SkeletalMesh && SkeletalMesh != Mesh)
-	{
-		SkeletalMesh->RemoveTickPrerequisiteComponent(this);
-	}
-
-	SkeletalMesh = Mesh;
-
-	if (SkeletalMesh)
-	{
-		SkeletalMesh->AddTickPrerequisiteComponent(this);
-	}
-}
-
-
-bool UCustomMovementComponent::IsPlayingMontage() const
-{
-	if (!SkeletalMesh) return false;
-
-	const auto AnimInstance = SkeletalMesh->GetAnimInstance();
-	if (!AnimInstance) return false;
-
-	return AnimInstance->MontageInstances.Num() > 0;
-}
-
-bool UCustomMovementComponent::IsPlayingRootMotion() const
-{
-	if (SkeletalMesh)
-	{
-		return SkeletalMesh->IsPlayingRootMotion();
-	}
-	return false;
-}
-
 */
+
 #pragma endregion Root Motion
 
 #pragma region Physics Interactions
@@ -2858,6 +3104,8 @@ void UCustomMovementComponent::DecayFormerBaseVelocity(float DeltaTime)
 
 void UCustomMovementComponent::TryUpdateBasedMovement(float DeltaTime)
 {
+	SCOPE_CYCLE_COUNTER(STAT_MoveWithBase);
+	
 	if (!bMoveWithBase) return;
 	
 	bDeferUpdateBasedMovement = false;

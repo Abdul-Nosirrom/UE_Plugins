@@ -10,8 +10,10 @@
 /* Forward declarations */
 class UCustomMovementComponent;
 class UCapsuleComponent;
+class URootMotionTasksComponent;
 class UArrowComponent;
 class UOPMovementComponent;
+class URootMotionTask_Base;
 enum EMovementState;
 
 /* Delegate Declarations */
@@ -128,7 +130,7 @@ public:
 #pragma endregion Gameplay Interface
 
 #pragma region Events
-protected:
+public:
 	UPROPERTY(Category="Character", BlueprintAssignable)
 	FMovementStateChangedSignature MovementStateChangedDelegate;
 	
@@ -244,4 +246,22 @@ public:
 
 #pragma endregion Animation Interface
 
+#pragma region Root Motion Tasks Interface
+public:
+	
+	/* Helper function for initializing new root motion tasks */
+	template<class T>
+	static T* NewRootMotionTask(AOPCharacter* OwningActor, FName InstanceName = FName())
+	{
+		check(OwningActor);
+
+		T* MyObj = NewObject<T>();
+		MyObj->InitTask(OwningActor);
+
+		MyObj->ForceName = InstanceName;
+		return MyObj;
+	}
+
+#pragma endregion Root Motion Tasks Interface
+	
 };

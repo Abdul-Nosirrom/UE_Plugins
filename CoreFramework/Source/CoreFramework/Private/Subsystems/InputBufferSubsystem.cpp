@@ -29,6 +29,8 @@ void UInputBufferSubsystem::Deinitialize()
 
 void UInputBufferSubsystem::Tick(float DeltaTime)
 {
+	if (LastFrameNumberWeTicked == GFrameCounter) return;
+	
 	// Ensure we've been initialized, otherwise don't update the buffer
 	if (!bInitialized)
 	{
@@ -45,6 +47,7 @@ void UInputBufferSubsystem::Tick(float DeltaTime)
 
 	// Evaluate Events (More frequently than buffer updates)
 	EvaluateEvents();
+	LastFrameNumberWeTicked = GFrameCounter;
 }
 
 
@@ -106,7 +109,7 @@ void UInputBufferSubsystem::InitializeInputBufferData()
 	for (auto ID : InputMap->GetActionIDs())
 	{
 		IB_FLog(Display, "[%s] - Action Added To Buffer", *ID.ToString())
-		ButtonInputValidFrame.Add(ID, -1);
+		ButtonInputValidFrame.Add(ID, FBufferState());
 	}
 
 	DirectionalInputValidFrame.Empty();
@@ -146,13 +149,25 @@ void UInputBufferSubsystem::UpdateBuffer()
 	/* Store the frame value in which each action input can be used */
 	for (const auto InputID : InputMap->GetActionIDs())
 	{
-		ButtonInputValidFrame[InputID] = -1;
-		for (int frame = 0; frame > BUFFER_SIZE; frame++) // Iterating From Newest To Oldest Input (Most Valid Oldest Input Takes Prescedence)
+		ButtonInputValidFrame[InputID].Reset();
+		
+		for (int frame = 0; frame < BUFFER_SIZE; frame++) // Iterating From Newest To Oldest Input (Most Valid Oldest Input Takes Prescedence)
 		{
-			/* First set release, let press override it though */
-			if (InputBuffer[frame].InputsFrameState[InputID].HoldTime == -1) ButtonInputValidFrame[InputID] = -2; // NOTE: temp to recognize release
+			const auto FrameState = InputBuffer[frame].InputsFrameState[InputID];
+
 			/* Set the button state to the frame it can be used */
-			if (InputBuffer[frame].InputsFrameState[InputID].CanExecute()) ButtonInputValidFrame[InputID] = frame;
+			if (FrameState.CanInvokePress()) // This input has a valid hold
+			{
+				ButtonInputValidFrame[InputID] = FBufferState(frame, 0, FrameState.bUsed);
+			}
+			else if (FrameState.CanInvokeHold()) // This input has a valid hold
+			{
+				ButtonInputValidFrame[InputID] = FBufferState(frame, FrameState.HoldTime * TICK_INTERVAL, FrameState.bUsed);
+			}
+			else if (FrameState.CanInvokeRelease()) // This input has a valid release
+			{
+				ButtonInputValidFrame[InputID] = FBufferState(frame, 0, FrameState.bUsed);
+			}
 		}
 	}
 
@@ -194,10 +209,10 @@ void UInputBufferSubsystem::EvaluateEvents()
 
 		// Or could consolidate it into 1 event and have an Enum differentiate it?
 
-		const bool bPressed = ButtonInputValidFrame[ActionID] > 0;
-		//const bool bHeld = false;//InputBufferObject.CheckButtonHeld(ActionID, HoldThreshold);
-		const bool bReleased = ButtonInputValidFrame[ActionID] == -2;
-		
+		const bool bPressed = ButtonInputValidFrame[ActionID].IsPress();
+		const bool bHeld = ButtonInputValidFrame[ActionID].IsHold();
+		const bool bReleased = ButtonInputValidFrame[ActionID].IsRelase();
+
 		if (bPressed)
 		{
 			InputPressedDelegate.Broadcast(Action, FInputActionValue());
@@ -238,26 +253,25 @@ void UInputBufferSubsystem::EvaluateEvents()
 	}
 }
 
+// Can only really consume press events
 bool UInputBufferSubsystem::ConsumeButtonInput(const UInputAction* Input)
 {
 	if (!Input) return false;
 	
 	const FName InputID = FName(Input->ActionDescription.ToString());
 
-	// TODO: Logging...
 	if (!ButtonInputValidFrame.Contains(InputID))
 	{
 		IB_FLog(Error, "%s - Input Action Registered But Not Collected In Buffer", *InputID.ToString())
 		return false;
 	}
-	
-	if (ButtonInputValidFrame[InputID] < 0) return false;
-	if (InputBuffer[ButtonInputValidFrame[InputID]].InputsFrameState[InputID].CanExecute())
+
+	if (ButtonInputValidFrame[InputID].IsPress())
 	{
-		InputBuffer[ButtonInputValidFrame[InputID]].InputsFrameState[InputID].bUsed = true;
-		ButtonInputValidFrame[InputID] = -1;
+		InputBuffer[ButtonInputValidFrame[InputID].GetAssociatedFrame()].InputsFrameState[InputID].bUsed = true;
 		return true;
 	}
+	
 	return false;
 }
 
@@ -265,15 +279,16 @@ bool UInputBufferSubsystem::ConsumeDirectionalInput(const UMotionAction* Input)
 {
 	if (!Input) return false;
 	
-	const FName InputID = Input->GetID();
+	const FName DirectionalID = Input->GetID();
+	const FName ActionID = InputMap->DirectionalActionMap->GetDirectionalActionID();
 
-	if (!DirectionalInputValidFrame.Contains(InputID)) return false;
+	if (!DirectionalInputValidFrame.Contains(DirectionalID)) return false;
 	
-	if (DirectionalInputValidFrame[InputID] < 0) return false;
-	if (InputBuffer[DirectionalInputValidFrame[InputID]].InputsFrameState[InputID].CanExecute())
+	if (DirectionalInputValidFrame[DirectionalID] < 0) return false;
+	if (InputBuffer[DirectionalInputValidFrame[DirectionalID]].InputsFrameState[ActionID].CanInvokePress()) // TODO: UMotionAction ID doesnt exist in frame state
 	{
-		InputBuffer[DirectionalInputValidFrame[InputID]].InputsFrameState[InputID].bUsed = true;
-		DirectionalInputValidFrame[InputID] = -1;
+		InputBuffer[DirectionalInputValidFrame[DirectionalID]].InputsFrameState[ActionID].bUsed = true;
+		DirectionalInputValidFrame[DirectionalID] = -1;
 		return true;
 	}
 	return false;
@@ -306,6 +321,7 @@ void UInputBufferSubsystem::ProcessDirectionVector(const FVector2D& DirectionInp
 }
 
 
+// Will color code soon, white for nothing, red for Hold, Green for CanPress, purple for Released
 void UInputBufferSubsystem::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL, float& YPos)
 {
 	FDisplayDebugManager& DisplayDebugManager = Canvas->DisplayDebugManager;
@@ -320,7 +336,7 @@ void UInputBufferSubsystem::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInf
 	FString InputFrames = "";
 	for (auto ID : InputMap->GetActionIDs())
 	{
-		InputFrames += FString::FromInt(ButtonInputValidFrame[ID]);
+		InputFrames += FString::FromInt(ButtonInputValidFrame[ID].GetAssociatedFrame());
 		InputFrames += "            ";
 	}
 	DisplayDebugManager.SetDrawColor(FColor::Red);

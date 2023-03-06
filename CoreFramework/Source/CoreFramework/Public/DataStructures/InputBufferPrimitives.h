@@ -2,12 +2,38 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "BufferContainer.h"
 #include "InputBufferPrimitives.generated.h"
 
-
 USTRUCT()
-struct FRawInputValue
+struct COREFRAMEWORK_API FBufferState
+{
+	GENERATED_BODY()
+
+protected:
+	int8 FrameVal = -1;
+	float HoldTime = 0.f;
+	bool bPressInstanceConsumed = false;
+
+public:
+	FBufferState() : FrameVal(-1), HoldTime(0), bPressInstanceConsumed(false) {}
+	FBufferState(uint8 InFrameVal, float InHoldTime, bool bConsumed) : FrameVal(InFrameVal), HoldTime(InHoldTime), bPressInstanceConsumed(bConsumed) {}
+	
+	void Reset()
+	{
+		FrameVal = -1;
+		HoldTime = 0.f;
+		bPressInstanceConsumed = false;
+	};
+	uint8 GetAssociatedFrame() const { return FrameVal; }
+	
+	bool IsPress() const { return FrameVal > 0 && HoldTime == 0 && bPressInstanceConsumed == false; }
+	bool IsHold() const { return FrameVal > 0 && HoldTime > 0 && bPressInstanceConsumed == true; }
+	bool IsRelase() const { return FrameVal > 0 && HoldTime == 0 && bPressInstanceConsumed == true; }
+};
+
+/* Wrapper for incoming input values to later be processed by FInputFrameState */
+USTRUCT()
+struct COREFRAMEWORK_API FRawInputValue
 {
 	GENERATED_BODY()
 	
@@ -33,7 +59,7 @@ public:
 
 /* Struct defining the state of a given input in a frame, whether its been used, being held, and so on  */
 USTRUCT()
-struct FInputFrameState
+struct COREFRAMEWORK_API FInputFrameState
 {
 	GENERATED_BODY()
 
@@ -66,15 +92,21 @@ public:
 	/// @brief Called when the assigned input has been released or has not been registered
 	void ReleaseHold();
 
-	/// @brief	Is an input registered in the current frame that has not already been used up?
-	/// @return True if the input is usable
-	bool CanExecute() const;
+	/// @brief  Returns true if the current frame state has not been used and is the first of its input registered to the buffer
+	///			(e.g HoldTime == 1)
+	bool CanInvokePress() const;
+
+	/// @brief  Returns true if the initial press was used, but this input has now been released (HoldTime == -1)
+	bool CanInvokeRelease() const;
+
+	/// @brief  Returns true if the initial press was used, and this input has continued to be held (HoldTime > 1)
+	bool CanInvokeHold() const;
 
 };
 
 /* Row of an input buffer. Holds a collection of input frame states and defines the primitive of the actual buffer */
 USTRUCT()
-struct FBufferFrame
+struct COREFRAMEWORK_API FBufferFrame
 {
 	GENERATED_BODY()
 

@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "MovementData.h"
+#include "OPRootMotionSource.h"
 #include "GameFramework/PawnMovementComponent.h"
 #include "CustomMovementComponent.generated.h"
 
@@ -20,6 +21,7 @@ DECLARE_DYNAMIC_DELEGATE_TwoParams(FUpdateRotationSignature, UCustomMovementComp
 /* Forward Declarations */
 class AOPCharacter;
 class UMovementData;
+
 //struct FBasedMovementInfo;
 
 #pragma region Enums
@@ -35,6 +37,9 @@ enum EMovementState
 
 	/* No floor or floor is unstable */
 	STATE_Falling	UMETA(DisplayName="Falling"),
+
+	/* General movement state for custom logic that doesn't fit into Falling or Grounded ticks */
+	STATE_General	UMETA(DisplayName="General")
 };
 
 UENUM(BlueprintType)
@@ -233,7 +238,7 @@ public:
 	// Sets default values for this component's properties
 	UCustomMovementComponent();
 
-	UPROPERTY()
+	UPROPERTY(Transient, DuplicateTransient)
 	TObjectPtr<AOPCharacter> CharacterOwner;
 
 public:
@@ -502,6 +507,9 @@ protected:
 	void AirMovementTick(float DeltaTime, uint32 Iterations);
 
 	/// @brief  
+	void GeneralMovementTick(float DeltaTime, uint32 Iterations);
+
+	/// @brief  
 	virtual void PostMovementUpdate(float DeltaTime);
 
 	/// @brief  
@@ -685,6 +693,12 @@ protected:
 	
 /* Methods and fields to handle root motion */
 #pragma region Root Motion
+
+public:
+	/// @brief  Root motion source group containing active root motion sources being applied to movement
+	UPROPERTY(Transient)
+	FOPRootMotionSourceGroup CurrentRootMotion;
+
 protected:
 	UPROPERTY(Category="(Radical Movement): Animation", EditDefaultsOnly)
 	uint8 bApplyRootMotionDuringBlendIn		: 1;
@@ -701,73 +715,50 @@ protected:
 
 	virtual FVector CalcRootMotionVelocity(FVector RootMotionDeltaMove, float DeltaTime, const FVector& CurrentVelocity) const;
 
+	/// @brief  Initial application of root motion to velocity within PerformMovement()
+	virtual void InitApplyRootMotionToVelocity(float DeltaTime);
+	
+	/// @brief  Applies a root motion from root motion sources to velocity (override and additive)
+	virtual void ApplyRootMotionToVelocity(float DeltaTime);
+
+	/// @brief  Restores velocity to LastPreAdditiveVelocity During RootMotion Phys*() Function Calls
+	void RestorePreAdditiveRootMotionVelocity();
+	
 	bool ShouldDiscardRootMotion(const UAnimMontage* RootMotionMontage, float RootMotionMontagePosition) const;
 
 public:
-
+	
 	/// @brief  Check to see if we have root motion from an Anim. Not valid outside of the scope of PerformMovement() since its extracted and used in it
 	/// @return True if we have Root Motion from animation to use in PerformMovement() physics
 	bool HasAnimRootMotion() const
 	{
 		return RootMotionParams.bHasRootMotion;
 	}
+
+	/// @brief  Checks if any root motion being used is a FOPRootMotionSource
+	/// @return Returns true if we have root motion from any source to use in PerformMovement() physics
+	bool HasRootMotionSources() const;
+
+	/// @brief  Apply a FOPRootMotionSource to current root motion
+	/// @return LocalID for this root motion source
+	uint16 ApplyRootMotionSource(TSharedPtr<FOPRootMotionSource> SourcePtr);
+
+	/// @brief  Called during ApplyRootMotionSource call, useful for project-specific alerts for "something is about to be altering our movement"
+	virtual void OnRootMotionSourceBeingApplied(const FRootMotionSource* Source);
+
+	/// @brief  Gets a root motion source from current root motion by name
+	TSharedPtr<FOPRootMotionSource> GetRootMotionSource(FName InstanceName);
+
+	/// @brief  Gets a root motion source from current root motion by ID
+	TSharedPtr<FOPRootMotionSource> GetRootMotionSourceByID(uint16 RootMotionSourceID);
+
+	/// @brief  Remove a RootMotionSource from current root motion by name
+	void RemoveRootMotionSource(FName InstanceName);
+
+	/// @brief  Remove a RootMotionSource from current root motion by ID
+	void RemoveRootMotionSourceByID(uint16 RootMotionSourceID);
 	
-/*
-protected:
 
-	UPROPERTY(Transient)
-	FRootMotionMovementParams RootMotionParams;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Motor | Animation")
-	bool bApplyRootMotionDuringBlendIn{true};
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Motor | Animation")
-	bool bApplyRootMotionDuringBlendOut{true};
-
-	UPROPERTY(BlueprintReadWrite, Category="Motor | Animation")
-	bool bHasAnimRootMotion{false};
-	
-	UPROPERTY(BlueprintReadWrite, Category="Motor | Animation")
-	float AnimRootMotionTranslationScale{1.f};
-
-	UPROPERTY(BlueprintReadWrite, Category="Motor | Animation")
-	USkeletalMeshComponent* SkeletalMesh{nullptr};
-
-	
-public:
-	
-	virtual void SetSkeletalMeshReference(USkeletalMeshComponent* Mesh);
-
-	float GetAnimRootMotionTranslationScale() const;
-
-	void SetAnimRootMotionTranslationScale(float Scale = 1.f);
-
-	UFUNCTION(BlueprintCallable)
-	bool IsPlayingMontage() const;
-
-	UFUNCTION(BlueprintCallable)
-	bool IsPlayingRootMotion() const;
-
-	UFUNCTION(BlueprintCallable)
-	bool HasAnimRootMotion() const { return bHasAnimRootMotion; }
-
-protected:
-
-	
-	void BlockSkeletalMeshPoseTick() const;
-
-	void TickPose(float DeltaTime);
-
-	virtual void ApplyAnimRootMotionRotation(float DeltaTime);
-
-	virtual void CalculateAnimRootMotionVelocity(float DeltaTime);
-
-	bool ShouldDiscardRootMotion(UAnimMontage* RootMotionMontage, float RootMotionMontagePosition) const;
-	
-	UFUNCTION(BlueprintNativeEvent, Category = "General Movement Component")
-	FVector PostProcessAnimRootMotionVelocity(const FVector& RootMotionVelocity, float DeltaSeconds);
-	virtual FVector PostProcessAnimRootMotionVelocity_Implementation(const FVector& RootMotionVelocity, float DeltaSeconds) {return RootMotionVelocity; }
-*/
 #pragma endregion Root Motion
 	
 /* Methods to impart forces and evaluate physics interactions*/

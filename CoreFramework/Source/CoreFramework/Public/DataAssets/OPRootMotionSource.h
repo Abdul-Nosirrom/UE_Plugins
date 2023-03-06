@@ -26,7 +26,9 @@ struct COREFRAMEWORK_API FOPRootMotionSource : public FRootMotionSource
 {
 	GENERATED_BODY()
 
-	virtual void PrepareRootMotion(float SimulationTime, float MovementTickTime, const AOPCharacter& Character, const UCustomMovementComponent& MoveComponent);
+	virtual void PrepareCustomRootMotion(float SimulationTime, float MovementTickTime, const AOPCharacter& Character, const UCustomMovementComponent& MoveComponent);
+
+	virtual void AddReferencedObjects(FReferenceCollector& Collector) override {}
 };
 
 USTRUCT()
@@ -87,7 +89,7 @@ struct COREFRAMEWORK_API FOPRootMotionSource_ConstantForce : public FOPRootMotio
 
 	virtual bool UpdateStateFrom(const FRootMotionSource* SourceToTakeStateFrom, bool bMarkForSimulatedCatchup = false) override;
 
-	virtual void PrepareRootMotion(
+	virtual void PrepareCustomRootMotion(
 		float SimulationTime, 
 		float MovementTickTime,
 		const AOPCharacter& Character, 
@@ -149,7 +151,7 @@ struct COREFRAMEWORK_API FOPRootMotionSource_RadialForce : public FOPRootMotionS
 
 	virtual bool UpdateStateFrom(const FRootMotionSource* SourceToTakeStateFrom, bool bMarkForSimulatedCatchup = false) override;
 
-	virtual void PrepareRootMotion(
+	virtual void PrepareCustomRootMotion(
 		float SimulationTime, 
 		float MovementTickTime,
 		const AOPCharacter& Character, 
@@ -197,7 +199,7 @@ struct COREFRAMEWORK_API FOPRootMotionSource_MoveToForce : public FOPRootMotionS
 
 	virtual void SetTime(float NewTime) override;
 
-	virtual void PrepareRootMotion(
+	virtual void PrepareCustomRootMotion(
 		float SimulationTime, 
 		float MovementTickTime,
 		const AOPCharacter& Character, 
@@ -258,7 +260,7 @@ struct COREFRAMEWORK_API FOPRootMotionSource_MoveToDynamicForce : public FOPRoot
 
 	virtual void SetTime(float NewTime) override;
 
-	virtual void PrepareRootMotion(
+	virtual void PrepareCustomRootMotion(
 		float SimulationTime, 
 		float MovementTickTime,
 		const AOPCharacter& Character, 
@@ -317,7 +319,7 @@ struct COREFRAMEWORK_API FOPRootMotionSource_JumpForce : public FOPRootMotionSou
 
 	virtual bool UpdateStateFrom(const FRootMotionSource* SourceToTakeStateFrom, bool bMarkForSimulatedCatchup = false) override;
 
-	virtual void PrepareRootMotion(
+	virtual void PrepareCustomRootMotion(
 		float SimulationTime, 
 		float MovementTickTime,
 		const AOPCharacter& Character, 

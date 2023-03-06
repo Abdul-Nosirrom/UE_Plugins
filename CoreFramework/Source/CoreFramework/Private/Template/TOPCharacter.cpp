@@ -80,9 +80,9 @@ void ATOPCharacter::SetupPlayerInputComponent(class UInputComponent* PlayerInput
 				Subsystem->AddMappingContext(DefaultInputBufferMapping, EnhancedInputComponent);
 
 				// Bind Input Buffer Shit
-				//Subsystem->InputPressedDelegate.AddDynamic(this, &ATOPCharacter::InputTriggered);
+				Subsystem->InputPressedDelegate.AddDynamic(this, &ATOPCharacter::InputTriggered);
 				//Subsystem->DirectionalAndButtonDelegate.AddDynamic(this, &ATOPCharacter::DirectionalRegistered);
-				Subsystem->DirectionalInputRegisteredDelegate.AddDynamic(this, &ATOPCharacter::DirectionalRegistered);
+				//Subsystem->DirectionalInputRegisteredDelegate.AddDynamic(this, &ATOPCharacter::DirectionalRegistered);
 				//Subsystem->InputPressedDelegate.AddUFunction(this, &ATOPCharacter::InputTriggered);
 				//Subsystem->InputPressedDelegate.Add()
 				Subsystem->InputReleasedDelegate.AddDynamic(this, &ATOPCharacter::InputReleased);
@@ -105,11 +105,12 @@ void ATOPCharacter::SetupPlayerInputComponent(class UInputComponent* PlayerInput
 
 void ATOPCharacter::InputTriggered(const UInputAction* InputAction, const FInputActionValue& Value)
 {
-	UE_LOG(LogTemp, Error, TEXT("Recieved buffer event for %s"), *InputAction->ActionDescription.ToString());
-	if (InputAction == JumpAction) Jump(Value);
+	if (InputAction == JumpAction)
+	{
+		Jump(Value);
+	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("Action comparison failed for %s == %s"), *JumpAction->ActionDescription.ToString(), *InputAction->ActionDescription.ToString());
 	}
 }
 
