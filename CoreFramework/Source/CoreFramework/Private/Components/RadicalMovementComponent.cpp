@@ -1,9 +1,9 @@
 // Copyright 2023 Abdulrahmen Almodaimegh. All Rights Reserved.
-#include "CustomMovementComponent.h"
+#include "RadicalMovementComponent.h"
 #include "GameFramework/Character.h"
 #include "Debug/RMC_LOG.h"
 #include "CFW_PCH.h"
-#include "OPCharacter.h"
+#include "RadicalCharacter.h"
 
 #pragma region Profiling & CVars
 /* Core Update Loop */
@@ -87,7 +87,7 @@ DEFINE_LOG_CATEGORY(LogRMCMovement)
 #pragma endregion Profiling & CVars
 
 // Sets default values for this component's properties
-UCustomMovementComponent::UCustomMovementComponent()
+URadicalMovementComponent::URadicalMovementComponent()
 {
 	PostPhysicsTickFunction.bCanEverTick = true;
 	PostPhysicsTickFunction.bStartWithTickEnabled = false;
@@ -127,7 +127,7 @@ UCustomMovementComponent::UCustomMovementComponent()
 }
 
 // Called when the game starts
-void UCustomMovementComponent::BeginPlay()
+void URadicalMovementComponent::BeginPlay()
 {
 	// This will reserve this component specifically for pawns, do we want that?
 	if (!CharacterOwner)
@@ -156,14 +156,14 @@ void UCustomMovementComponent::BeginPlay()
 	}
 }
 
-void UCustomMovementComponent::PostLoad()
+void URadicalMovementComponent::PostLoad()
 {
 	Super::PostLoad();
 
-	CharacterOwner = Cast<AOPCharacter>(PawnOwner);
+	CharacterOwner = Cast<ARadicalCharacter>(PawnOwner);
 }
 
-void UCustomMovementComponent::Deactivate()
+void URadicalMovementComponent::Deactivate()
 {
 	Super::Deactivate();
 	if (!IsActive())
@@ -175,7 +175,7 @@ void UCustomMovementComponent::Deactivate()
 
 
 /* FUNCTIONAL */
-void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+void URadicalMovementComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	SCOPED_NAMED_EVENT(URadicalMovementComponent_TickComponent, FColor::Yellow)
 	SCOPE_CYCLE_COUNTER(STAT_TickComponent)
@@ -230,7 +230,7 @@ void UCustomMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 #endif 
 }
 
-void FCustomMovementComponentPostPhysicsTickFunction::ExecuteTick(float DeltaTime, ELevelTick TickType, ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
+void FRadicalMovementComponentPostPhysicsTickFunction::ExecuteTick(float DeltaTime, ELevelTick TickType, ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
 {
 	FActorComponentTickFunction::ExecuteTickHelper(Target, /*bTickInEditor=*/ false, DeltaTime, TickType, [this](float DilatedTime)
 	{
@@ -239,7 +239,7 @@ void FCustomMovementComponentPostPhysicsTickFunction::ExecuteTick(float DeltaTim
 }
 
 
-void UCustomMovementComponent::PostPhysicsTickComponent(float DeltaTime, FCustomMovementComponentPostPhysicsTickFunction& ThisTickFunction)
+void URadicalMovementComponent::PostPhysicsTickComponent(float DeltaTime, FRadicalMovementComponentPostPhysicsTickFunction& ThisTickFunction)
 {
 	if (bDeferUpdateBasedMovement)
 	{
@@ -254,7 +254,7 @@ void UCustomMovementComponent::PostPhysicsTickComponent(float DeltaTime, FCustom
 #pragma region Movement Component Overrides
 // BEGIN UMovementComponent
 
-void UCustomMovementComponent::SetUpdatedComponent(USceneComponent* NewUpdatedComponent)
+void URadicalMovementComponent::SetUpdatedComponent(USceneComponent* NewUpdatedComponent)
 {
 	// Check if it exists
 	if (!NewUpdatedComponent)
@@ -265,11 +265,11 @@ void UCustomMovementComponent::SetUpdatedComponent(USceneComponent* NewUpdatedCo
 	// Check if its valid, and if anything is using the delegate event
 	if (IsValid(UpdatedPrimitive) && UpdatedPrimitive->OnComponentBeginOverlap.IsBound())
 	{
-		UpdatedPrimitive->OnComponentBeginOverlap.RemoveDynamic(this, &UCustomMovementComponent::RootCollisionTouched);
+		UpdatedPrimitive->OnComponentBeginOverlap.RemoveDynamic(this, &URadicalMovementComponent::RootCollisionTouched);
 	}
 
 	Super::SetUpdatedComponent(NewUpdatedComponent);
-	CharacterOwner = Cast<AOPCharacter>(PawnOwner);
+	CharacterOwner = Cast<ARadicalCharacter>(PawnOwner);
 	
 	if (!IsValid(UpdatedComponent) || !IsValid(UpdatedPrimitive))
 	{
@@ -285,11 +285,11 @@ void UCustomMovementComponent::SetUpdatedComponent(USceneComponent* NewUpdatedCo
 
 	if (bEnablePhysicsInteraction)
 	{
-		UpdatedPrimitive->OnComponentBeginOverlap.AddUniqueDynamic(this, &UCustomMovementComponent::RootCollisionTouched);
+		UpdatedPrimitive->OnComponentBeginOverlap.AddUniqueDynamic(this, &URadicalMovementComponent::RootCollisionTouched);
 	}
 }
 
-void UCustomMovementComponent::AddRadialForce(const FVector& Origin, float Radius, float Strength,
+void URadicalMovementComponent::AddRadialForce(const FVector& Origin, float Radius, float Strength,
 	ERadialImpulseFalloff Falloff)
 {
 	FVector Delta = UpdatedComponent->GetComponentLocation() - Origin;
@@ -309,7 +309,7 @@ void UCustomMovementComponent::AddRadialForce(const FVector& Origin, float Radiu
 	AddForce(Delta * ForceMagnitude);
 }
 
-void UCustomMovementComponent::AddRadialImpulse(const FVector& Origin, float Radius, float Strength,
+void URadicalMovementComponent::AddRadialImpulse(const FVector& Origin, float Radius, float Strength,
 	ERadialImpulseFalloff Falloff, bool bVelChange)
 {
 	FVector Delta = UpdatedComponent->GetComponentLocation() - Origin;
@@ -332,7 +332,7 @@ void UCustomMovementComponent::AddRadialImpulse(const FVector& Origin, float Rad
 	AddImpulse(Delta * ImpulseMagnitude, bVelChange);
 }
 
-void UCustomMovementComponent::StopActiveMovement()
+void URadicalMovementComponent::StopActiveMovement()
 {
 	Super::StopActiveMovement();
 
@@ -343,12 +343,12 @@ void UCustomMovementComponent::StopActiveMovement()
 
 // BEGIN UPawnMovementComponent
 
-void UCustomMovementComponent::NotifyBumpedPawn(APawn* BumpedPawn)
+void URadicalMovementComponent::NotifyBumpedPawn(APawn* BumpedPawn)
 {
 	Super::NotifyBumpedPawn(BumpedPawn);
 }
 
-void UCustomMovementComponent::OnTeleported()
+void URadicalMovementComponent::OnTeleported()
 {
 	Super::OnTeleported();
 
@@ -387,7 +387,7 @@ void UCustomMovementComponent::OnTeleported()
 
 #pragma region Movement State & Interface
 
-void UCustomMovementComponent::SetMovementState(EMovementState NewMovementState)
+void URadicalMovementComponent::SetMovementState(EMovementState NewMovementState)
 {
 	if (PhysicsState == NewMovementState)
 	{
@@ -401,7 +401,7 @@ void UCustomMovementComponent::SetMovementState(EMovementState NewMovementState)
 }
 
 
-void UCustomMovementComponent::OnMovementStateChanged(EMovementState PreviousMovementState)
+void URadicalMovementComponent::OnMovementStateChanged(EMovementState PreviousMovementState)
 {
 	SCOPE_CYCLE_COUNTER(STAT_OnMovementStateChanged);
 	
@@ -450,12 +450,12 @@ void UCustomMovementComponent::OnMovementStateChanged(EMovementState PreviousMov
 	if (CharacterOwner) CharacterOwner->OnMovementStateChanged(PreviousMovementState);
 }
 
-void UCustomMovementComponent::DisableMovement()
+void URadicalMovementComponent::DisableMovement()
 {
 	SetMovementState(STATE_None);
 }
 
-void UCustomMovementComponent::AddImpulse(FVector Impulse, bool bVelocityChange)
+void URadicalMovementComponent::AddImpulse(FVector Impulse, bool bVelocityChange)
 {
 	if (!Impulse.IsZero() && (PhysicsState != STATE_None) && IsActive())
 	{
@@ -473,7 +473,7 @@ void UCustomMovementComponent::AddImpulse(FVector Impulse, bool bVelocityChange)
 	}
 }
 
-void UCustomMovementComponent::AddForce(FVector Force)
+void URadicalMovementComponent::AddForce(FVector Force)
 {
 	if (!Force.IsZero() && (PhysicsState != STATE_None) && IsActive())
 	{
@@ -484,20 +484,20 @@ void UCustomMovementComponent::AddForce(FVector Force)
 	}
 }
 
-void UCustomMovementComponent::Launch(const FVector& LaunchVel)
+void URadicalMovementComponent::Launch(const FVector& LaunchVel)
 {
 	PendingLaunchVelocity = LaunchVel;
 }
 
 
-void UCustomMovementComponent::ClearAccumulatedForces()
+void URadicalMovementComponent::ClearAccumulatedForces()
 {
 	PendingImpulseToApply = FVector::ZeroVector;
 	PendingForceToApply = FVector::ZeroVector;
 	PendingLaunchVelocity = FVector::ZeroVector;
 }
 
-void UCustomMovementComponent::ApplyAccumulatedForces(float DeltaTime)
+void URadicalMovementComponent::ApplyAccumulatedForces(float DeltaTime)
 {
 	const float PendingVertImpulse = PendingImpulseToApply | GetUpOrientation(MODE_Gravity);
 	const float PendignVertForce = PendingForceToApply | GetUpOrientation(MODE_Gravity);
@@ -518,7 +518,7 @@ void UCustomMovementComponent::ApplyAccumulatedForces(float DeltaTime)
 }
 
 
-bool UCustomMovementComponent::HandlePendingLaunch()
+bool URadicalMovementComponent::HandlePendingLaunch()
 {
 	if (!PendingLaunchVelocity.IsZero())
 	{
@@ -537,7 +537,7 @@ bool UCustomMovementComponent::HandlePendingLaunch()
 #pragma region Core Simulation Handling
 
 /* FUNCTIONAL */
-bool UCustomMovementComponent::CanMove() const
+bool URadicalMovementComponent::CanMove() const
 {
 	if (!UpdatedComponent || !PawnOwner) return false;
 	if (UpdatedComponent->Mobility != EComponentMobility::Movable) return false;
@@ -545,7 +545,7 @@ bool UCustomMovementComponent::CanMove() const
 	return true;
 }
 
-float UCustomMovementComponent::GetSimulationTimeStep(float RemainingTime, uint32 Iterations) const
+float URadicalMovementComponent::GetSimulationTimeStep(float RemainingTime, uint32 Iterations) const
 {
 	if (RemainingTime > MaxSimulationTimeStep)
 	{
@@ -559,7 +559,7 @@ float UCustomMovementComponent::GetSimulationTimeStep(float RemainingTime, uint3
 }
 
 
-void UCustomMovementComponent::PerformMovement(float DeltaTime)
+void URadicalMovementComponent::PerformMovement(float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_PerformMovement)
 	
@@ -665,7 +665,7 @@ void UCustomMovementComponent::PerformMovement(float DeltaTime)
 	PostMovementUpdate(DeltaTime);
 }
 
-bool UCustomMovementComponent::PreMovementUpdate(float DeltaTime)
+bool URadicalMovementComponent::PreMovementUpdate(float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_PreMovementUpdate)
 
@@ -712,7 +712,7 @@ bool UCustomMovementComponent::PreMovementUpdate(float DeltaTime)
 
 #pragma region Actual Movement Ticks
 
-void UCustomMovementComponent::StartMovementTick(float DeltaTime, uint32 Iterations)
+void URadicalMovementComponent::StartMovementTick(float DeltaTime, uint32 Iterations)
 {
 	if ((DeltaTime < MIN_TICK_TIME) || (Iterations >= MaxSimulationIterations))
 	{
@@ -744,7 +744,7 @@ void UCustomMovementComponent::StartMovementTick(float DeltaTime, uint32 Iterati
 }
 
 
-void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterations)
+void URadicalMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterations)
 {
 	SCOPE_CYCLE_COUNTER(STAT_GroundTick)
 
@@ -950,7 +950,7 @@ void UCustomMovementComponent::GroundMovementTick(float DeltaTime, uint32 Iterat
 }
 
 
-void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iterations)
+void URadicalMovementComponent::AirMovementTick(float DeltaTime, uint32 Iterations)
 {
 	SCOPE_CYCLE_COUNTER(STAT_AirTick)
 
@@ -1127,7 +1127,7 @@ void UCustomMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteration
 	}
 }
 
-void UCustomMovementComponent::GeneralMovementTick(float DeltaTime, uint32 Iterations)
+void URadicalMovementComponent::GeneralMovementTick(float DeltaTime, uint32 Iterations)
 {
 	SCOPE_CYCLE_COUNTER(STAT_GenTick);
 	
@@ -1212,7 +1212,7 @@ void UCustomMovementComponent::GeneralMovementTick(float DeltaTime, uint32 Itera
 }
 
 
-void UCustomMovementComponent::MoveAlongFloor(const float DeltaTime, FStepDownFloorResult* OutStepDownResult)
+void URadicalMovementComponent::MoveAlongFloor(const float DeltaTime, FStepDownFloorResult* OutStepDownResult)
 {
 	if (!CurrentFloor.IsWalkableFloor())
 	{
@@ -1277,7 +1277,7 @@ void UCustomMovementComponent::MoveAlongFloor(const float DeltaTime, FStepDownFl
 
 #pragma endregion Actual Movement Ticks
 
-void UCustomMovementComponent::PostMovementUpdate(float DeltaTime)
+void URadicalMovementComponent::PostMovementUpdate(float DeltaTime)
 {
 	SaveBaseLocation();
 	
@@ -1288,7 +1288,7 @@ void UCustomMovementComponent::PostMovementUpdate(float DeltaTime)
 	LastUpdateVelocity = Velocity;
 }
 
-void UCustomMovementComponent::ProcessLanded(FHitResult& Hit, float DeltaTime, uint32 Iterations)
+void URadicalMovementComponent::ProcessLanded(FHitResult& Hit, float DeltaTime, uint32 Iterations)
 {
 	SCOPE_CYCLE_COUNTER(STAT_ProcessLanded);
 
@@ -1312,7 +1312,7 @@ void UCustomMovementComponent::ProcessLanded(FHitResult& Hit, float DeltaTime, u
 	StartMovementTick(DeltaTime, Iterations);
 }
 
-void UCustomMovementComponent::StartFalling(uint32 Iterations, float RemainingTime, float IterTick, const FVector& Delta, const FVector SubLoc)
+void URadicalMovementComponent::StartFalling(uint32 Iterations, float RemainingTime, float IterTick, const FVector& Delta, const FVector SubLoc)
 {
 	const float DesiredDist = Delta.Size();
 	const float ActualDist = FVector::VectorPlaneProject(UpdatedComponent->GetComponentLocation() - SubLoc, GetUpOrientation(MODE_PawnUp)).Size(); // NOTE: Doesn't respect arbitrary rotation, but we're transitioning to a fall
@@ -1335,7 +1335,7 @@ void UCustomMovementComponent::StartFalling(uint32 Iterations, float RemainingTi
 	StartMovementTick(RemainingTime, Iterations);
 }
 
-void UCustomMovementComponent::RevertMove(const FVector& OldLocation, UPrimitiveComponent* OldBase, const FVector& InOldBaseLocation, const FGroundingStatus& OldFloor, bool bFailMove)
+void URadicalMovementComponent::RevertMove(const FVector& OldLocation, UPrimitiveComponent* OldBase, const FVector& InOldBaseLocation, const FGroundingStatus& OldFloor, bool bFailMove)
 {
 	UpdatedComponent->SetWorldLocation(OldLocation, false, nullptr, bJustTeleported ? ETeleportType::TeleportPhysics : ETeleportType::None);
 
@@ -1360,7 +1360,7 @@ void UCustomMovementComponent::RevertMove(const FVector& OldLocation, UPrimitive
 	}
 }
 
-void UCustomMovementComponent::OnStuckInGeometry(const FHitResult* Hit)
+void URadicalMovementComponent::OnStuckInGeometry(const FHitResult* Hit)
 {
 	if (Hit == nullptr)
 	{
@@ -1393,7 +1393,7 @@ void UCustomMovementComponent::OnStuckInGeometry(const FHitResult* Hit)
 
 #pragma region Ground Stability Handling
 
-bool UCustomMovementComponent::IsFloorStable(const FHitResult& Hit) const
+bool URadicalMovementComponent::IsFloorStable(const FHitResult& Hit) const
 {
 	if (!Hit.IsValidBlockingHit()) return false;
 
@@ -1421,7 +1421,7 @@ bool UCustomMovementComponent::IsFloorStable(const FHitResult& Hit) const
 	return true;
 }
 
-bool UCustomMovementComponent::CheckFall(const FGroundingStatus& OldFloor, const FHitResult& Hit, const FVector& Delta,
+bool URadicalMovementComponent::CheckFall(const FGroundingStatus& OldFloor, const FHitResult& Hit, const FVector& Delta,
 	const FVector& OldLocation, float RemainingTime, float IterTick, uint32 Iterations, bool bMustUnground)
 {
 	if (bMustUnground || CanWalkOffLedge())
@@ -1437,7 +1437,7 @@ bool UCustomMovementComponent::CheckFall(const FGroundingStatus& OldFloor, const
 }
 
 // DONE
-void UCustomMovementComponent::UpdateFloorFromAdjustment()
+void URadicalMovementComponent::UpdateFloorFromAdjustment()
 {
 	if (CurrentFloor.bWalkableFloor)
 	{
@@ -1451,7 +1451,7 @@ void UCustomMovementComponent::UpdateFloorFromAdjustment()
 
 
 // DONE
-void UCustomMovementComponent::AdjustFloorHeight()
+void URadicalMovementComponent::AdjustFloorHeight()
 {
 	// If we have a floor check that hasn't hit anything, don't adjust height.
 	if (!CurrentFloor.IsWalkableFloor())
@@ -1513,7 +1513,7 @@ void UCustomMovementComponent::AdjustFloorHeight()
 }
 
 // DEBUG: Seems right?
-bool UCustomMovementComponent::IsWithinEdgeTolerance(const FVector& CapsuleLocation, const FVector& TestImpactPoint,
+bool URadicalMovementComponent::IsWithinEdgeTolerance(const FVector& CapsuleLocation, const FVector& TestImpactPoint,
 	const float CapsuleRadius) const
 {
 	const float DistFromCenterSq = FVector::VectorPlaneProject(TestImpactPoint - CapsuleLocation, GetUpOrientation(MODE_PawnUp)).SizeSquared();
@@ -1522,7 +1522,7 @@ bool UCustomMovementComponent::IsWithinEdgeTolerance(const FVector& CapsuleLocat
 }
 
 
-void UCustomMovementComponent::ComputeFloorDist(const FVector& CapsuleLocation, float LineDistance, float SweepDistance,
+void URadicalMovementComponent::ComputeFloorDist(const FVector& CapsuleLocation, float LineDistance, float SweepDistance,
 	FGroundingStatus& OutFloorResult, float SweepRadius, const FHitResult* DownwardSweepResult) const
 {
 	OutFloorResult.Clear();
@@ -1673,7 +1673,7 @@ void UCustomMovementComponent::ComputeFloorDist(const FVector& CapsuleLocation, 
 }
 
 // TODO
-void UCustomMovementComponent::FindFloor(const FVector& CapsuleLocation, FGroundingStatus& OutFloorResult,
+void URadicalMovementComponent::FindFloor(const FVector& CapsuleLocation, FGroundingStatus& OutFloorResult,
 	bool bCanUseCachedLocation, const FHitResult* DownwardSweepResult) const
 {
 	SCOPE_CYCLE_COUNTER(STAT_FindFloor)
@@ -1706,7 +1706,7 @@ void UCustomMovementComponent::FindFloor(const FVector& CapsuleLocation, FGround
 	/* Perform sweep */
 	if (FloorLineTraceDist > 0.f || FloorSweepTraceDist > 0.f)
 	{
-		UCustomMovementComponent* MutableThis = const_cast<UCustomMovementComponent*>(this);
+		URadicalMovementComponent* MutableThis = const_cast<URadicalMovementComponent*>(this);
 		
 		if (bAlwaysCheckFloor || !bCanUseCachedLocation || bForceNextFloorCheck || bJustTeleported)
 		{
@@ -1782,7 +1782,7 @@ void UCustomMovementComponent::FindFloor(const FVector& CapsuleLocation, FGround
 }
 
 // DONE
-bool UCustomMovementComponent::FloorSweepTest(FHitResult& OutHit, const FVector& Start, const FVector& End,
+bool URadicalMovementComponent::FloorSweepTest(FHitResult& OutHit, const FVector& Start, const FVector& End,
 	ECollisionChannel TraceChannel, const FCollisionShape& CollisionShape, const FCollisionQueryParams& Params,
 	const FCollisionResponseParams& ResponseParams) const
 {
@@ -1815,7 +1815,7 @@ bool UCustomMovementComponent::FloorSweepTest(FHitResult& OutHit, const FVector&
 }
 
 // TODO
-bool UCustomMovementComponent::IsValidLandingSpot(const FVector& CapsuleLocation, const FHitResult& Hit) const
+bool URadicalMovementComponent::IsValidLandingSpot(const FVector& CapsuleLocation, const FHitResult& Hit) const
 {
 	if (!Hit.bBlockingHit)
 	{
@@ -1872,7 +1872,7 @@ bool UCustomMovementComponent::IsValidLandingSpot(const FVector& CapsuleLocation
 }
 
 // DONE
-bool UCustomMovementComponent::ShouldCheckForValidLandingSpot(const FHitResult& Hit) const
+bool URadicalMovementComponent::ShouldCheckForValidLandingSpot(const FHitResult& Hit) const
 {
 	LOG_HIT(Hit, 2);
 	/*
@@ -1891,7 +1891,7 @@ bool UCustomMovementComponent::ShouldCheckForValidLandingSpot(const FHitResult& 
 	return false;
 }
 
-void UCustomMovementComponent::MaintainHorizontalGroundVelocity()
+void URadicalMovementComponent::MaintainHorizontalGroundVelocity()
 {
 	// NOTE: Impact normals prevent velocity being weirdly projected on steps (Normals work better on suuuuper exaggerated terrain though but that doesn't really matter since impact normals work fine on relatively uneven terrain)
 	const float VelMag = Velocity.Size();
@@ -1901,7 +1901,7 @@ void UCustomMovementComponent::MaintainHorizontalGroundVelocity()
 	Velocity = GetDirectionTangentToSurface(Velocity, CurrentFloor.HitResult.ImpactNormal) * VelMag;
 }
 
-void UCustomMovementComponent::RecalculateVelocityToReflectMove(const FVector& OldLocation, const float DeltaTime)
+void URadicalMovementComponent::RecalculateVelocityToReflectMove(const FVector& OldLocation, const float DeltaTime)
 {
 	const float PreVelSize = FMath::Abs(Velocity.Size());
 	const FVector OldVelocity = Velocity;
@@ -1926,7 +1926,7 @@ void UCustomMovementComponent::RecalculateVelocityToReflectMove(const FVector& O
 
 #pragma region Step Handling
 
-bool UCustomMovementComponent::StepUp(const FVector& Orientation, const FHitResult& StepHit, const FVector& Delta, FStepDownFloorResult* OutStepDownResult)
+bool URadicalMovementComponent::StepUp(const FVector& Orientation, const FHitResult& StepHit, const FVector& Delta, FStepDownFloorResult* OutStepDownResult)
 {
 	SCOPE_CYCLE_COUNTER(STAT_StepUp)
 
@@ -2132,7 +2132,7 @@ bool UCustomMovementComponent::StepUp(const FVector& Orientation, const FHitResu
 	return true;
 }
 
-bool UCustomMovementComponent::CanStepUp(const FHitResult& StepHit) const
+bool URadicalMovementComponent::CanStepUp(const FHitResult& StepHit) const
 {
 	if (!StepHit.IsValidBlockingHit())
 	{
@@ -2169,14 +2169,14 @@ bool UCustomMovementComponent::CanStepUp(const FHitResult& StepHit) const
 
 #pragma region Ledge Handling
 
-float UCustomMovementComponent::GetValidPerchRadius() const
+float URadicalMovementComponent::GetValidPerchRadius() const
 {
 	const float PawnRadius = CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleRadius();
 	return FMath::Clamp(PawnRadius - GetPerchRadiusThreshold(), 0.11f, PawnRadius);
 };
 
 // TODO: Add 2 denivelation angles, one for when going "down", one for when going "up"
-bool UCustomMovementComponent::ShouldCatchAir(const FGroundingStatus& OldFloor, const FGroundingStatus& NewFloor) const
+bool URadicalMovementComponent::ShouldCatchAir(const FGroundingStatus& OldFloor, const FGroundingStatus& NewFloor) const
 {
 	const float Angle = FMath::RadiansToDegrees(FMath::Acos(OldFloor.HitResult.ImpactNormal | NewFloor.HitResult.ImpactNormal));
 	if (Angle >= MaxStableDenivelationAngle)
@@ -2187,7 +2187,7 @@ bool UCustomMovementComponent::ShouldCatchAir(const FGroundingStatus& OldFloor, 
 }
 
 // Done
-bool UCustomMovementComponent::ShouldComputePerchResult(const FHitResult& InHit, bool bCheckRadius) const
+bool URadicalMovementComponent::ShouldComputePerchResult(const FHitResult& InHit, bool bCheckRadius) const
 {
 	if (!InHit.IsValidBlockingHit())
 	{
@@ -2215,7 +2215,7 @@ bool UCustomMovementComponent::ShouldComputePerchResult(const FHitResult& InHit,
 }
 
 // TODO
-bool UCustomMovementComponent::ComputePerchResult(const float TestRadius, const FHitResult& InHit,
+bool URadicalMovementComponent::ComputePerchResult(const float TestRadius, const FHitResult& InHit,
 	const float InMaxFloorDist, FGroundingStatus& OutPerchFloorResult) const
 {
 	if (InMaxFloorDist <= 0.f)
@@ -2252,7 +2252,7 @@ bool UCustomMovementComponent::ComputePerchResult(const float TestRadius, const 
 }
 
 
-bool UCustomMovementComponent::CheckLedgeDirection(const FVector& OldLocation, const FVector& SideStep,
+bool URadicalMovementComponent::CheckLedgeDirection(const FVector& OldLocation, const FVector& SideStep,
 	const FVector& GravDir)
 {
 	const FVector SideDest = OldLocation + SideStep;
@@ -2279,7 +2279,7 @@ bool UCustomMovementComponent::CheckLedgeDirection(const FVector& OldLocation, c
 	return false;
 }
 
-FVector UCustomMovementComponent::GetLedgeMove(const FVector& OldLocation, const FVector& Delta,
+FVector URadicalMovementComponent::GetLedgeMove(const FVector& OldLocation, const FVector& Delta,
 	const FVector& GravityDir)
 {
 	if (Delta.IsZero()) return FVector::ZeroVector;
@@ -2303,7 +2303,7 @@ FVector UCustomMovementComponent::GetLedgeMove(const FVector& OldLocation, const
 	return FVector::ZeroVector;
 }
 
-void UCustomMovementComponent::HandleWalkingOffLedge(const FVector& PreviousFloorImpactNormal,
+void URadicalMovementComponent::HandleWalkingOffLedge(const FVector& PreviousFloorImpactNormal,
 	const FVector& PreviousFloorContactNormal, const FVector& PreviousLocation, float TimeDelta)
 {
 	FHitResult Hit(CurrentFloor.HitResult);
@@ -2321,7 +2321,7 @@ void UCustomMovementComponent::HandleWalkingOffLedge(const FVector& PreviousFloo
 
 #pragma region Collision Adjustments
 
-FVector UCustomMovementComponent::GetPenetrationAdjustment(const FHitResult& Hit) const
+FVector URadicalMovementComponent::GetPenetrationAdjustment(const FHitResult& Hit) const
 {
 	FVector Result = Super::GetPenetrationAdjustment(Hit);
 
@@ -2336,14 +2336,14 @@ FVector UCustomMovementComponent::GetPenetrationAdjustment(const FHitResult& Hit
 	return Result;
 }
 
-bool UCustomMovementComponent::ResolvePenetrationImpl(const FVector& Adjustment, const FHitResult& Hit, const FQuat& NewRotation)
+bool URadicalMovementComponent::ResolvePenetrationImpl(const FVector& Adjustment, const FHitResult& Hit, const FQuat& NewRotation)
 {
 	// If movement occurs, mark that we teleported so we don't incorrectly adjust velocity based on potentially very different movement than ours
 	bJustTeleported |= Super::ResolvePenetrationImpl(Adjustment, Hit, NewRotation);
 	return bJustTeleported;
 }
 
-void UCustomMovementComponent::HandleImpact(const FHitResult& Hit, float TimeSlice, const FVector& MoveDelta)
+void URadicalMovementComponent::HandleImpact(const FHitResult& Hit, float TimeSlice, const FVector& MoveDelta)
 {
 	SCOPE_CYCLE_COUNTER(STAT_HandleImpact)
 
@@ -2366,7 +2366,7 @@ void UCustomMovementComponent::HandleImpact(const FHitResult& Hit, float TimeSli
 	}
 }
 
-FVector UCustomMovementComponent::ComputeSlideVector(const FVector& Delta, const float Time, const FVector& Normal,
+FVector URadicalMovementComponent::ComputeSlideVector(const FVector& Delta, const float Time, const FVector& Normal,
 	const FHitResult& Hit) const
 {
 	FVector Result = Super::ComputeSlideVector(Delta, Time, Normal, Hit);
@@ -2379,7 +2379,7 @@ FVector UCustomMovementComponent::ComputeSlideVector(const FVector& Delta, const
 	return Result;
 }
 
-FVector UCustomMovementComponent::HandleSlopeBoosting(const FVector& SlideResult, const FVector& Delta, const float Time, const FVector& Normal,
+FVector URadicalMovementComponent::HandleSlopeBoosting(const FVector& SlideResult, const FVector& Delta, const float Time, const FVector& Normal,
 	const FHitResult& Hit) const
 {
 	FVector Result = SlideResult;
@@ -2415,7 +2415,7 @@ FVector UCustomMovementComponent::HandleSlopeBoosting(const FVector& SlideResult
 }
 
 // BUG: This may need revision, returns incorrect result in StepUp i think
-float UCustomMovementComponent::SlideAlongSurface(const FVector& Delta, float Time, const FVector& InNormal, FHitResult& Hit, bool bHandleImpact)
+float URadicalMovementComponent::SlideAlongSurface(const FVector& Delta, float Time, const FVector& InNormal, FHitResult& Hit, bool bHandleImpact)
 {
 	SCOPE_CYCLE_COUNTER(STAT_SlideAlongSurface)
 	
@@ -2454,7 +2454,7 @@ float UCustomMovementComponent::SlideAlongSurface(const FVector& Delta, float Ti
 	return SlideTime;
 }
 
-void UCustomMovementComponent::TwoWallAdjust(FVector& Delta, const FHitResult& Hit, const FVector& OldHitNormal) const
+void URadicalMovementComponent::TwoWallAdjust(FVector& Delta, const FHitResult& Hit, const FVector& OldHitNormal) const
 {
 	SCOPE_CYCLE_COUNTER(STAT_TwoWallAdjust)
 	
@@ -2487,7 +2487,7 @@ void UCustomMovementComponent::TwoWallAdjust(FVector& Delta, const FHitResult& H
 
 #pragma region Root Motion
 
-void UCustomMovementComponent::TickPose(float DeltaTime)
+void URadicalMovementComponent::TickPose(float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_TickPose)
 
@@ -2530,7 +2530,7 @@ void UCustomMovementComponent::TickPose(float DeltaTime)
 	}
 }
 
-FVector UCustomMovementComponent::CalcRootMotionVelocity(FVector RootMotionDeltaMove, float DeltaTime, const FVector& CurrentVelocity) const
+FVector URadicalMovementComponent::CalcRootMotionVelocity(FVector RootMotionDeltaMove, float DeltaTime, const FVector& CurrentVelocity) const
 {
 	// Ignore components with very small delta values
 	RootMotionDeltaMove.X = FMath::IsNearlyEqual(RootMotionDeltaMove.X, 0.f, 0.01f) ? 0.f : RootMotionDeltaMove.X;
@@ -2541,7 +2541,7 @@ FVector UCustomMovementComponent::CalcRootMotionVelocity(FVector RootMotionDelta
 	return RootMotionVelocity; // TODO: Post process event
 }
 
-void UCustomMovementComponent::InitApplyRootMotionToVelocity(float DeltaTime)
+void URadicalMovementComponent::InitApplyRootMotionToVelocity(float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_RootMotion);
 	
@@ -2579,7 +2579,7 @@ void UCustomMovementComponent::InitApplyRootMotionToVelocity(float DeltaTime)
 }
 
 
-void UCustomMovementComponent::ApplyRootMotionToVelocity(float DeltaTime)
+void URadicalMovementComponent::ApplyRootMotionToVelocity(float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_RootMotion);
 	
@@ -2643,7 +2643,7 @@ void UCustomMovementComponent::ApplyRootMotionToVelocity(float DeltaTime)
 	}
 }
 
-void UCustomMovementComponent::RestorePreAdditiveRootMotionVelocity()
+void URadicalMovementComponent::RestorePreAdditiveRootMotionVelocity()
 {
 	// Restore last frame's pre-additive Velocity if we had additive applied 
 	// so that we're not adding more additive velocity than intended
@@ -2655,7 +2655,7 @@ void UCustomMovementComponent::RestorePreAdditiveRootMotionVelocity()
 }
 
 
-bool UCustomMovementComponent::ShouldDiscardRootMotion(const UAnimMontage* RootMotionMontage, float RootMotionMontagePosition) const
+bool URadicalMovementComponent::ShouldDiscardRootMotion(const UAnimMontage* RootMotionMontage, float RootMotionMontagePosition) const
 {
 	// Return false if montage is null
 	if (!RootMotionMontage) return false;
@@ -2681,12 +2681,12 @@ bool UCustomMovementComponent::ShouldDiscardRootMotion(const UAnimMontage* RootM
 	return false;
 }
 
-bool UCustomMovementComponent::HasRootMotionSources() const
+bool URadicalMovementComponent::HasRootMotionSources() const
 {
 	return CurrentRootMotion.HasActiveRootMotionSources() || (CharacterOwner && CharacterOwner->IsPlayingRootMotion() && CharacterOwner->GetMesh());
 }
 
-uint16 UCustomMovementComponent::ApplyRootMotionSource(TSharedPtr<FOPRootMotionSource> SourcePtr)
+uint16 URadicalMovementComponent::ApplyRootMotionSource(TSharedPtr<FRootMotionSourceCFW> SourcePtr)
 {
 	if (ensure(SourcePtr.IsValid()))
 	{
@@ -2707,34 +2707,34 @@ uint16 UCustomMovementComponent::ApplyRootMotionSource(TSharedPtr<FOPRootMotionS
 	return (uint16)ERootMotionSourceID::Invalid;
 }
 
-void UCustomMovementComponent::OnRootMotionSourceBeingApplied(const FRootMotionSource* Source)
+void URadicalMovementComponent::OnRootMotionSourceBeingApplied(const FRootMotionSource* Source)
 {
 	// TODO: This is an event
 }
 
-TSharedPtr<FOPRootMotionSource> UCustomMovementComponent::GetRootMotionSource(FName InstanceName)
+TSharedPtr<FRootMotionSourceCFW> URadicalMovementComponent::GetRootMotionSource(FName InstanceName)
 {
-	return StaticCastSharedPtr<FOPRootMotionSource>(CurrentRootMotion.GetRootMotionSource(InstanceName));
+	return StaticCastSharedPtr<FRootMotionSourceCFW>(CurrentRootMotion.GetRootMotionSource(InstanceName));
 }
 
-TSharedPtr<FOPRootMotionSource> UCustomMovementComponent::GetRootMotionSourceByID(uint16 RootMotionSourceID)
+TSharedPtr<FRootMotionSourceCFW> URadicalMovementComponent::GetRootMotionSourceByID(uint16 RootMotionSourceID)
 {
-	return StaticCastSharedPtr<FOPRootMotionSource>(CurrentRootMotion.GetRootMotionSourceByID(RootMotionSourceID));
+	return StaticCastSharedPtr<FRootMotionSourceCFW>(CurrentRootMotion.GetRootMotionSourceByID(RootMotionSourceID));
 }
 
-void UCustomMovementComponent::RemoveRootMotionSource(FName InstanceName)
+void URadicalMovementComponent::RemoveRootMotionSource(FName InstanceName)
 {
 	CurrentRootMotion.RemoveRootMotionSource(InstanceName);
 }
 
-void UCustomMovementComponent::RemoveRootMotionSourceByID(uint16 RootMotionSourceID)
+void URadicalMovementComponent::RemoveRootMotionSourceByID(uint16 RootMotionSourceID)
 {
 	CurrentRootMotion.RemoveRootMotionSourceByID(RootMotionSourceID);
 }
 
 
 /*
-void UCustomMovementComponent::BlockSkeletalMeshPoseTick() const
+void URadicalMovementComponent::BlockSkeletalMeshPoseTick() const
 {
 	if (!SkeletalMesh) return;
 	SkeletalMesh->bIsAutonomousTickPose = false;
@@ -2747,7 +2747,7 @@ void UCustomMovementComponent::BlockSkeletalMeshPoseTick() const
 #pragma region Physics Interactions
 
 // TODO: Review this, its pretty old by now
-void UCustomMovementComponent::RootCollisionTouched(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
+void URadicalMovementComponent::RootCollisionTouched(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
 	if (!bEnablePhysicsInteraction)
 	{
@@ -2791,7 +2791,7 @@ void UCustomMovementComponent::RootCollisionTouched(UPrimitiveComponent* Overlap
 	OtherComponent->AddImpulse(Impulse, BoneName);
 }
 
-void UCustomMovementComponent::ApplyImpactPhysicsForces(const FHitResult& Impact, const FVector& ImpactAcceleration, const FVector& ImpactVelocity)
+void URadicalMovementComponent::ApplyImpactPhysicsForces(const FHitResult& Impact, const FVector& ImpactAcceleration, const FVector& ImpactVelocity)
 {
 	if (bEnablePhysicsInteraction && Impact.bBlockingHit)
 	{
@@ -2868,7 +2868,7 @@ void UCustomMovementComponent::ApplyImpactPhysicsForces(const FHitResult& Impact
 	}
 }
 
-void UCustomMovementComponent::ApplyDownwardForce(float DeltaTime)
+void URadicalMovementComponent::ApplyDownwardForce(float DeltaTime)
 {
 	if (StandingDownwardForceScale != 0.0f && CurrentFloor.HitResult.IsValidBlockingHit())
 	{
@@ -2882,7 +2882,7 @@ void UCustomMovementComponent::ApplyDownwardForce(float DeltaTime)
 	}
 }
 
-void UCustomMovementComponent::ApplyRepulsionForce(float DeltaTime)
+void URadicalMovementComponent::ApplyRepulsionForce(float DeltaTime)
 {
 	if (UpdatedPrimitive && RepulsionForce > 0.f && PawnOwner != nullptr)
 	{
@@ -2992,7 +2992,7 @@ void UCustomMovementComponent::ApplyRepulsionForce(float DeltaTime)
 #pragma region Moving Base
 
 
-void UCustomMovementComponent::SetBase(UPrimitiveComponent* NewBaseComponent, const FName InBoneName, bool bNotifyPawn)
+void URadicalMovementComponent::SetBase(UPrimitiveComponent* NewBaseComponent, const FName InBoneName, bool bNotifyPawn)
 {
 	if (CharacterOwner)
 	{
@@ -3000,7 +3000,7 @@ void UCustomMovementComponent::SetBase(UPrimitiveComponent* NewBaseComponent, co
 	}
 }
 
-void UCustomMovementComponent::SetBaseFromFloor(const FGroundingStatus& FloorResult)
+void URadicalMovementComponent::SetBaseFromFloor(const FGroundingStatus& FloorResult)
 {
 	if (FloorResult.IsWalkableFloor())
 	{
@@ -3012,13 +3012,13 @@ void UCustomMovementComponent::SetBaseFromFloor(const FGroundingStatus& FloorRes
 	}
 }
 
-UPrimitiveComponent* UCustomMovementComponent::GetMovementBase() const
+UPrimitiveComponent* URadicalMovementComponent::GetMovementBase() const
 {
 	return CharacterOwner ? CharacterOwner->GetMovementBase() : nullptr;
 }
 
 // TODO: Math is right I think (PawnUp to define impart plane)
-FVector UCustomMovementComponent::GetImpartedMovementBaseVelocity() const
+FVector URadicalMovementComponent::GetImpartedMovementBaseVelocity() const
 {
 	if (!bMoveWithBase) return FVector::ZeroVector;
 	
@@ -3051,7 +3051,7 @@ FVector UCustomMovementComponent::GetImpartedMovementBaseVelocity() const
 	return Result;
 }
 
-void UCustomMovementComponent::DecayFormerBaseVelocity(float DeltaTime)
+void URadicalMovementComponent::DecayFormerBaseVelocity(float DeltaTime)
 {
 	if (!bMoveWithBase) return;
 	
@@ -3066,7 +3066,7 @@ void UCustomMovementComponent::DecayFormerBaseVelocity(float DeltaTime)
 }
 
 
-void UCustomMovementComponent::TryUpdateBasedMovement(float DeltaTime)
+void URadicalMovementComponent::TryUpdateBasedMovement(float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_MoveWithBase);
 	
@@ -3110,7 +3110,7 @@ void UCustomMovementComponent::TryUpdateBasedMovement(float DeltaTime)
 	}
 }
 
-void UCustomMovementComponent::UpdateBasedMovement(float DeltaTime)
+void URadicalMovementComponent::UpdateBasedMovement(float DeltaTime)
 {
 	if (!bMoveWithBase) return;
 	
@@ -3210,7 +3210,7 @@ void UCustomMovementComponent::UpdateBasedMovement(float DeltaTime)
 }
 
 // TODO: How? Is This Right? Keeping Roll?
-void UCustomMovementComponent::UpdateBasedRotation(FRotator& FinalRotation, const FRotator& ReducedRotation)
+void URadicalMovementComponent::UpdateBasedRotation(FRotator& FinalRotation, const FRotator& ReducedRotation)
 {
 	if (!bMoveWithBase) return;
 	
@@ -3223,7 +3223,7 @@ void UCustomMovementComponent::UpdateBasedRotation(FRotator& FinalRotation, cons
 	}
 }
 
-void UCustomMovementComponent::SaveBaseLocation()
+void URadicalMovementComponent::SaveBaseLocation()
 {
 	if (!bDeferUpdateBasedMovement)
 	{
@@ -3256,7 +3256,7 @@ void UCustomMovementComponent::SaveBaseLocation()
 	}
 }
 
-void UCustomMovementComponent::OnUnableToFollowBaseMove(const FVector& DeltaPosition, const FVector& OldPosition,
+void URadicalMovementComponent::OnUnableToFollowBaseMove(const FVector& DeltaPosition, const FVector& OldPosition,
 	const FHitResult& MoveOnBaseHit)
 {
 }
@@ -3265,7 +3265,7 @@ void UCustomMovementComponent::OnUnableToFollowBaseMove(const FVector& DeltaPosi
 
 #pragma region Utility
 
-void UCustomMovementComponent::VisualizeMovement() const
+void URadicalMovementComponent::VisualizeMovement() const
 {
 	float HeightOffset = 0.f;
 	const float OffsetPerElement = 10.0f;
@@ -3319,7 +3319,7 @@ void UCustomMovementComponent::VisualizeMovement() const
 #endif // !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 }
 
-void UCustomMovementComponent::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL, float& YPos)
+void URadicalMovementComponent::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL, float& YPos)
 {
 	FDisplayDebugManager& DisplayDebugManager = Canvas->DisplayDebugManager;
 	

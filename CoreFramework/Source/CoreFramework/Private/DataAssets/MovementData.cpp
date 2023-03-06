@@ -2,7 +2,7 @@
 
 #include "MovementData.h"
 
-#include "Components/CustomMovementComponent.h"
+#include "Components/RadicalMovementComponent.h"
 
 UMovementData::UMovementData()
 {
@@ -30,7 +30,7 @@ UMovementData::UMovementData()
 }
 
 
-void UMovementData::CalculateVelocity(UCustomMovementComponent* MovementComponent, float DeltaTime)
+void UMovementData::CalculateVelocity(URadicalMovementComponent* MovementComponent, float DeltaTime)
 {
 	GravityZ = FMath::Abs(MovementComponent->GetGravityZ());
 	
@@ -46,7 +46,7 @@ void UMovementData::CalculateVelocity(UCustomMovementComponent* MovementComponen
 	}
 }
 
-void UMovementData::UpdateRotation(UCustomMovementComponent* MovementComponent, float DeltaTime)
+void UMovementData::UpdateRotation(URadicalMovementComponent* MovementComponent, float DeltaTime)
 {
 	PhysicsRotation(MovementComponent, DeltaTime);
 }
@@ -118,7 +118,7 @@ void UMovementData::ApplyVelocityBraking(FVector& Velocity, float DeltaTime, flo
 
 
 // Takes in Friction & BrakingDeceleration
-void UMovementData::CalculateDefaultVelocity(UCustomMovementComponent* MovementComponent, float DeltaTime) const
+void UMovementData::CalculateDefaultVelocity(URadicalMovementComponent* MovementComponent, float DeltaTime) const
 {
 	// Skip update if we have root motion or delta time is too small
 	// TODO: Maybe move these events 
@@ -180,12 +180,12 @@ FVector UMovementData::GetFallingLateralAcceleration(const FVector& Acceleration
 }
 
 
-FVector UMovementData::ComputeInputAcceleration(UCustomMovementComponent* MovementComponent) const
+FVector UMovementData::ComputeInputAcceleration(URadicalMovementComponent* MovementComponent) const
 {
 	return MaxAcceleration * FVector::VectorPlaneProject(MovementComponent->GetLastInputVector(), MovementComponent->GetUpOrientation(MODE_Gravity));;
 }
 
-void UMovementData::CalculateInputVelocity(const UCustomMovementComponent* MovementComponent, FVector& Velocity, FVector& Acceleration, float Friction, float BrakingDeceleration, float DeltaTime) const
+void UMovementData::CalculateInputVelocity(const URadicalMovementComponent* MovementComponent, FVector& Velocity, FVector& Acceleration, float Friction, float BrakingDeceleration, float DeltaTime) const
 {
 	Friction = FMath::Max(0.f, Friction); // Ensure friction is greater than zero
 	
@@ -244,7 +244,7 @@ void UMovementData::ApplyGravity(FVector& Velocity, float TerminalLimit, float D
 }
 
 
-void UMovementData::PhysicsRotation(UCustomMovementComponent* MovementComponent, float DeltaTime)
+void UMovementData::PhysicsRotation(URadicalMovementComponent* MovementComponent, float DeltaTime)
 {
 	// If orient to ground, just snap for now
 	if (!ShouldRemainVertical())

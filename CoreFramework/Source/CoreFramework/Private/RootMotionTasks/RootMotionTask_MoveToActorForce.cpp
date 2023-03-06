@@ -2,9 +2,9 @@
 #pragma once
 
 #include "RootMotionTasks/RootMotionTask_MoveToActorForce.h"
-#include "OPRootMotionSource.h"
-#include "CustomMovementComponent.h"
-#include "OPCharacter.h"
+#include "RootMotionSourceCFW.h"
+#include "RadicalMovementComponent.h"
+#include "RadicalCharacter.h"
 
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 int32 DebugMoveToActorForce = 0;
@@ -34,7 +34,7 @@ URootMotionTask_MoveToActorForce::URootMotionTask_MoveToActorForce()
 }
 
 URootMotionTask_MoveToActorForce* URootMotionTask_MoveToActorForce::ApplyRootMotionMoveToActorForce(
-	AOPCharacter* Owner, FName TaskInstanceName, AActor* TargetActor,
+	ARadicalCharacter* Owner, FName TaskInstanceName, AActor* TargetActor,
 	FVector TargetLocationOffset, ERootMotionTaskMoveToActorTargetOffsetType OffsetAlignment, float Duration,
 	UCurveFloat* TargetLerpSpeedHorizontal, UCurveFloat* TargetLerpSpeedVertical, bool bSetNewMovementMode,
 	EMovementState MovementMode, bool bRestrictSpeedToExpected, UCurveVector* PathOffsetCurve,
@@ -42,7 +42,7 @@ URootMotionTask_MoveToActorForce* URootMotionTask_MoveToActorForce::ApplyRootMot
 	float ClampVelocityOnFinish, bool bDisableDestinationReachedInterrupt)
 {
 	UE_LOG(LogTemp, Error, TEXT("Or Am I Called First?"));
-	URootMotionTask_MoveToActorForce* MyTask = AOPCharacter::NewRootMotionTask<URootMotionTask_MoveToActorForce>(Owner, TaskInstanceName);
+	URootMotionTask_MoveToActorForce* MyTask = ARadicalCharacter::NewRootMotionTask<URootMotionTask_MoveToActorForce>(Owner, TaskInstanceName);
 	
 	MyTask->ForceName = TaskInstanceName;
 	MyTask->TargetActor = TargetActor;
@@ -166,7 +166,7 @@ void URootMotionTask_MoveToActorForce::SharedInitAndApply()
 			}
 
 			ForceName = ForceName.IsNone() ? FName("AbilityTaskApplyRootMotionMoveToActorForce") : ForceName;
-			TSharedPtr<FOPRootMotionSource_MoveToDynamicForce> MoveToActorForce = MakeShared<FOPRootMotionSource_MoveToDynamicForce>();
+			TSharedPtr<FRootMotionSourceCFW_MoveToDynamicForce> MoveToActorForce = MakeShared<FRootMotionSourceCFW_MoveToDynamicForce>();
 			MoveToActorForce->InstanceName = ForceName;
 			MoveToActorForce->AccumulateMode = ERootMotionAccumulateMode::Override;
 			MoveToActorForce->Settings.SetFlag(ERootMotionSourceSettingsFlags::UseSensitiveLiftoffCheck);
@@ -242,12 +242,12 @@ void URootMotionTask_MoveToActorForce::SetRootMotionTargetLocation(FVector NewTa
 {
 	if (MovementComponent)
 	{
-		TSharedPtr<FOPRootMotionSource> RMS = MovementComponent->GetRootMotionSourceByID(RootMotionSourceID);
+		TSharedPtr<FRootMotionSourceCFW> RMS = MovementComponent->GetRootMotionSourceByID(RootMotionSourceID);
 		if (RMS.IsValid())
 		{
-			if (RMS->GetScriptStruct() == FOPRootMotionSource_MoveToDynamicForce::StaticStruct())
+			if (RMS->GetScriptStruct() == FRootMotionSourceCFW_MoveToDynamicForce::StaticStruct())
 			{
-				FOPRootMotionSource_MoveToDynamicForce* MoveToActorForce = static_cast<FOPRootMotionSource_MoveToDynamicForce*>(RMS.Get());
+				FRootMotionSourceCFW_MoveToDynamicForce* MoveToActorForce = static_cast<FRootMotionSourceCFW_MoveToDynamicForce*>(RMS.Get());
 				if (MoveToActorForce)
 				{
 					MoveToActorForce->SetTargetLocation(TargetLocation);

@@ -2,9 +2,9 @@
 
 
 #include "RootMotionTasks/RootMotionTask_Base.h"
-#include "OPRootMotionSource.h"
-#include "CustomMovementComponent.h"
-#include "OPCharacter.h"
+#include "RootMotionSourceCFW.h"
+#include "RadicalMovementComponent.h"
+#include "RadicalCharacter.h"
 
 URootMotionTask_Base::URootMotionTask_Base()
 	: Super()
@@ -54,7 +54,7 @@ void URootMotionTask_Base::PerformActivation()
 }
 
 
-void URootMotionTask_Base::InitTask(AOPCharacter* InTaskOwner)
+void URootMotionTask_Base::InitTask(ARadicalCharacter* InTaskOwner)
 {
 	CharacterOwner = InTaskOwner;
 	UE_LOG(LogTemp, Error, TEXT("Character Owner = %s"), *CharacterOwner->GetName())
@@ -72,7 +72,7 @@ AActor* URootMotionTask_Base::GetAvatarActor() const
 
 bool URootMotionTask_Base::HasTimedOut() const
 {
-	const TSharedPtr<FOPRootMotionSource> RMS = (MovementComponent ? MovementComponent->GetRootMotionSourceByID(RootMotionSourceID) : nullptr);
+	const TSharedPtr<FRootMotionSourceCFW> RMS = (MovementComponent ? MovementComponent->GetRootMotionSourceByID(RootMotionSourceID) : nullptr);
 	if (!RMS.IsValid())
 	{
 		return true;

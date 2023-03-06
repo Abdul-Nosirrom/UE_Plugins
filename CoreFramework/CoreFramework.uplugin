@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "0.6b",
+	"VersionName": "0.9b",
 	"FriendlyName": "CoreFramework",
 	"Description": "Core gameplay framework containing a versatile movement component, a generic character class, and an input buffered player controller.",
 	"Category": "Other",

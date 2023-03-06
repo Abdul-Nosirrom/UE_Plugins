@@ -3,8 +3,8 @@
 
 #include "RootMotionTasks/RootMotionTask_JumpForce.h"
 
-#include "CustomMovementComponent.h"
-#include "OPCharacter.h"
+#include "RadicalMovementComponent.h"
+#include "RadicalCharacter.h"
 
 URootMotionTask_JumpForce::URootMotionTask_JumpForce() : Super()
 {
@@ -41,13 +41,13 @@ void URootMotionTask_JumpForce::OnLandedCallback(const FHitResult& Hit)
 	}
 }
 
-URootMotionTask_JumpForce* URootMotionTask_JumpForce::ApplyRootMotionJumpForce(AOPCharacter* Owner,
+URootMotionTask_JumpForce* URootMotionTask_JumpForce::ApplyRootMotionJumpForce(ARadicalCharacter* Owner,
 	FName TaskInstanceName, FRotator Rotation, float Distance, float Height, float Duration,
 	float MinimumLandedTriggerTime, bool bFinishOnLanded, ERootMotionFinishVelocityMode VelocityOnFinishMode,
 	FVector SetVelocityOnFinish, float ClampVelocityOnFinish, UCurveVector* PathOffsetCurve,
 	UCurveFloat* TimeMappingCurve)
 {
-	URootMotionTask_JumpForce* MyTask = AOPCharacter::NewRootMotionTask<URootMotionTask_JumpForce>(Owner, TaskInstanceName);
+	URootMotionTask_JumpForce* MyTask = ARadicalCharacter::NewRootMotionTask<URootMotionTask_JumpForce>(Owner, TaskInstanceName);
 
 	MyTask->ForceName = TaskInstanceName;
 	MyTask->Rotation = Rotation;
@@ -132,14 +132,14 @@ void URootMotionTask_JumpForce::SharedInitAndApply()
 {
 	if (CharacterOwner.Get() && IsValid(CharacterOwner->GetMovementComponent()))
 	{
-		MovementComponent = Cast<UCustomMovementComponent>(CharacterOwner->GetMovementComponent());
+		MovementComponent = Cast<URadicalMovementComponent>(CharacterOwner->GetMovementComponent());
 		StartTime = CharacterOwner->GetWorld()->GetTimeSeconds();
 		EndTime = StartTime + Duration;
 
 		if (MovementComponent)
 		{
 			ForceName = ForceName.IsNone() ? FName("AbilityTaskApplyRootMotionJumpForce") : ForceName;
-			TSharedPtr<FOPRootMotionSource_JumpForce> JumpForce = MakeShared<FOPRootMotionSource_JumpForce>();
+			TSharedPtr<FRootMotionSourceCFW_JumpForce> JumpForce = MakeShared<FRootMotionSourceCFW_JumpForce>();
 			JumpForce->InstanceName = ForceName;
 			JumpForce->AccumulateMode = ERootMotionAccumulateMode::Override;
 			JumpForce->Priority = 500;

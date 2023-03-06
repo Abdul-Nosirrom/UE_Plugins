@@ -1,18 +1,18 @@
 ﻿// Copyright 2023 Abdulrahmen Almodaimegh. All Rights Reserved.
 
-#include "OPCharacter.h"
+#include "RadicalCharacter.h"
 #include "CFW_PCH.h"
-#include "CustomMovementComponent.h"
+#include "RadicalMovementComponent.h"
 #include "Debug/CFW_LOG.h"
 
 
 /* Define default component object names */
-FName AOPCharacter::MeshComponentName(TEXT("Character Mesh"));
-FName AOPCharacter::CustomMovementComponentName(TEXT("Movement Component"));
-FName AOPCharacter::CapsuleComponentName(TEXT("Collision Component"));
+FName ARadicalCharacter::MeshComponentName(TEXT("Character Mesh"));
+FName ARadicalCharacter::MovementComponentName(TEXT("Movement Component"));
+FName ARadicalCharacter::CapsuleComponentName(TEXT("Collision Component"));
 
 // Sets default values
-AOPCharacter::AOPCharacter() : Super()
+ARadicalCharacter::ARadicalCharacter() : Super()
 {
 	// Structure to hold one-time initialization
 	struct FConstructorStatics
@@ -35,7 +35,7 @@ AOPCharacter::AOPCharacter() : Super()
 	/* ~~~~~ Setup and attach primary components ~~~~~ */
 
 	// Capsule Component
-	CapsuleComponent = CreateDefaultSubobject<UCapsuleComponent>(AOPCharacter::CapsuleComponentName);
+	CapsuleComponent = CreateDefaultSubobject<UCapsuleComponent>(ARadicalCharacter::CapsuleComponentName);
 	CapsuleComponent->InitCapsuleSize(34.0f, 88.0f);
 	CapsuleComponent->SetCollisionProfileName(UCollisionProfile::Pawn_ProfileName);
 
@@ -62,16 +62,16 @@ AOPCharacter::AOPCharacter() : Super()
 
 	
 	// Movement Component
-	CustomMovement = CreateDefaultSubobject<UCustomMovementComponent>(AOPCharacter::CustomMovementComponentName);
-	if (CustomMovement)
+	MovementComponent = CreateDefaultSubobject<URadicalMovementComponent>(ARadicalCharacter::MovementComponentName);
+	if (MovementComponent)
 	{
-		CustomMovement->UpdatedComponent = CapsuleComponent;
-		CustomMovement->CharacterOwner = this;
+		MovementComponent->UpdatedComponent = CapsuleComponent;
+		MovementComponent->CharacterOwner = this;
 	}
 	
 	
 	// Mesh Component
-	Mesh = CreateOptionalDefaultSubobject<USkeletalMeshComponent>(AOPCharacter::MeshComponentName);
+	Mesh = CreateOptionalDefaultSubobject<USkeletalMeshComponent>(ARadicalCharacter::MeshComponentName);
 	if (Mesh)
 	{
 		Mesh->AlwaysLoadOnClient = true;
@@ -94,7 +94,7 @@ AOPCharacter::AOPCharacter() : Super()
 
 #pragma region AActor & UObject Interface
 
-void AOPCharacter::PostLoad()
+void ARadicalCharacter::PostLoad()
 {
 	Super::PostLoad();
 
@@ -106,20 +106,20 @@ void AOPCharacter::PostLoad()
 #endif // WITH_EDITORONLY_DATA
 }
 
-void AOPCharacter::BeginPlay()
+void ARadicalCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 	//bHasBasedMovementOverride = false;
 }
 
-void AOPCharacter::TickActor(float DeltaTime, ELevelTick TickType, FActorTickFunction& ThisTickFunction)
+void ARadicalCharacter::TickActor(float DeltaTime, ELevelTick TickType, FActorTickFunction& ThisTickFunction)
 {
 	Super::TickActor(DeltaTime, TickType, ThisTickFunction);
 }
 
 
 // TODO: This
-void AOPCharacter::ClearCrossLevelReferences()
+void ARadicalCharacter::ClearCrossLevelReferences()
 {
 	// Clear base
 	if( BasedMovement.MovementBase != nullptr && GetOutermost() != BasedMovement.MovementBase->GetOutermost() )
@@ -135,7 +135,7 @@ void AOPCharacter::ClearCrossLevelReferences()
 	Super::ClearCrossLevelReferences();
 }
 
-void AOPCharacter::GetSimpleCollisionCylinder(float& CollisionRadius, float& CollisionHalfHeight) const
+void ARadicalCharacter::GetSimpleCollisionCylinder(float& CollisionRadius, float& CollisionHalfHeight) const
 {
 	if (RootComponent == CapsuleComponent && IsRootComponentCollisionRegistered())
 	{
@@ -149,7 +149,7 @@ void AOPCharacter::GetSimpleCollisionCylinder(float& CollisionRadius, float& Col
 	}
 }
 
-UActorComponent* AOPCharacter::FindComponentByClass(const TSubclassOf<UActorComponent> ComponentClass) const
+UActorComponent* ARadicalCharacter::FindComponentByClass(const TSubclassOf<UActorComponent> ComponentClass) const
 {
 	// If the character has a Mesh, treat it as the first 'hit' when finding components
 	if (Mesh && ComponentClass && Mesh->IsA(ComponentClass))
@@ -161,13 +161,13 @@ UActorComponent* AOPCharacter::FindComponentByClass(const TSubclassOf<UActorComp
 }
 
 // TODO: This
-void AOPCharacter::NotifyActorBeginOverlap(AActor* OtherActor)
+void ARadicalCharacter::NotifyActorBeginOverlap(AActor* OtherActor)
 {
 	Super::NotifyActorBeginOverlap(OtherActor);
 }
 
 // TODO: This
-void AOPCharacter::NotifyActorEndOverlap(AActor* OtherActor)
+void ARadicalCharacter::NotifyActorEndOverlap(AActor* OtherActor)
 {
 	Super::NotifyActorEndOverlap(OtherActor);
 }
@@ -177,7 +177,7 @@ void AOPCharacter::NotifyActorEndOverlap(AActor* OtherActor)
 
 #pragma region APawn Interface
 
-void AOPCharacter::PostInitializeComponents()
+void ARadicalCharacter::PostInitializeComponents()
 {
 	QUICK_SCOPE_CYCLE_COUNTER(STAT_Character_PostInitComponents);
 
@@ -190,40 +190,40 @@ void AOPCharacter::PostInitializeComponents()
 			//CacheInitialMeshOffset(Mesh->GetRelativeLocation(), Mesh->GetRelativeRotation());
 
 			// force animation tick after movement component updates
-			if (Mesh->PrimaryComponentTick.bCanEverTick && CustomMovement)
+			if (Mesh->PrimaryComponentTick.bCanEverTick && MovementComponent)
 			{
-				Mesh->PrimaryComponentTick.AddPrerequisite(CustomMovement, CustomMovement->PrimaryComponentTick);
+				Mesh->PrimaryComponentTick.AddPrerequisite(MovementComponent, MovementComponent->PrimaryComponentTick);
 			}
 		}
 
-		if (CustomMovement && CapsuleComponent)
+		if (MovementComponent && CapsuleComponent)
 		{
-			CustomMovement->UpdateNavAgent(*CapsuleComponent);
+			MovementComponent->UpdateNavAgent(*CapsuleComponent);
 		}
 
 	}
 }
 
-UPawnMovementComponent* AOPCharacter::GetMovementComponent() const
+UPawnMovementComponent* ARadicalCharacter::GetMovementComponent() const
 {
-	return CustomMovement;
+	return MovementComponent;
 }
 
-UPrimitiveComponent* AOPCharacter::GetMovementBase() const
+UPrimitiveComponent* ARadicalCharacter::GetMovementBase() const
 {
 	return GetBasedMovement().MovementBase;
 }
 
 
 // Called to bind functionality to input
-void AOPCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
+void ARadicalCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	check(PlayerInputComponent)
 }
 
-float AOPCharacter::GetDefaultHalfHeight() const
+float ARadicalCharacter::GetDefaultHalfHeight() const
 {
-	UCapsuleComponent* DefaultCapsule = GetClass()->GetDefaultObject<AOPCharacter>()->CapsuleComponent;
+	UCapsuleComponent* DefaultCapsule = GetClass()->GetDefaultObject<ARadicalCharacter>()->CapsuleComponent;
 	if (DefaultCapsule)
 	{
 		return DefaultCapsule->GetScaledCapsuleHalfHeight();
@@ -235,7 +235,7 @@ float AOPCharacter::GetDefaultHalfHeight() const
 }
 
 // TODO: This
-void AOPCharacter::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL, float& YPos)
+void ARadicalCharacter::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL, float& YPos)
 {
 	Super::DisplayDebug(Canvas, DebugDisplay, YL, YPos);
 
@@ -247,9 +247,9 @@ void AOPCharacter::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& DebugD
 		
 		FIndenter PhysicsIndent(Indent);
 
-		if (CustomMovement != nullptr)
+		if (MovementComponent != nullptr)
 		{
-			CustomMovement->DisplayDebug(Canvas, DebugDisplay, YL, YPos);
+			MovementComponent->DisplayDebug(Canvas, DebugDisplay, YL, YPos);
 		}
 		/*
 		DisplayDebugManager.SetDrawColor(FColor::Yellow);
@@ -282,12 +282,12 @@ void AOPCharacter::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& DebugD
 	}
 }
 
-void AOPCharacter::RecalculateBaseEyeHeight()
+void ARadicalCharacter::RecalculateBaseEyeHeight()
 {
 	Super::RecalculateBaseEyeHeight();
 }
 
-void AOPCharacter::UpdateNavigationRelevance()
+void ARadicalCharacter::UpdateNavigationRelevance()
 {
 	if (CapsuleComponent)
 	{
@@ -299,23 +299,23 @@ void AOPCharacter::UpdateNavigationRelevance()
 
 #pragma region Gameplay Interface
 
-void AOPCharacter::LaunchCharacter(FVector LaunchVelocity, bool bPlanarOverride, bool bVerticalOverride)
+void ARadicalCharacter::LaunchCharacter(FVector LaunchVelocity, bool bPlanarOverride, bool bVerticalOverride)
 {
-	if (CustomMovement)
+	if (MovementComponent)
 	{
 		FVector FinalVel = LaunchVelocity;
 		const FVector Velocity = GetVelocity();
 
 		if (!bPlanarOverride)
 		{
-			FinalVel += FVector::VectorPlaneProject(Velocity, CustomMovement->GetUpOrientation(MODE_Gravity));
+			FinalVel += FVector::VectorPlaneProject(Velocity, MovementComponent->GetUpOrientation(MODE_Gravity));
 		}
 		if (bVerticalOverride)
 		{
-			FinalVel += Velocity.ProjectOnToNormal(CustomMovement->GetUpOrientation(MODE_Gravity));
+			FinalVel += Velocity.ProjectOnToNormal(MovementComponent->GetUpOrientation(MODE_Gravity));
 		}
 
-		CustomMovement->Launch(FinalVel);
+		MovementComponent->Launch(FinalVel);
 
 		OnLaunched(LaunchVelocity, bPlanarOverride, bVerticalOverride);
 	}
@@ -326,31 +326,31 @@ void AOPCharacter::LaunchCharacter(FVector LaunchVelocity, bool bPlanarOverride,
 
 #pragma region Events
 
-void AOPCharacter::Landed(const FHitResult& Hit)
+void ARadicalCharacter::Landed(const FHitResult& Hit)
 {
 	OnLanded(Hit);
 	LandedDelegate.Broadcast(Hit);
 }
 
-void AOPCharacter::MovementStateChanged(EMovementState PrevMovementState)
+void ARadicalCharacter::MovementStateChanged(EMovementState PrevMovementState)
 {
 	OnMovementStateChanged(PrevMovementState);
 	MovementStateChangedDelegate.Broadcast(this, PrevMovementState);
 }
 
-void AOPCharacter::WalkingOffLedge(const FVector& PreviousFloorImpactNormal, const FVector& PreviousFloorContactNormal, const FVector& PreviousLocation, float DeltaTime)
+void ARadicalCharacter::WalkingOffLedge(const FVector& PreviousFloorImpactNormal, const FVector& PreviousFloorContactNormal, const FVector& PreviousLocation, float DeltaTime)
 {
 	OnWalkingOffLedge(PreviousFloorImpactNormal, PreviousFloorContactNormal, PreviousLocation, DeltaTime);
 	WalkedOffLedgeDelegate.Broadcast(PreviousFloorImpactNormal, PreviousFloorContactNormal, PreviousLocation, DeltaTime);
 }
 
-void AOPCharacter::MoveBlockedBy(const FHitResult& Hit)
+void ARadicalCharacter::MoveBlockedBy(const FHitResult& Hit)
 {
 	OnMoveBlocked(Hit);
 	MoveBlockedByDelegate.Broadcast(Hit);
 }
 
-void AOPCharacter::OnStuckInGeometry(const FHitResult& Hit)
+void ARadicalCharacter::OnStuckInGeometry(const FHitResult& Hit)
 {
 	StuckInGeometryDelegate.Broadcast(Hit);
 }
@@ -360,7 +360,7 @@ void AOPCharacter::OnStuckInGeometry(const FHitResult& Hit)
 
 #pragma region Based Movement
 
-void AOPCharacter::CreateBasedMovementInfo(FBasedMovementInfo& BasedMovementInfoToFill, UPrimitiveComponent* BaseComponent, const FName InBoneName)
+void ARadicalCharacter::CreateBasedMovementInfo(FBasedMovementInfo& BasedMovementInfoToFill, UPrimitiveComponent* BaseComponent, const FName InBoneName)
 {
 	/* If new base component is nullptr, ignore bone name */
 	const FName BoneName = (BaseComponent ? InBoneName : NAME_None);
@@ -396,31 +396,31 @@ void AOPCharacter::CreateBasedMovementInfo(FBasedMovementInfo& BasedMovementInfo
 		const bool bBaseIsSimulating = MovementBaseUtility::IsSimulatedBase(BaseComponent);
 		if (bBaseChanged)
 		{
-			MovementBaseUtility::RemoveTickDependency(CustomMovement->PrimaryComponentTick, OldBase);
+			MovementBaseUtility::RemoveTickDependency(MovementComponent->PrimaryComponentTick, OldBase);
 			/* Use special post physics function if simulating, otherwise add normal tick prereqs. */
 			if (!bBaseIsSimulating)
 			{
-				MovementBaseUtility::AddTickDependency(CustomMovement->PrimaryComponentTick, BaseComponent);
+				MovementBaseUtility::AddTickDependency(MovementComponent->PrimaryComponentTick, BaseComponent);
 			}
 		}
 
 		if (BaseComponent)
 		{
-			CustomMovement->SaveBaseLocation();
-			CustomMovement->PostPhysicsTickFunction.SetTickFunctionEnable(bBaseIsSimulating);
+			MovementComponent->SaveBaseLocation();
+			MovementComponent->PostPhysicsTickFunction.SetTickFunctionEnable(bBaseIsSimulating);
 		}
 		else
 		{
 			BasedMovementInfoToFill.BoneName = NAME_None;
 			BasedMovementInfoToFill.bRelativeRotation = false;
-			CustomMovement->CurrentFloor.Clear();
-			CustomMovement->PostPhysicsTickFunction.SetTickFunctionEnable(false);
+			MovementComponent->CurrentFloor.Clear();
+			MovementComponent->PostPhysicsTickFunction.SetTickFunctionEnable(false);
 		}
 	}
 }
 
 
-void AOPCharacter::SetBase(UPrimitiveComponent* NewBaseComponent, const FName InBoneName, bool bNotifyActor)
+void ARadicalCharacter::SetBase(UPrimitiveComponent* NewBaseComponent, const FName InBoneName, bool bNotifyActor)
 {
 	CreateBasedMovementInfo(BasedMovement, NewBaseComponent, InBoneName);
 
@@ -430,7 +430,7 @@ void AOPCharacter::SetBase(UPrimitiveComponent* NewBaseComponent, const FName In
 	}
 }
 
-void AOPCharacter::SetBaseOverride(UPrimitiveComponent* NewBase, const FName BoneName)
+void ARadicalCharacter::SetBaseOverride(UPrimitiveComponent* NewBase, const FName BoneName)
 {
 	CreateBasedMovementInfo(BasedMovementOverride, NewBase, BoneName);
 	
@@ -444,14 +444,14 @@ void AOPCharacter::SetBaseOverride(UPrimitiveComponent* NewBase, const FName Bon
 	}
 }
 
-void AOPCharacter::RemoveBaseOverride()
+void ARadicalCharacter::RemoveBaseOverride()
 {
 	bHasBasedMovementOverride = false;
 	SetBaseOverride(nullptr);
 }
 
 
-const FBasedMovementInfo& AOPCharacter::GetBasedMovement() const
+const FBasedMovementInfo& ARadicalCharacter::GetBasedMovement() const
 {
 	if (HasBasedMovementOverride() && BasedMovementOverride.MovementBase)
 	{
@@ -463,7 +463,7 @@ const FBasedMovementInfo& AOPCharacter::GetBasedMovement() const
 	}
 }
 
-void AOPCharacter::SaveRelativeBasedMovement(const FVector& NewRelativeLocation, const FRotator& NewRotation, bool bRelativeRotation)
+void ARadicalCharacter::SaveRelativeBasedMovement(const FVector& NewRelativeLocation, const FRotator& NewRotation, bool bRelativeRotation)
 {
 	FBasedMovementInfo BasedMovementUsed = GetBasedMovement();
 	BasedMovementUsed.Location = NewRelativeLocation;
@@ -477,18 +477,18 @@ void AOPCharacter::SaveRelativeBasedMovement(const FVector& NewRelativeLocation,
 
 #pragma region Animation Interface
 
-void AOPCharacter::SetAnimRootMotionTranslationScale(float InAnimRootMotionTranslationScale)
+void ARadicalCharacter::SetAnimRootMotionTranslationScale(float InAnimRootMotionTranslationScale)
 {
 	AnimRootMotionTranslationScale = InAnimRootMotionTranslationScale;
 }
 
-float AOPCharacter::GetAnimRootMotionTranslationScale() const
+float ARadicalCharacter::GetAnimRootMotionTranslationScale() const
 {
 	return AnimRootMotionTranslationScale;
 }
 
 
-float AOPCharacter::PlayAnimMontage(UAnimMontage* AnimMontage, float InPlayRate, FName StartSectionName)
+float ARadicalCharacter::PlayAnimMontage(UAnimMontage* AnimMontage, float InPlayRate, FName StartSectionName)
 {
 	UAnimInstance* AnimInstance = (Mesh) ? Mesh->GetAnimInstance() : nullptr;
 	if (AnimMontage && AnimInstance)
@@ -510,7 +510,7 @@ float AOPCharacter::PlayAnimMontage(UAnimMontage* AnimMontage, float InPlayRate,
 	return 0.f;
 }
 
-void AOPCharacter::StopAnimMontage(UAnimMontage* AnimMontage)
+void ARadicalCharacter::StopAnimMontage(UAnimMontage* AnimMontage)
 {
 	UAnimInstance * AnimInstance = (Mesh)? Mesh->GetAnimInstance() : nullptr; 
 	UAnimMontage * MontageToStop = (AnimMontage)? AnimMontage : GetCurrentMontage();
@@ -522,7 +522,7 @@ void AOPCharacter::StopAnimMontage(UAnimMontage* AnimMontage)
 	}
 }
 
-UAnimMontage* AOPCharacter::GetCurrentMontage() const
+UAnimMontage* ARadicalCharacter::GetCurrentMontage() const
 {
 	UAnimInstance * AnimInstance = (Mesh)? Mesh->GetAnimInstance() : nullptr; 
 	if ( AnimInstance )
@@ -533,12 +533,12 @@ UAnimMontage* AOPCharacter::GetCurrentMontage() const
 	return nullptr;
 }
 
-FAnimMontageInstance* AOPCharacter::GetRootMotionAnimMontageInstance() const
+FAnimMontageInstance* ARadicalCharacter::GetRootMotionAnimMontageInstance() const
 {
 	return (Mesh && Mesh->GetAnimInstance()) ? Mesh->GetAnimInstance()->GetRootMotionMontageInstance() : nullptr;
 }
 
-bool AOPCharacter::IsPlayingRootMotion() const
+bool ARadicalCharacter::IsPlayingRootMotion() const
 {
 	if (Mesh)
 	{
@@ -547,7 +547,7 @@ bool AOPCharacter::IsPlayingRootMotion() const
 	return false;
 }
 
-bool AOPCharacter::HasAnyRootMotion() const
+bool ARadicalCharacter::HasAnyRootMotion() const
 {
 	return false;
 }

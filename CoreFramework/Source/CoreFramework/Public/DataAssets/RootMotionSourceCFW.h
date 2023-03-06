@@ -4,39 +4,39 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/RootMotionSource.h"
-#include "OPRootMotionSource.generated.h"
+#include "RootMotionSourceCFW.generated.h"
 
 /* FORWARD DECLARATIONS */
-class AOPCharacter;
-class UCustomMovementComponent;
+class ARadicalCharacter;
+class URadicalMovementComponent;
 
 #define ROOT_MOTION_DEBUG (1 && !(UE_BUILD_SHIPPING || UE_BUILD_TEST))
 
 #if ROOT_MOTION_DEBUG
-struct COREFRAMEWORK_API OPRootMotionSourceDebug
+struct COREFRAMEWORK_API RootMotionSourceCFWDebug
 {
 	static TAutoConsoleVariable<int32> CVarDebugRootMotionSources;
-	static void PrintOnScreen(const AOPCharacter& InCharacter, const FString& InString);
+	static void PrintOnScreen(const ARadicalCharacter& InCharacter, const FString& InString);
 	static void PrintOnScreenServerMsg(const FString& InString);
 };
 #endif
 
 USTRUCT()
-struct COREFRAMEWORK_API FOPRootMotionSource : public FRootMotionSource
+struct COREFRAMEWORK_API FRootMotionSourceCFW : public FRootMotionSource
 {
 	GENERATED_BODY()
 
-	virtual void PrepareCustomRootMotion(float SimulationTime, float MovementTickTime, const AOPCharacter& Character, const UCustomMovementComponent& MoveComponent);
+	virtual void PrepareCustomRootMotion(float SimulationTime, float MovementTickTime, const ARadicalCharacter& Character, const URadicalMovementComponent& MoveComponent);
 
 	virtual void AddReferencedObjects(FReferenceCollector& Collector) override {}
 };
 
 USTRUCT()
-struct COREFRAMEWORK_API FOPRootMotionSourceGroup : public FRootMotionSourceGroup
+struct COREFRAMEWORK_API FRootMotionSourceGroupCFW : public FRootMotionSourceGroup
 {
 	GENERATED_BODY()
 
-	void CleanUpInvalidRootMotion(float DeltaTime, const AOPCharacter& Character, UCustomMovementComponent& MoveComponent);
+	void CleanUpInvalidRootMotion(float DeltaTime, const ARadicalCharacter& Character, URadicalMovementComponent& MoveComponent);
 
 	/** 
 	 *  Generates root motion by accumulating transforms through current root motion sources. 
@@ -44,36 +44,36 @@ struct COREFRAMEWORK_API FOPRootMotionSourceGroup : public FRootMotionSourceGrou
 	 *                            Needed due to SavedMove playback/server correction only applying corrections to
 	 *                            Sources that need updating, so in that case we only Prepare those that need it.
 	 */
-	void PrepareRootMotion(float DeltaTime, const AOPCharacter& Character, const UCustomMovementComponent& InMoveComponent, bool bForcePrepareAll = false);
+	void PrepareRootMotion(float DeltaTime, const ARadicalCharacter& Character, const URadicalMovementComponent& InMoveComponent, bool bForcePrepareAll = false);
 
 	/**  Helper function for accumulating override velocity into InOutVelocity */
-	void AccumulateOverrideRootMotionVelocity(float DeltaTime, const AOPCharacter& Character, const UCustomMovementComponent& MoveComponent, FVector& InOutVelocity) const;
+	void AccumulateOverrideRootMotionVelocity(float DeltaTime, const ARadicalCharacter& Character, const URadicalMovementComponent& MoveComponent, FVector& InOutVelocity) const;
 
 	/**  Helper function for accumulating additive velocity into InOutVelocity */
-	void AccumulateAdditiveRootMotionVelocity(float DeltaTime, const AOPCharacter& Character, const UCustomMovementComponent& MoveComponent, FVector& InOutVelocity) const;
+	void AccumulateAdditiveRootMotionVelocity(float DeltaTime, const ARadicalCharacter& Character, const URadicalMovementComponent& MoveComponent, FVector& InOutVelocity) const;
 
 	/** Get rotation output of current override root motion source, returns true if OutRotation was filled */
-	bool GetOverrideRootMotionRotation(float DeltaTime, const AOPCharacter& Character, const UCustomMovementComponent& MoveComponent, FQuat& OutRotation) const;
+	bool GetOverrideRootMotionRotation(float DeltaTime, const ARadicalCharacter& Character, const URadicalMovementComponent& MoveComponent, FQuat& OutRotation) const;
 
 protected:
 
 	/** Accumulates contributions for velocity into InOutVelocity for a given type of root motion from this group */
-	void AccumulateRootMotionVelocity(ERootMotionAccumulateMode RootMotionType, float DeltaTime, const AOPCharacter& Character, const UCustomMovementComponent& MoveComponent, FVector& InOutVelocity) const;
+	void AccumulateRootMotionVelocity(ERootMotionAccumulateMode RootMotionType, float DeltaTime, const ARadicalCharacter& Character, const URadicalMovementComponent& MoveComponent, FVector& InOutVelocity) const;
 
 	/** Accumulates contributions for velocity into InOutVelocity for a given type of root motion from this group */
-	void AccumulateRootMotionVelocityFromSource(const FRootMotionSource& RootMotionSource, float DeltaTime, const AOPCharacter& Character, const UCustomMovementComponent& MoveComponent, FVector& InOutVelocity) const;
+	void AccumulateRootMotionVelocityFromSource(const FRootMotionSource& RootMotionSource, float DeltaTime, const ARadicalCharacter& Character, const URadicalMovementComponent& MoveComponent, FVector& InOutVelocity) const;
 
 };
 
 /** ConstantForce applies a fixed force to the target */
 USTRUCT()
-struct COREFRAMEWORK_API FOPRootMotionSource_ConstantForce : public FOPRootMotionSource
+struct COREFRAMEWORK_API FRootMotionSourceCFW_ConstantForce : public FRootMotionSourceCFW
 {
 	GENERATED_USTRUCT_BODY()
 
-	FOPRootMotionSource_ConstantForce();
+	FRootMotionSourceCFW_ConstantForce();
 
-	virtual ~FOPRootMotionSource_ConstantForce() {}
+	virtual ~FRootMotionSourceCFW_ConstantForce() {}
 
 	UPROPERTY()
 	FVector Force;
@@ -81,7 +81,7 @@ struct COREFRAMEWORK_API FOPRootMotionSource_ConstantForce : public FOPRootMotio
 	UPROPERTY()
 	TObjectPtr<UCurveFloat> StrengthOverTime;
 
-	virtual FOPRootMotionSource* Clone() const override;
+	virtual FRootMotionSourceCFW* Clone() const override;
 
 	virtual bool Matches(const FRootMotionSource* Other) const override;
 
@@ -92,8 +92,8 @@ struct COREFRAMEWORK_API FOPRootMotionSource_ConstantForce : public FOPRootMotio
 	virtual void PrepareCustomRootMotion(
 		float SimulationTime, 
 		float MovementTickTime,
-		const AOPCharacter& Character, 
-		const UCustomMovementComponent& MoveComponent
+		const ARadicalCharacter& Character, 
+		const URadicalMovementComponent& MoveComponent
 		) override;
 	
 	virtual UScriptStruct* GetScriptStruct() const override;
@@ -105,13 +105,13 @@ struct COREFRAMEWORK_API FOPRootMotionSource_ConstantForce : public FOPRootMotio
 
 /** RadialForce applies a force pulling or pushing away from a given world location to the target */
 USTRUCT()
-struct COREFRAMEWORK_API FOPRootMotionSource_RadialForce : public FOPRootMotionSource
+struct COREFRAMEWORK_API FRootMotionSourceCFW_RadialForce : public FRootMotionSourceCFW
 {
 	GENERATED_BODY()
 
-	FOPRootMotionSource_RadialForce();
+	FRootMotionSourceCFW_RadialForce();
 
-	virtual ~FOPRootMotionSource_RadialForce() {}
+	virtual ~FRootMotionSourceCFW_RadialForce() {}
 
 	UPROPERTY()
 	FVector Location;
@@ -143,7 +143,7 @@ struct COREFRAMEWORK_API FOPRootMotionSource_RadialForce : public FOPRootMotionS
 	UPROPERTY()
 	FRotator FixedWorldDirection;
 
-	virtual FOPRootMotionSource* Clone() const override;
+	virtual FRootMotionSourceCFW* Clone() const override;
 
 	virtual bool Matches(const FRootMotionSource* Other) const override;
 
@@ -154,8 +154,8 @@ struct COREFRAMEWORK_API FOPRootMotionSource_RadialForce : public FOPRootMotionS
 	virtual void PrepareCustomRootMotion(
 		float SimulationTime, 
 		float MovementTickTime,
-		const AOPCharacter& Character, 
-		const UCustomMovementComponent& MoveComponent
+		const ARadicalCharacter& Character, 
+		const URadicalMovementComponent& MoveComponent
 		) override;
 	
 	virtual UScriptStruct* GetScriptStruct() const override;
@@ -167,13 +167,13 @@ struct COREFRAMEWORK_API FOPRootMotionSource_RadialForce : public FOPRootMotionS
 
 /** MoveToForce moves the target to a given fixed location in world space over the duration */
 USTRUCT()
-struct COREFRAMEWORK_API FOPRootMotionSource_MoveToForce : public FOPRootMotionSource
+struct COREFRAMEWORK_API FRootMotionSourceCFW_MoveToForce : public FRootMotionSourceCFW
 {
 	GENERATED_BODY()
 
-	FOPRootMotionSource_MoveToForce();
+	FRootMotionSourceCFW_MoveToForce();
 
-	virtual ~FOPRootMotionSource_MoveToForce() {}
+	virtual ~FRootMotionSourceCFW_MoveToForce() {}
 
 	UPROPERTY()
 	FVector StartLocation;
@@ -202,8 +202,8 @@ struct COREFRAMEWORK_API FOPRootMotionSource_MoveToForce : public FOPRootMotionS
 	virtual void PrepareCustomRootMotion(
 		float SimulationTime, 
 		float MovementTickTime,
-		const AOPCharacter& Character, 
-		const UCustomMovementComponent& MoveComponent
+		const ARadicalCharacter& Character, 
+		const URadicalMovementComponent& MoveComponent
 		) override;
 	
 	virtual UScriptStruct* GetScriptStruct() const override;
@@ -220,13 +220,13 @@ struct COREFRAMEWORK_API FOPRootMotionSource_MoveToForce : public FOPRootMotionS
  * is dynamic and can change during the move (meant to be used for things like moving to a moving target)
  */
 USTRUCT()
-struct COREFRAMEWORK_API FOPRootMotionSource_MoveToDynamicForce : public FOPRootMotionSource
+struct COREFRAMEWORK_API FRootMotionSourceCFW_MoveToDynamicForce : public FRootMotionSourceCFW
 {
 	GENERATED_USTRUCT_BODY()
 
-	FOPRootMotionSource_MoveToDynamicForce();
+	FRootMotionSourceCFW_MoveToDynamicForce();
 
-	virtual ~FOPRootMotionSource_MoveToDynamicForce() {}
+	virtual ~FRootMotionSourceCFW_MoveToDynamicForce() {}
 
 	UPROPERTY()
 	FVector StartLocation;
@@ -263,8 +263,8 @@ struct COREFRAMEWORK_API FOPRootMotionSource_MoveToDynamicForce : public FOPRoot
 	virtual void PrepareCustomRootMotion(
 		float SimulationTime, 
 		float MovementTickTime,
-		const AOPCharacter& Character, 
-		const UCustomMovementComponent& MoveComponent
+		const ARadicalCharacter& Character, 
+		const URadicalMovementComponent& MoveComponent
 		) override;
 
 
@@ -277,13 +277,13 @@ struct COREFRAMEWORK_API FOPRootMotionSource_MoveToDynamicForce : public FOPRoot
 
 
 USTRUCT()
-struct COREFRAMEWORK_API FOPRootMotionSource_JumpForce : public FOPRootMotionSource
+struct COREFRAMEWORK_API FRootMotionSourceCFW_JumpForce : public FRootMotionSourceCFW
 {
 	GENERATED_BODY()
 
-	FOPRootMotionSource_JumpForce();
+	FRootMotionSourceCFW_JumpForce();
 
-	virtual ~FOPRootMotionSource_JumpForce() {}
+	virtual ~FRootMotionSourceCFW_JumpForce() {}
 
 	UPROPERTY()
 	FRotator Rotation;
@@ -322,8 +322,8 @@ struct COREFRAMEWORK_API FOPRootMotionSource_JumpForce : public FOPRootMotionSou
 	virtual void PrepareCustomRootMotion(
 		float SimulationTime, 
 		float MovementTickTime,
-		const AOPCharacter& Character, 
-		const UCustomMovementComponent& MoveComponent
+		const ARadicalCharacter& Character, 
+		const URadicalMovementComponent& MoveComponent
 		) override;
 
 

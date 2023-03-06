@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "InputData.h"
-#include "OPCharacter.h"
+#include "RadicalCharacter.h"
 #include "GameFramework/Character.h"
 #include "TOPCharacter.generated.h"
 
@@ -13,7 +13,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnJumpedSignature);
 
 
 UCLASS()
-class COREFRAMEWORK_API ATOPCharacter : public AOPCharacter
+class COREFRAMEWORK_API ATOPCharacter : public ARadicalCharacter
 {
 	GENERATED_BODY()
 

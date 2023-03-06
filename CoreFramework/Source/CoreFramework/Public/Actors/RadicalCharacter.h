@@ -5,33 +5,32 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/Character.h"
-#include "OPCharacter.generated.h"
+#include "RadicalCharacter.generated.h"
 
 /* Forward declarations */
-class UCustomMovementComponent;
+class URadicalMovementComponent;
 class UCapsuleComponent;
 class URootMotionTasksComponent;
 class UArrowComponent;
-class UOPMovementComponent;
 class URootMotionTask_Base;
 enum EMovementState;
 
 /* Delegate Declarations */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FMovementStateChangedSignature, class AOPCharacter*, Character, EMovementState, PrevMovementState);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOPLandedSignature, const FHitResult&, Hit);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FMovementStateChangedSignature, class ARadicalCharacter*, Character, EMovementState, PrevMovementState);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLandedSignature, const FHitResult&, Hit);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FLostFloorStabilitySignature, const FHitResult&, Hit);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FWalkedOffLedge, const FVector&, PreviousFloorImpactNormal, const FVector&, PreviousFloorContactNormal, const FVector&, PreviousLocation, float, DeltaTime);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FMoveBlockedBySignature, const FHitResult&, Hit);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FStuckInGeometrySignature, const FHitResult&, Hit);
 
 UCLASS()
-class COREFRAMEWORK_API AOPCharacter : public APawn
+class COREFRAMEWORK_API ARadicalCharacter : public APawn
 {
 	GENERATED_BODY()
 	
 public:
 	// Sets default values for this pawn's properties
-	AOPCharacter();
+	ARadicalCharacter();
 
 	virtual void TickActor(float DeltaTime, ELevelTick TickType, FActorTickFunction& ThisTickFunction) override;
 
@@ -47,10 +46,10 @@ protected:
 	
 	/// @brief Movement component used for movement logic, containing all movement handling logic
 	UPROPERTY(Category=Character, VisibleAnywhere, BlueprintReadOnly, meta=(AllowPrivateAccess="true"))
-	TObjectPtr<UCustomMovementComponent> CustomMovement; 
+	TObjectPtr<URadicalMovementComponent> MovementComponent; 
 
 	/// @brief Name of the movement component used when creating the subobject 
-	static FName CustomMovementComponentName;
+	static FName MovementComponentName;
 	
 	/// @brief The CapsuleComponent being used for movement collision (by MovementComponent). Alignment arbitrary.
 	UPROPERTY(Category=Character, VisibleAnywhere, BlueprintReadOnly, meta=(AllowPrivateAccess="true"))
@@ -73,7 +72,7 @@ public:
 	FORCEINLINE USkeletalMeshComponent* GetMesh() const { return Mesh; }
 
 	/// @brief Getter for characters movement component
-	FORCEINLINE UCustomMovementComponent* GetCharacterMovement() const { return CustomMovement; } 
+	FORCEINLINE URadicalMovementComponent* GetCharacterMovement() const { return MovementComponent; } 
 	
 	/// @brief Getter for characters capsule component
 	FORCEINLINE UCapsuleComponent* GetCapsuleComponent() const { return CapsuleComponent; }
@@ -135,7 +134,7 @@ public:
 	FMovementStateChangedSignature MovementStateChangedDelegate;
 	
 	UPROPERTY(Category="Character", BlueprintAssignable)
-	FOPLandedSignature LandedDelegate;
+	FOnLandedSignature LandedDelegate;
 	
 	UPROPERTY(Category="Character", BlueprintAssignable)
 	FLostFloorStabilitySignature LostStabilityDelegate;
@@ -251,7 +250,7 @@ public:
 	
 	/* Helper function for initializing new root motion tasks */
 	template<class T>
-	static T* NewRootMotionTask(AOPCharacter* OwningActor, FName InstanceName = FName())
+	static T* NewRootMotionTask(ARadicalCharacter* OwningActor, FName InstanceName = FName())
 	{
 		check(OwningActor);
 

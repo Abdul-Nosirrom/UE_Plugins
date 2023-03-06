@@ -1,16 +1,16 @@
 ﻿// Fill out your copyright notice in the Description page of Project Settings.
 
-#include "OPRootMotionSource.h"
-#include "Actors/OPCharacter.h"
+#include "RootMotionSourceCFW.h"
+#include "Actors/RadicalCharacter.h"
 #include "DrawDebugHelpers.h"
-#include "Components/CustomMovementComponent.h"
+#include "Components/RadicalMovementComponent.h"
 #include "Curves/CurveVector.h"
 #include "Curves/CurveFloat.h"
 
 #pragma region Utility
 
 #if ROOT_MOTION_DEBUG
-TAutoConsoleVariable<int32> OPRootMotionSourceDebug::CVarDebugRootMotionSources(
+TAutoConsoleVariable<int32> RootMotionSourceCFWDebug::CVarDebugRootMotionSources(
 	TEXT("cfw.RootMotion.Debug"),
 	0,
 	TEXT("Whether to draw root motion source debug information.\n")
@@ -24,28 +24,13 @@ static TAutoConsoleVariable<float> CVarDebugRootMotionSourcesLifetime(
 	TEXT("Time in seconds each visualized root motion source persists."),
 	ECVF_Cheat);
 
-void OPRootMotionSourceDebug::PrintOnScreen(const AOPCharacter& InCharacter, const FString& InString)
+void RootMotionSourceCFWDebug::PrintOnScreen(const ARadicalCharacter& InCharacter, const FString& InString)
 {
 	// Skip bots, debug player networking.
 	if (InCharacter.IsPlayerControlled())
 	{
 		const FString AdjustedDebugString = FString::Printf(TEXT("[%d] [%s] %s"), (uint64)GFrameCounter, *InCharacter.GetName(), *InString);
-
-		// If on the server, replicate this message to everyone.
-		if (!InCharacter.IsLocallyControlled() && (InCharacter.GetLocalRole() == ROLE_Authority))
-		{
-			for (FConstPlayerControllerIterator Iterator = InCharacter.GetWorld()->GetPlayerControllerIterator(); Iterator; ++Iterator)
-			{
-				if (const APlayerController* const PlayerController = Iterator->Get())
-				{
-					if (ACharacter* const Character = PlayerController->GetCharacter())
-					{
-						Character->RootMotionDebugClientPrintOnScreen(AdjustedDebugString);
-					}
-				}
-			}
-		}
-		else
+		
 		{
 			const FColor DebugColor = (InCharacter.IsLocallyControlled()) ? FColor::Green : FColor::Purple;
 			GEngine->AddOnScreenDebugMessage(INDEX_NONE, 0.f, DebugColor, AdjustedDebugString, false, FVector2D::UnitVector * 1.5f);
@@ -55,7 +40,7 @@ void OPRootMotionSourceDebug::PrintOnScreen(const AOPCharacter& InCharacter, con
 	}
 }
 
-void OPRootMotionSourceDebug::PrintOnScreenServerMsg(const FString& InString)
+void RootMotionSourceCFWDebug::PrintOnScreenServerMsg(const FString& InString)
 {
 	const FColor DebugColor = FColor::Red;
 	GEngine->AddOnScreenDebugMessage(INDEX_NONE, 0.f, DebugColor, InString, false, FVector2D::UnitVector * 1.5f);
@@ -89,14 +74,14 @@ static FVector EvaluateVectorCurveAtFraction(const UCurveVector& Curve, const fl
 
 #pragma endregion Utility
 
-void FOPRootMotionSource::PrepareCustomRootMotion(float SimulationTime, float MovementTickTime, const AOPCharacter& Character, const UCustomMovementComponent& MoveComponent)
+void FRootMotionSourceCFW::PrepareCustomRootMotion(float SimulationTime, float MovementTickTime, const ARadicalCharacter& Character, const URadicalMovementComponent& MoveComponent)
 {
 	RootMotionParams.Clear();
 }
 
 #pragma region Source Group
 
-void FOPRootMotionSourceGroup::CleanUpInvalidRootMotion(float DeltaTime, const AOPCharacter& Character, UCustomMovementComponent& MoveComponent)
+void FRootMotionSourceGroupCFW::CleanUpInvalidRootMotion(float DeltaTime, const ARadicalCharacter& Character, URadicalMovementComponent& MoveComponent)
 {
 	// Remove active sources marked for removal or that are invalid
 	RootMotionSources.RemoveAll([this, DeltaTime, &Character, &MoveComponent](const TSharedPtr<FRootMotionSource>& RootSource)
@@ -120,11 +105,11 @@ void FOPRootMotionSourceGroup::CleanUpInvalidRootMotion(float DeltaTime, const A
 					AccumulateRootMotionVelocityFromSource(*RootSource, DeltaTime, Character, MoveComponent, LastPreAdditiveVelocity);
 
 #if ROOT_MOTION_DEBUG
-					if (OPRootMotionSourceDebug::CVarDebugRootMotionSources.GetValueOnAnyThread() == 1)
+					if (RootMotionSourceCFWDebug::CVarDebugRootMotionSources.GetValueOnAnyThread() == 1)
 					{
 						FString AdjustedDebugString = FString::Printf(TEXT("PrepareRootMotion RemovingAdditiveSource LastPreAdditiveVelocity(%s) Old(%s)"),
 							*LastPreAdditiveVelocity.ToCompactString(), *PreviousLastPreAdditiveVelocity.ToCompactString());
-						OPRootMotionSourceDebug::PrintOnScreen(Character, AdjustedDebugString);
+						RootMotionSourceCFWDebug::PrintOnScreen(Character, AdjustedDebugString);
 					}
 #endif
 				}
@@ -158,11 +143,11 @@ void FOPRootMotionSourceGroup::CleanUpInvalidRootMotion(float DeltaTime, const A
 			UE_LOG(LogRootMotion, VeryVerbose, TEXT("RootMotionSource being removed: %s"), *RootSource->ToSimpleString());
 
 #if ROOT_MOTION_DEBUG
-			if (OPRootMotionSourceDebug::CVarDebugRootMotionSources.GetValueOnAnyThread() == 1)
+			if (RootMotionSourceCFWDebug::CVarDebugRootMotionSources.GetValueOnAnyThread() == 1)
 			{
 				FString AdjustedDebugString = FString::Printf(TEXT("PrepareRootMotion Removing RootMotionSource(%s)"),
 					*RootSource->ToSimpleString());
-				OPRootMotionSourceDebug::PrintOnScreen(Character, AdjustedDebugString);
+				RootMotionSourceCFWDebug::PrintOnScreen(Character, AdjustedDebugString);
 			}
 #endif
 		}
@@ -183,11 +168,11 @@ void FOPRootMotionSourceGroup::CleanUpInvalidRootMotion(float DeltaTime, const A
 			UE_LOG(LogRootMotion, VeryVerbose, TEXT("Pending RootMotionSource being removed: %s"), *RootSource->ToSimpleString());
 
 #if ROOT_MOTION_DEBUG
-			if (OPRootMotionSourceDebug::CVarDebugRootMotionSources.GetValueOnAnyThread() == 1)
+			if (RootMotionSourceCFWDebug::CVarDebugRootMotionSources.GetValueOnAnyThread() == 1)
 			{
 				FString AdjustedDebugString = FString::Printf(TEXT("PrepareRootMotion Removing PendingAddRootMotionSource(%s)"),
 					*RootSource->ToSimpleString());
-				OPRootMotionSourceDebug::PrintOnScreen(Character, AdjustedDebugString);
+				RootMotionSourceCFWDebug::PrintOnScreen(Character, AdjustedDebugString);
 			}
 #endif
 		}
@@ -195,7 +180,7 @@ void FOPRootMotionSourceGroup::CleanUpInvalidRootMotion(float DeltaTime, const A
 	});
 }
 
-void FOPRootMotionSourceGroup::PrepareRootMotion(float DeltaTime, const AOPCharacter& Character, const UCustomMovementComponent& MoveComponent, bool bForcePrepareAll)
+void FRootMotionSourceGroupCFW::PrepareRootMotion(float DeltaTime, const ARadicalCharacter& Character, const URadicalMovementComponent& MoveComponent, bool bForcePrepareAll)
 {
 	// Add pending sources
 	{
@@ -229,7 +214,7 @@ void FOPRootMotionSourceGroup::PrepareRootMotion(float DeltaTime, const AOPChara
 		{
 			if (RootMotionSource.IsValid())
 			{
-				TSharedPtr<FOPRootMotionSource> OPRootMotionSource = StaticCastSharedPtr<FOPRootMotionSource>(RootMotionSource);
+				TSharedPtr<FRootMotionSourceCFW> OPRootMotionSource = StaticCastSharedPtr<FRootMotionSourceCFW>(RootMotionSource);
 
 				if (!OPRootMotionSource) return;
 				
@@ -246,11 +231,11 @@ void FOPRootMotionSourceGroup::PrepareRootMotion(float DeltaTime, const AOPChara
 					
 
 #if ROOT_MOTION_DEBUG
-					if (OPRootMotionSourceDebug::CVarDebugRootMotionSources.GetValueOnAnyThread() == 1)
+					if (RootMotionSourceCFWDebug::CVarDebugRootMotionSources.GetValueOnAnyThread() == 1)
 					{
 						FString AdjustedDebugString = FString::Printf(TEXT("PrepareRootMotion Prepared RootMotionSource(%s)"),
 							*OPRootMotionSource->ToSimpleString());
-						OPRootMotionSourceDebug::PrintOnScreen(Character, AdjustedDebugString);
+						RootMotionSourceCFWDebug::PrintOnScreen(Character, AdjustedDebugString);
 					}
 #endif
 
@@ -259,11 +244,11 @@ void FOPRootMotionSourceGroup::PrepareRootMotion(float DeltaTime, const AOPChara
 				else // if (!RootMotionSource->Status.HasFlag(ERootMotionSourceStatusFlags::Prepared) || bForcePrepareAll)
 				{
 #if ROOT_MOTION_DEBUG
-					if (OPRootMotionSourceDebug::CVarDebugRootMotionSources.GetValueOnAnyThread() == 1)
+					if (RootMotionSourceCFWDebug::CVarDebugRootMotionSources.GetValueOnAnyThread() == 1)
 					{
 						FString AdjustedDebugString = FString::Printf(TEXT("PrepareRootMotion AlreadyPrepared RootMotionSource(%s)"),
 							*OPRootMotionSource->ToSimpleString());
-						OPRootMotionSourceDebug::PrintOnScreen(Character, AdjustedDebugString);
+						RootMotionSourceCFWDebug::PrintOnScreen(Character, AdjustedDebugString);
 					}
 #endif
 				}
@@ -286,34 +271,34 @@ void FOPRootMotionSourceGroup::PrepareRootMotion(float DeltaTime, const AOPChara
 	}
 }
 
-void FOPRootMotionSourceGroup::AccumulateOverrideRootMotionVelocity
+void FRootMotionSourceGroupCFW::AccumulateOverrideRootMotionVelocity
 	(
 		float DeltaTime, 
-		const AOPCharacter& Character, 
-		const UCustomMovementComponent& MoveComponent, 
+		const ARadicalCharacter& Character, 
+		const URadicalMovementComponent& MoveComponent, 
 		FVector& InOutVelocity
 	) const
 {
 	AccumulateRootMotionVelocity(ERootMotionAccumulateMode::Override, DeltaTime, Character, MoveComponent, InOutVelocity);
 }
 
-void FOPRootMotionSourceGroup::AccumulateAdditiveRootMotionVelocity
+void FRootMotionSourceGroupCFW::AccumulateAdditiveRootMotionVelocity
 	(
 		float DeltaTime, 
-		const AOPCharacter& Character, 
-		const UCustomMovementComponent& MoveComponent, 
+		const ARadicalCharacter& Character, 
+		const URadicalMovementComponent& MoveComponent, 
 		FVector& InOutVelocity
 	) const
 {
 	AccumulateRootMotionVelocity(ERootMotionAccumulateMode::Additive, DeltaTime, Character, MoveComponent, InOutVelocity);
 }
 
-void FOPRootMotionSourceGroup::AccumulateRootMotionVelocity
+void FRootMotionSourceGroupCFW::AccumulateRootMotionVelocity
 	(
 		ERootMotionAccumulateMode RootMotionType,
 		float DeltaTime, 
-		const AOPCharacter& Character, 
-		const UCustomMovementComponent& MoveComponent, 
+		const ARadicalCharacter& Character, 
+		const URadicalMovementComponent& MoveComponent, 
 		FVector& InOutVelocity
 	) const
 {
@@ -335,12 +320,12 @@ void FOPRootMotionSourceGroup::AccumulateRootMotionVelocity
 	}
 }
 
-void FOPRootMotionSourceGroup::AccumulateRootMotionVelocityFromSource
+void FRootMotionSourceGroupCFW::AccumulateRootMotionVelocityFromSource
 	(
 		const FRootMotionSource& RootMotionSource,
 		float DeltaTime, 
-		const AOPCharacter& Character, 
-		const UCustomMovementComponent& MoveComponent, 
+		const ARadicalCharacter& Character, 
+		const URadicalMovementComponent& MoveComponent, 
 		FVector& InOutVelocity
 	) const
 {
@@ -369,11 +354,11 @@ void FOPRootMotionSourceGroup::AccumulateRootMotionVelocityFromSource
 	}
 }
 
-bool FOPRootMotionSourceGroup::GetOverrideRootMotionRotation
+bool FRootMotionSourceGroupCFW::GetOverrideRootMotionRotation
 	(
 		float DeltaTime, 
-		const AOPCharacter& Character, 
-		const UCustomMovementComponent& MoveComponent, 
+		const ARadicalCharacter& Character, 
+		const URadicalMovementComponent& MoveComponent, 
 		FQuat& OutRotation
 	) const
 {
@@ -393,7 +378,7 @@ bool FOPRootMotionSourceGroup::GetOverrideRootMotionRotation
 
 #pragma region Constant Force
 
-FOPRootMotionSource_ConstantForce::FOPRootMotionSource_ConstantForce()
+FRootMotionSourceCFW_ConstantForce::FRootMotionSourceCFW_ConstantForce()
 	: Force(ForceInitToZero)
 	, StrengthOverTime(nullptr)
 {
@@ -403,13 +388,13 @@ FOPRootMotionSource_ConstantForce::FOPRootMotionSource_ConstantForce()
 	Settings.SetFlag(ERootMotionSourceSettingsFlags::DisablePartialEndTick);
 }
 
-FOPRootMotionSource* FOPRootMotionSource_ConstantForce::Clone() const
+FRootMotionSourceCFW* FRootMotionSourceCFW_ConstantForce::Clone() const
 {
-	FOPRootMotionSource_ConstantForce* CopyPtr = new FOPRootMotionSource_ConstantForce(*this);
+	FRootMotionSourceCFW_ConstantForce* CopyPtr = new FRootMotionSourceCFW_ConstantForce(*this);
 	return CopyPtr;
 }
 
-bool FOPRootMotionSource_ConstantForce::Matches(const FRootMotionSource* Other) const
+bool FRootMotionSourceCFW_ConstantForce::Matches(const FRootMotionSource* Other) const
 {
 	if (!FRootMotionSource::Matches(Other))
 	{
@@ -417,13 +402,13 @@ bool FOPRootMotionSource_ConstantForce::Matches(const FRootMotionSource* Other) 
 	}
 
 	// We can cast safely here since in FRootMotionSource::Matches() we ensured ScriptStruct equality
-	const FOPRootMotionSource_ConstantForce* OtherCast = static_cast<const FOPRootMotionSource_ConstantForce*>(Other);
+	const FRootMotionSourceCFW_ConstantForce* OtherCast = static_cast<const FRootMotionSourceCFW_ConstantForce*>(Other);
 
 	return FVector::PointsAreNear(Force, OtherCast->Force, 0.1f) &&
 		StrengthOverTime == OtherCast->StrengthOverTime;
 }
 
-bool FOPRootMotionSource_ConstantForce::MatchesAndHasSameState(const FRootMotionSource* Other) const
+bool FRootMotionSourceCFW_ConstantForce::MatchesAndHasSameState(const FRootMotionSource* Other) const
 {
 	// Check that it matches
 	if (!FRootMotionSource::MatchesAndHasSameState(Other))
@@ -434,7 +419,7 @@ bool FOPRootMotionSource_ConstantForce::MatchesAndHasSameState(const FRootMotion
 	return true; // ConstantForce has no unique state
 }
 
-bool FOPRootMotionSource_ConstantForce::UpdateStateFrom(const FRootMotionSource* SourceToTakeStateFrom, bool bMarkForSimulatedCatchup)
+bool FRootMotionSourceCFW_ConstantForce::UpdateStateFrom(const FRootMotionSource* SourceToTakeStateFrom, bool bMarkForSimulatedCatchup)
 {
 	if (!FRootMotionSource::UpdateStateFrom(SourceToTakeStateFrom, bMarkForSimulatedCatchup))
 	{
@@ -444,12 +429,12 @@ bool FOPRootMotionSource_ConstantForce::UpdateStateFrom(const FRootMotionSource*
 	return true; // ConstantForce has no unique state other than Time which is handled by FRootMotionSource
 }
 
-void FOPRootMotionSource_ConstantForce::PrepareCustomRootMotion
+void FRootMotionSourceCFW_ConstantForce::PrepareCustomRootMotion
 	(
 		float SimulationTime, 
 		float MovementTickTime,
-		const AOPCharacter& Character, 
-		const UCustomMovementComponent& MoveComponent
+		const ARadicalCharacter& Character, 
+		const URadicalMovementComponent& MoveComponent
 	)
 {
 	RootMotionParams.Clear();
@@ -473,11 +458,11 @@ void FOPRootMotionSource_ConstantForce::PrepareCustomRootMotion
 	NewTransform.ScaleTranslation(Multiplier);
 
 #if ROOT_MOTION_DEBUG
-	if (OPRootMotionSourceDebug::CVarDebugRootMotionSources.GetValueOnAnyThread() == 1)
+	if (RootMotionSourceCFWDebug::CVarDebugRootMotionSources.GetValueOnAnyThread() == 1)
 	{
 		FString AdjustedDebugString = FString::Printf(TEXT("FRootMotionSource_ConstantForce::PrepareRootMotion NewTransform(%s) Multiplier(%f)"),
 			*NewTransform.GetTranslation().ToCompactString(), Multiplier);
-		OPRootMotionSourceDebug::PrintOnScreen(Character, AdjustedDebugString);
+		RootMotionSourceCFWDebug::PrintOnScreen(Character, AdjustedDebugString);
 	}
 #endif
 
@@ -487,17 +472,17 @@ void FOPRootMotionSource_ConstantForce::PrepareCustomRootMotion
 }
 
 
-UScriptStruct* FOPRootMotionSource_ConstantForce::GetScriptStruct() const
+UScriptStruct* FRootMotionSourceCFW_ConstantForce::GetScriptStruct() const
 {
 	return FRootMotionSource_ConstantForce::StaticStruct();
 }
 
-FString FOPRootMotionSource_ConstantForce::ToSimpleString() const
+FString FRootMotionSourceCFW_ConstantForce::ToSimpleString() const
 {
 	return FString::Printf(TEXT("[ID:%u]FRootMotionSource_ConstantForce %s"), LocalID, *InstanceName.GetPlainNameString());
 }
 
-void FOPRootMotionSource_ConstantForce::AddReferencedObjects(class FReferenceCollector& Collector)
+void FRootMotionSourceCFW_ConstantForce::AddReferencedObjects(class FReferenceCollector& Collector)
 {
 	Collector.AddReferencedObject(StrengthOverTime);
 
@@ -510,7 +495,7 @@ void FOPRootMotionSource_ConstantForce::AddReferencedObjects(class FReferenceCol
 
 #pragma region Radial Force
 
-FOPRootMotionSource_RadialForce::FOPRootMotionSource_RadialForce()
+FRootMotionSourceCFW_RadialForce::FRootMotionSourceCFW_RadialForce()
 	: Location(ForceInitToZero)
 	, LocationActor(nullptr)
 	, Radius(1.f)
@@ -524,13 +509,13 @@ FOPRootMotionSource_RadialForce::FOPRootMotionSource_RadialForce()
 {
 }
 
-FOPRootMotionSource* FOPRootMotionSource_RadialForce::Clone() const
+FRootMotionSourceCFW* FRootMotionSourceCFW_RadialForce::Clone() const
 {
-	FOPRootMotionSource_RadialForce* CopyPtr = new FOPRootMotionSource_RadialForce(*this);
+	FRootMotionSourceCFW_RadialForce* CopyPtr = new FRootMotionSourceCFW_RadialForce(*this);
 	return CopyPtr;
 }
 
-bool FOPRootMotionSource_RadialForce::Matches(const FRootMotionSource* Other) const
+bool FRootMotionSourceCFW_RadialForce::Matches(const FRootMotionSource* Other) const
 {
 	if (!FRootMotionSource::Matches(Other))
 	{
@@ -538,7 +523,7 @@ bool FOPRootMotionSource_RadialForce::Matches(const FRootMotionSource* Other) co
 	}
 
 	// We can cast safely here since in FRootMotionSource::Matches() we ensured ScriptStruct equality
-	const FOPRootMotionSource_RadialForce* OtherCast = static_cast<const FOPRootMotionSource_RadialForce*>(Other);
+	const FRootMotionSourceCFW_RadialForce* OtherCast = static_cast<const FRootMotionSourceCFW_RadialForce*>(Other);
 
 	return bIsPush == OtherCast->bIsPush &&
 		bNoZForce == OtherCast->bNoZForce &&
@@ -552,10 +537,10 @@ bool FOPRootMotionSource_RadialForce::Matches(const FRootMotionSource* Other) co
 		FixedWorldDirection.Equals(OtherCast->FixedWorldDirection, 3.0f);
 }
 
-bool FOPRootMotionSource_RadialForce::MatchesAndHasSameState(const FRootMotionSource* Other) const
+bool FRootMotionSourceCFW_RadialForce::MatchesAndHasSameState(const FRootMotionSource* Other) const
 {
 	// Check that it matches
-	if (!FOPRootMotionSource::MatchesAndHasSameState(Other))
+	if (!FRootMotionSourceCFW::MatchesAndHasSameState(Other))
 	{
 		return false;
 	}
@@ -563,7 +548,7 @@ bool FOPRootMotionSource_RadialForce::MatchesAndHasSameState(const FRootMotionSo
 	return true; // RadialForce has no unique state
 }
 
-bool FOPRootMotionSource_RadialForce::UpdateStateFrom(const FRootMotionSource* SourceToTakeStateFrom, bool bMarkForSimulatedCatchup)
+bool FRootMotionSourceCFW_RadialForce::UpdateStateFrom(const FRootMotionSource* SourceToTakeStateFrom, bool bMarkForSimulatedCatchup)
 {
 	if (!FRootMotionSource::UpdateStateFrom(SourceToTakeStateFrom, bMarkForSimulatedCatchup))
 	{
@@ -573,12 +558,12 @@ bool FOPRootMotionSource_RadialForce::UpdateStateFrom(const FRootMotionSource* S
 	return true; // RadialForce has no unique state other than Time which is handled by FRootMotionSource
 }
 
-void FOPRootMotionSource_RadialForce::PrepareCustomRootMotion
+void FRootMotionSourceCFW_RadialForce::PrepareCustomRootMotion
 	(
 		float SimulationTime, 
 		float MovementTickTime,
-		const AOPCharacter& Character, 
-		const UCustomMovementComponent& MoveComponent
+		const ARadicalCharacter& Character, 
+		const URadicalMovementComponent& MoveComponent
 	)
 {
 	RootMotionParams.Clear();
@@ -648,17 +633,17 @@ void FOPRootMotionSource_RadialForce::PrepareCustomRootMotion
 }
 
 
-UScriptStruct* FOPRootMotionSource_RadialForce::GetScriptStruct() const
+UScriptStruct* FRootMotionSourceCFW_RadialForce::GetScriptStruct() const
 {
 	return FRootMotionSource_RadialForce::StaticStruct();
 }
 
-FString FOPRootMotionSource_RadialForce::ToSimpleString() const
+FString FRootMotionSourceCFW_RadialForce::ToSimpleString() const
 {
 	return FString::Printf(TEXT("[ID:%u]FRootMotionSource_RadialForce %s"), LocalID, *InstanceName.GetPlainNameString());
 }
 
-void FOPRootMotionSource_RadialForce::AddReferencedObjects(class FReferenceCollector& Collector)
+void FRootMotionSourceCFW_RadialForce::AddReferencedObjects(class FReferenceCollector& Collector)
 {
 	Collector.AddReferencedObject(LocationActor);
 	Collector.AddReferencedObject(StrengthDistanceFalloff);
@@ -672,7 +657,7 @@ void FOPRootMotionSource_RadialForce::AddReferencedObjects(class FReferenceColle
 
 #pragma region Move To Force
 
-FOPRootMotionSource_MoveToForce::FOPRootMotionSource_MoveToForce()
+FRootMotionSourceCFW_MoveToForce::FRootMotionSourceCFW_MoveToForce()
 	: StartLocation(ForceInitToZero)
 	, TargetLocation(ForceInitToZero)
 	, bRestrictSpeedToExpected(false)
@@ -680,13 +665,13 @@ FOPRootMotionSource_MoveToForce::FOPRootMotionSource_MoveToForce()
 {
 }
 
-FRootMotionSource* FOPRootMotionSource_MoveToForce::Clone() const
+FRootMotionSource* FRootMotionSourceCFW_MoveToForce::Clone() const
 {
-	FOPRootMotionSource_MoveToForce* CopyPtr = new FOPRootMotionSource_MoveToForce(*this);
+	FRootMotionSourceCFW_MoveToForce* CopyPtr = new FRootMotionSourceCFW_MoveToForce(*this);
 	return CopyPtr;
 }
 
-bool FOPRootMotionSource_MoveToForce::Matches(const FRootMotionSource* Other) const
+bool FRootMotionSourceCFW_MoveToForce::Matches(const FRootMotionSource* Other) const
 {
 	if (!FRootMotionSource::Matches(Other))
 	{
@@ -694,14 +679,14 @@ bool FOPRootMotionSource_MoveToForce::Matches(const FRootMotionSource* Other) co
 	}
 
 	// We can cast safely here since in FRootMotionSource::Matches() we ensured ScriptStruct equality
-	const FOPRootMotionSource_MoveToForce* OtherCast = static_cast<const FOPRootMotionSource_MoveToForce*>(Other);
+	const FRootMotionSourceCFW_MoveToForce* OtherCast = static_cast<const FRootMotionSourceCFW_MoveToForce*>(Other);
 
 	return bRestrictSpeedToExpected == OtherCast->bRestrictSpeedToExpected &&
 		PathOffsetCurve == OtherCast->PathOffsetCurve &&
 		FVector::PointsAreNear(TargetLocation, OtherCast->TargetLocation, 0.1f);
 }
 
-bool FOPRootMotionSource_MoveToForce::MatchesAndHasSameState(const FRootMotionSource* Other) const
+bool FRootMotionSourceCFW_MoveToForce::MatchesAndHasSameState(const FRootMotionSource* Other) const
 {
 	// Check that it matches
 	if (!FRootMotionSource::MatchesAndHasSameState(Other))
@@ -712,7 +697,7 @@ bool FOPRootMotionSource_MoveToForce::MatchesAndHasSameState(const FRootMotionSo
 	return true; // MoveToForce has no unique state
 }
 
-bool FOPRootMotionSource_MoveToForce::UpdateStateFrom(const FRootMotionSource* SourceToTakeStateFrom, bool bMarkForSimulatedCatchup)
+bool FRootMotionSourceCFW_MoveToForce::UpdateStateFrom(const FRootMotionSource* SourceToTakeStateFrom, bool bMarkForSimulatedCatchup)
 {
 	if (!FRootMotionSource::UpdateStateFrom(SourceToTakeStateFrom, bMarkForSimulatedCatchup))
 	{
@@ -722,14 +707,14 @@ bool FOPRootMotionSource_MoveToForce::UpdateStateFrom(const FRootMotionSource* S
 	return true; // MoveToForce has no unique state other than Time which is handled by FRootMotionSource
 }
 
-void FOPRootMotionSource_MoveToForce::SetTime(float NewTime)
+void FRootMotionSourceCFW_MoveToForce::SetTime(float NewTime)
 {
 	FRootMotionSource::SetTime(NewTime);
 
 	// TODO-RootMotionSource: Check if reached destination?
 }
 
-FVector FOPRootMotionSource_MoveToForce::GetPathOffsetInWorldSpace(const float MoveFraction) const
+FVector FRootMotionSourceCFW_MoveToForce::GetPathOffsetInWorldSpace(const float MoveFraction) const
 {
 	if (PathOffsetCurve)
 	{
@@ -743,12 +728,12 @@ FVector FOPRootMotionSource_MoveToForce::GetPathOffsetInWorldSpace(const float M
 	return FVector::ZeroVector;
 }
 
-void FOPRootMotionSource_MoveToForce::PrepareCustomRootMotion
+void FRootMotionSourceCFW_MoveToForce::PrepareCustomRootMotion
 	(
 		float SimulationTime, 
 		float MovementTickTime,
-		const AOPCharacter& Character, 
-		const UCustomMovementComponent& MoveComponent
+		const ARadicalCharacter& Character, 
+		const URadicalMovementComponent& MoveComponent
 	)
 {
 	RootMotionParams.Clear();
@@ -786,7 +771,7 @@ void FOPRootMotionSource_MoveToForce::PrepareCustomRootMotion
 
 		// Debug
 #if ROOT_MOTION_DEBUG
-		if (OPRootMotionSourceDebug::CVarDebugRootMotionSources.GetValueOnGameThread() != 0)
+		if (RootMotionSourceCFWDebug::CVarDebugRootMotionSources.GetValueOnGameThread() != 0)
 		{
 			const FVector LocDiff = MoveComponent.UpdatedComponent->GetComponentLocation() - CurrentLocation;
 			const float DebugLifetime = CVarDebugRootMotionSourcesLifetime.GetValueOnGameThread();
@@ -817,17 +802,17 @@ void FOPRootMotionSource_MoveToForce::PrepareCustomRootMotion
 }
 
 
-UScriptStruct* FOPRootMotionSource_MoveToForce::GetScriptStruct() const
+UScriptStruct* FRootMotionSourceCFW_MoveToForce::GetScriptStruct() const
 {
-	return FOPRootMotionSource_MoveToForce::StaticStruct();
+	return FRootMotionSourceCFW_MoveToForce::StaticStruct();
 }
 
-FString FOPRootMotionSource_MoveToForce::ToSimpleString() const
+FString FRootMotionSourceCFW_MoveToForce::ToSimpleString() const
 {
 	return FString::Printf(TEXT("[ID:%u]FRootMotionSource_MoveToForce %s"), LocalID, *InstanceName.GetPlainNameString());
 }
 
-void FOPRootMotionSource_MoveToForce::AddReferencedObjects(class FReferenceCollector& Collector)
+void FRootMotionSourceCFW_MoveToForce::AddReferencedObjects(class FReferenceCollector& Collector)
 {
 	Collector.AddReferencedObject(PathOffsetCurve);
 
@@ -839,7 +824,7 @@ void FOPRootMotionSource_MoveToForce::AddReferencedObjects(class FReferenceColle
 
 #pragma region Move To Dynamic Force
 
-FOPRootMotionSource_MoveToDynamicForce::FOPRootMotionSource_MoveToDynamicForce()
+FRootMotionSourceCFW_MoveToDynamicForce::FRootMotionSourceCFW_MoveToDynamicForce()
 	: StartLocation(ForceInitToZero)
 	, InitialTargetLocation(ForceInitToZero)
 	, TargetLocation(ForceInitToZero)
@@ -849,18 +834,18 @@ FOPRootMotionSource_MoveToDynamicForce::FOPRootMotionSource_MoveToDynamicForce()
 {
 }
 
-void FOPRootMotionSource_MoveToDynamicForce::SetTargetLocation(FVector NewTargetLocation)
+void FRootMotionSourceCFW_MoveToDynamicForce::SetTargetLocation(FVector NewTargetLocation)
 {
 	TargetLocation = NewTargetLocation;
 }
 
-FRootMotionSource* FOPRootMotionSource_MoveToDynamicForce::Clone() const
+FRootMotionSource* FRootMotionSourceCFW_MoveToDynamicForce::Clone() const
 {
-	FOPRootMotionSource_MoveToDynamicForce* CopyPtr = new FOPRootMotionSource_MoveToDynamicForce(*this);
+	FRootMotionSourceCFW_MoveToDynamicForce* CopyPtr = new FRootMotionSourceCFW_MoveToDynamicForce(*this);
 	return CopyPtr;
 }
 
-bool FOPRootMotionSource_MoveToDynamicForce::Matches(const FRootMotionSource* Other) const
+bool FRootMotionSourceCFW_MoveToDynamicForce::Matches(const FRootMotionSource* Other) const
 {
 	if (!FRootMotionSource::Matches(Other))
 	{
@@ -868,14 +853,14 @@ bool FOPRootMotionSource_MoveToDynamicForce::Matches(const FRootMotionSource* Ot
 	}
 
 	// We can cast safely here since in FRootMotionSource::Matches() we ensured ScriptStruct equality
-	const FOPRootMotionSource_MoveToDynamicForce* OtherCast = static_cast<const FOPRootMotionSource_MoveToDynamicForce*>(Other);
+	const FRootMotionSourceCFW_MoveToDynamicForce* OtherCast = static_cast<const FRootMotionSourceCFW_MoveToDynamicForce*>(Other);
 
 	return bRestrictSpeedToExpected == OtherCast->bRestrictSpeedToExpected &&
 		PathOffsetCurve == OtherCast->PathOffsetCurve &&
 		TimeMappingCurve == OtherCast->TimeMappingCurve;
 }
 
-bool FOPRootMotionSource_MoveToDynamicForce::MatchesAndHasSameState(const FRootMotionSource* Other) const
+bool FRootMotionSourceCFW_MoveToDynamicForce::MatchesAndHasSameState(const FRootMotionSource* Other) const
 {
 	// Check that it matches
 	if (!FRootMotionSource::MatchesAndHasSameState(Other))
@@ -886,7 +871,7 @@ bool FOPRootMotionSource_MoveToDynamicForce::MatchesAndHasSameState(const FRootM
 	return true; // MoveToDynamicForce has no unique state
 }
 
-bool FOPRootMotionSource_MoveToDynamicForce::UpdateStateFrom(const FRootMotionSource* SourceToTakeStateFrom, bool bMarkForSimulatedCatchup)
+bool FRootMotionSourceCFW_MoveToDynamicForce::UpdateStateFrom(const FRootMotionSource* SourceToTakeStateFrom, bool bMarkForSimulatedCatchup)
 {
 	if (!FRootMotionSource::UpdateStateFrom(SourceToTakeStateFrom, bMarkForSimulatedCatchup))
 	{
@@ -896,14 +881,14 @@ bool FOPRootMotionSource_MoveToDynamicForce::UpdateStateFrom(const FRootMotionSo
 	return true; // MoveToDynamicForce has no unique state other than Time which is handled by FRootMotionSource
 }
 
-void FOPRootMotionSource_MoveToDynamicForce::SetTime(float NewTime)
+void FRootMotionSourceCFW_MoveToDynamicForce::SetTime(float NewTime)
 {
 	FRootMotionSource::SetTime(NewTime);
 
 	// TODO-RootMotionSource: Check if reached destination?
 }
 
-FVector FOPRootMotionSource_MoveToDynamicForce::GetPathOffsetInWorldSpace(const float MoveFraction) const
+FVector FRootMotionSourceCFW_MoveToDynamicForce::GetPathOffsetInWorldSpace(const float MoveFraction) const
 {
 	if (PathOffsetCurve)
 	{
@@ -917,12 +902,12 @@ FVector FOPRootMotionSource_MoveToDynamicForce::GetPathOffsetInWorldSpace(const 
 	return FVector::ZeroVector;
 }
 
-void FOPRootMotionSource_MoveToDynamicForce::PrepareCustomRootMotion
+void FRootMotionSourceCFW_MoveToDynamicForce::PrepareCustomRootMotion
 	(
 		float SimulationTime, 
 		float MovementTickTime,
-		const AOPCharacter& Character, 
-		const UCustomMovementComponent& MoveComponent
+		const ARadicalCharacter& Character, 
+		const URadicalMovementComponent& MoveComponent
 	)
 {
 	RootMotionParams.Clear();
@@ -970,7 +955,7 @@ void FOPRootMotionSource_MoveToDynamicForce::PrepareCustomRootMotion
 
 		// Debug
 #if ROOT_MOTION_DEBUG
-		if (OPRootMotionSourceDebug::CVarDebugRootMotionSources.GetValueOnGameThread() != 0)
+		if (RootMotionSourceCFWDebug::CVarDebugRootMotionSources.GetValueOnGameThread() != 0)
 		{
 			const FVector LocDiff = MoveComponent.UpdatedComponent->GetComponentLocation() - CurrentLocation;
 			const float DebugLifetime = CVarDebugRootMotionSourcesLifetime.GetValueOnGameThread();
@@ -1000,17 +985,17 @@ void FOPRootMotionSource_MoveToDynamicForce::PrepareCustomRootMotion
 	SetTime(GetTime() + SimulationTime);
 }
 
-UScriptStruct* FOPRootMotionSource_MoveToDynamicForce::GetScriptStruct() const
+UScriptStruct* FRootMotionSourceCFW_MoveToDynamicForce::GetScriptStruct() const
 {
 	return FRootMotionSource_MoveToDynamicForce::StaticStruct();
 }
 
-FString FOPRootMotionSource_MoveToDynamicForce::ToSimpleString() const
+FString FRootMotionSourceCFW_MoveToDynamicForce::ToSimpleString() const
 {
 	return FString::Printf(TEXT("[ID:%u]FRootMotionSource_MoveToDynamicForce %s"), LocalID, *InstanceName.GetPlainNameString());
 }
 
-void FOPRootMotionSource_MoveToDynamicForce::AddReferencedObjects(class FReferenceCollector& Collector)
+void FRootMotionSourceCFW_MoveToDynamicForce::AddReferencedObjects(class FReferenceCollector& Collector)
 {
 	Collector.AddReferencedObject(PathOffsetCurve);
 	Collector.AddReferencedObject(TimeMappingCurve);
@@ -1023,7 +1008,7 @@ void FOPRootMotionSource_MoveToDynamicForce::AddReferencedObjects(class FReferen
 
 #pragma region Jump Force
 
-FOPRootMotionSource_JumpForce::FOPRootMotionSource_JumpForce()
+FRootMotionSourceCFW_JumpForce::FRootMotionSourceCFW_JumpForce()
 	: Rotation(ForceInitToZero)
 	, Distance(-1.0f)
 	, Height(-1.0f)
@@ -1039,22 +1024,22 @@ FOPRootMotionSource_JumpForce::FOPRootMotionSource_JumpForce()
 	Settings.SetFlag(ERootMotionSourceSettingsFlags::DisablePartialEndTick);
 }
 
-bool FOPRootMotionSource_JumpForce::IsTimeOutEnabled() const
+bool FRootMotionSourceCFW_JumpForce::IsTimeOutEnabled() const
 {
 	if (bDisableTimeout)
 	{
 		return false;
 	}
-	return FOPRootMotionSource_JumpForce::IsTimeOutEnabled();
+	return FRootMotionSourceCFW_JumpForce::IsTimeOutEnabled();
 }
 
-FRootMotionSource* FOPRootMotionSource_JumpForce::Clone() const
+FRootMotionSource* FRootMotionSourceCFW_JumpForce::Clone() const
 {
-	FOPRootMotionSource_JumpForce* CopyPtr = new FOPRootMotionSource_JumpForce(*this);
+	FRootMotionSourceCFW_JumpForce* CopyPtr = new FRootMotionSourceCFW_JumpForce(*this);
 	return CopyPtr;
 }
 
-bool FOPRootMotionSource_JumpForce::Matches(const FRootMotionSource* Other) const
+bool FRootMotionSourceCFW_JumpForce::Matches(const FRootMotionSource* Other) const
 {
 	if (!FRootMotionSource::Matches(Other))
 	{
@@ -1062,7 +1047,7 @@ bool FOPRootMotionSource_JumpForce::Matches(const FRootMotionSource* Other) cons
 	}
 
 	// We can cast safely here since in FRootMotionSource::Matches() we ensured ScriptStruct equality
-	const FOPRootMotionSource_JumpForce* OtherCast = static_cast<const FOPRootMotionSource_JumpForce*>(Other);
+	const FRootMotionSourceCFW_JumpForce* OtherCast = static_cast<const FRootMotionSourceCFW_JumpForce*>(Other);
 
 	return bDisableTimeout == OtherCast->bDisableTimeout &&
 		PathOffsetCurve == OtherCast->PathOffsetCurve &&
@@ -1072,7 +1057,7 @@ bool FOPRootMotionSource_JumpForce::Matches(const FRootMotionSource* Other) cons
 		Rotation.Equals(OtherCast->Rotation, 1.0f);
 }
 
-bool FOPRootMotionSource_JumpForce::MatchesAndHasSameState(const FRootMotionSource* Other) const
+bool FRootMotionSourceCFW_JumpForce::MatchesAndHasSameState(const FRootMotionSource* Other) const
 {
 	// Check that it matches
 	if (!FRootMotionSource::MatchesAndHasSameState(Other))
@@ -1083,7 +1068,7 @@ bool FOPRootMotionSource_JumpForce::MatchesAndHasSameState(const FRootMotionSour
 	return true; // JumpForce has no unique state
 }
 
-bool FOPRootMotionSource_JumpForce::UpdateStateFrom(const FRootMotionSource* SourceToTakeStateFrom, bool bMarkForSimulatedCatchup)
+bool FRootMotionSourceCFW_JumpForce::UpdateStateFrom(const FRootMotionSource* SourceToTakeStateFrom, bool bMarkForSimulatedCatchup)
 {
 	if (!FRootMotionSource::UpdateStateFrom(SourceToTakeStateFrom, bMarkForSimulatedCatchup))
 	{
@@ -1093,7 +1078,7 @@ bool FOPRootMotionSource_JumpForce::UpdateStateFrom(const FRootMotionSource* Sou
 	return true; // JumpForce has no unique state other than Time which is handled by FRootMotionSource
 }
 
-FVector FOPRootMotionSource_JumpForce::GetPathOffset(const float MoveFraction) const
+FVector FRootMotionSourceCFW_JumpForce::GetPathOffset(const float MoveFraction) const
 {
 	FVector PathOffset(FVector::ZeroVector);
 	if (PathOffsetCurve)
@@ -1120,7 +1105,7 @@ FVector FOPRootMotionSource_JumpForce::GetPathOffset(const float MoveFraction) c
 	return PathOffset;
 }
 
-FVector FOPRootMotionSource_JumpForce::GetRelativeLocation(float MoveFraction) const
+FVector FRootMotionSourceCFW_JumpForce::GetRelativeLocation(float MoveFraction) const
 {
 	// Given MoveFraction, what relative location should a character be at?
 	FRotator FacingRotation(Rotation);
@@ -1131,12 +1116,12 @@ FVector FOPRootMotionSource_JumpForce::GetRelativeLocation(float MoveFraction) c
 	return FacingRotation.RotateVector(RelativeLocationFacingSpace);
 }
 
-void FOPRootMotionSource_JumpForce::PrepareCustomRootMotion
+void FRootMotionSourceCFW_JumpForce::PrepareCustomRootMotion
 	(
 		float SimulationTime, 
 		float MovementTickTime,
-		const AOPCharacter& Character, 
-		const UCustomMovementComponent& MoveComponent
+		const ARadicalCharacter& Character, 
+		const URadicalMovementComponent& MoveComponent
 	)
 {
 	RootMotionParams.Clear();
@@ -1171,7 +1156,7 @@ void FOPRootMotionSource_JumpForce::PrepareCustomRootMotion
 
 		// Debug
 #if ROOT_MOTION_DEBUG
-		if (OPRootMotionSourceDebug::CVarDebugRootMotionSources.GetValueOnGameThread() != 0)
+		if (RootMotionSourceCFWDebug::CVarDebugRootMotionSources.GetValueOnGameThread() != 0)
 		{
 			const FVector CurrentLocation = Character.GetActorLocation();
 			const FVector CurrentTargetLocation = CurrentLocation + (TargetRelativeLocation - CurrentRelativeLocation);
@@ -1215,7 +1200,7 @@ void FOPRootMotionSource_JumpForce::PrepareCustomRootMotion
 			{
 				FString AdjustedDebugString = FString::Printf(TEXT("    FRootMotionSource_JumpForce::Prep Force(%s) SimTime(%.3f) MoveTime(%.3f) StartP(%.3f) EndP(%.3f)"),
 					*Force.ToCompactString(), SimulationTime, MovementTickTime, CurrentMoveFraction, TargetMoveFraction);
-				OPRootMotionSourceDebug::PrintOnScreen(Character, AdjustedDebugString);
+				RootMotionSourceCFWDebug::PrintOnScreen(Character, AdjustedDebugString);
 			}
 		}
 #endif
@@ -1232,17 +1217,17 @@ void FOPRootMotionSource_JumpForce::PrepareCustomRootMotion
 }
 
 
-UScriptStruct* FOPRootMotionSource_JumpForce::GetScriptStruct() const
+UScriptStruct* FRootMotionSourceCFW_JumpForce::GetScriptStruct() const
 {
-	return FOPRootMotionSource_JumpForce::StaticStruct();
+	return FRootMotionSourceCFW_JumpForce::StaticStruct();
 }
 
-FString FOPRootMotionSource_JumpForce::ToSimpleString() const
+FString FRootMotionSourceCFW_JumpForce::ToSimpleString() const
 {
 	return FString::Printf(TEXT("[ID:%u]FRootMotionSource_JumpForce %s"), LocalID, *InstanceName.GetPlainNameString());
 }
 
-void FOPRootMotionSource_JumpForce::AddReferencedObjects(class FReferenceCollector& Collector)
+void FRootMotionSourceCFW_JumpForce::AddReferencedObjects(class FReferenceCollector& Collector)
 {
 	Collector.AddReferencedObject(PathOffsetCurve);
 	Collector.AddReferencedObject(TimeMappingCurve);

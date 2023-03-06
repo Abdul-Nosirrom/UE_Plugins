@@ -2,16 +2,16 @@
 
 
 #include "RootMotionTasks/RootMotionTask_RadialForce.h"
-#include "OPCharacter.h"
-#include "CustomMovementComponent.h"
+#include "RadicalCharacter.h"
+#include "RadicalMovementComponent.h"
 
-inline URootMotionTask_RadialForce* URootMotionTask_RadialForce::ApplyRootMotionRadialForce(AOPCharacter* Owner,
+inline URootMotionTask_RadialForce* URootMotionTask_RadialForce::ApplyRootMotionRadialForce(ARadicalCharacter* Owner,
 	FName TaskInstanceName, FVector Location, AActor* LocationActor, float Strength, float Duration, float Radius,
 	bool bIsPush, bool bIsAdditive, bool bNoZForce, UCurveFloat* StrengthDistanceFalloff, UCurveFloat* StrengthOverTime,
 	bool bUseFixedWorldDirection, FRotator FixedWorldDirection, ERootMotionFinishVelocityMode VelocityOnFinishMode,
 	FVector SetVelocityOnFinish, float ClampVelocityOnFinish)
 {
-	URootMotionTask_RadialForce* MyTask = AOPCharacter::NewRootMotionTask<URootMotionTask_RadialForce>(Owner, TaskInstanceName);
+	URootMotionTask_RadialForce* MyTask = ARadicalCharacter::NewRootMotionTask<URootMotionTask_RadialForce>(Owner, TaskInstanceName);
 
 	MyTask->ForceName = TaskInstanceName;
 	MyTask->Location = Location;
@@ -80,14 +80,14 @@ inline void URootMotionTask_RadialForce::SharedInitAndApply()
 {
 	if (CharacterOwner.Get() && IsValid(CharacterOwner->GetMovementComponent()))
 	{
-		MovementComponent = Cast<UCustomMovementComponent>(CharacterOwner->GetMovementComponent());
+		MovementComponent = Cast<URadicalMovementComponent>(CharacterOwner->GetMovementComponent());
 		StartTime = MovementComponent->GetWorld()->GetTimeSeconds();
 		EndTime = StartTime + Duration;
 
 		if (MovementComponent)
 		{
 			ForceName = ForceName.IsNone() ? FName("AbilityTaskApplyRootMotionRadialForce") : ForceName;
-			TSharedPtr<FOPRootMotionSource_RadialForce> RadialForce = MakeShared<FOPRootMotionSource_RadialForce>();
+			TSharedPtr<FRootMotionSourceCFW_RadialForce> RadialForce = MakeShared<FRootMotionSourceCFW_RadialForce>();
 			RadialForce->InstanceName = ForceName;
 			RadialForce->AccumulateMode = bIsAdditive ? ERootMotionAccumulateMode::Additive : ERootMotionAccumulateMode::Override;
 			RadialForce->Priority = 5;

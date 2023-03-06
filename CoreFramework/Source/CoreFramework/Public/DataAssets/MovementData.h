@@ -7,7 +7,7 @@
 #include "MovementData.generated.h"
 
 /*~~~~~ Forward Declarations ~~~~~*/
-class UCustomMovementComponent;
+class URadicalMovementComponent;
 enum EMovementState;
 
 UENUM(BlueprintType)
@@ -41,9 +41,9 @@ class COREFRAMEWORK_API UMovementData : public UDataAsset
 
 public:
 	UFUNCTION()
-	void CalculateVelocity(UCustomMovementComponent* MovementComponent, float DeltaTime);
+	void CalculateVelocity(URadicalMovementComponent* MovementComponent, float DeltaTime);
 	UFUNCTION()
-	void UpdateRotation(UCustomMovementComponent* MovementComponent, float DeltaTime);
+	void UpdateRotation(URadicalMovementComponent* MovementComponent, float DeltaTime);
 
 protected:
 	static constexpr float MIN_DELTA_TIME = 1e-6;
@@ -146,13 +146,13 @@ protected:
 	void ApplyVelocityBraking(FVector& Velocity, float DeltaTime, float BrakingFriction, float BrakingDeceleration) const;
 	//void UpdateDefaultVelocity()
 	
-	void CalculateDefaultVelocity(UCustomMovementComponent* MovementComponent, float DeltaTime) const;
+	void CalculateDefaultVelocity(URadicalMovementComponent* MovementComponent, float DeltaTime) const;
 
 	FVector GetFallingLateralAcceleration(const FVector& Acceleration, const FVector& Velocity, float DeltaTime) const;
 	
-	FVector ComputeInputAcceleration(UCustomMovementComponent* MovementComponent) const;
+	FVector ComputeInputAcceleration(URadicalMovementComponent* MovementComponent) const;
 
-	void CalculateInputVelocity(const UCustomMovementComponent* MovementComponent, FVector& Velocity, FVector& Acceleration, float Friction, float BrakingDeceleration, float DeltaTime) const;
+	void CalculateInputVelocity(const URadicalMovementComponent* MovementComponent, FVector& Velocity, FVector& Acceleration, float Friction, float BrakingDeceleration, float DeltaTime) const;
 
 	void ApplyGravity(FVector& Velocity, float TerminalLimit, float DeltaTime) const;
 
@@ -190,7 +190,7 @@ protected:
 		return (InAxisRotationRate >= 0.f) ? FMath::Min(InAxisRotationRate * DeltaTime, 360.f) : 360.f;
 	}
 	
-	void PhysicsRotation(UCustomMovementComponent* MovementComponent, float DeltaTime);
+	void PhysicsRotation(URadicalMovementComponent* MovementComponent, float DeltaTime);
 
 	FORCEINLINE bool ShouldRemainVertical() const { return !bOrientToGroundNormal; }
 

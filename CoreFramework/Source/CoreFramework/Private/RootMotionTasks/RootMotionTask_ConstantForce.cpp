@@ -3,18 +3,18 @@
 
 #include "RootMotionTasks/RootMotionTask_ConstantForce.h"
 
-#include "CustomMovementComponent.h"
-#include "OPCharacter.h"
-#include "OPRootMotionSource.h"
+#include "RadicalMovementComponent.h"
+#include "RadicalCharacter.h"
+#include "RootMotionSourceCFW.h"
 
 
-URootMotionTask_ConstantForce* URootMotionTask_ConstantForce::ApplyRootMotionConstantForce(AOPCharacter* Owner,
+URootMotionTask_ConstantForce* URootMotionTask_ConstantForce::ApplyRootMotionConstantForce(ARadicalCharacter* Owner,
 	FName TaskInstanceName, FVector WorldDirection, float Strength, float Duration, bool bIsAdditive,
 	UCurveFloat* StrengthOverTime, ERootMotionFinishVelocityMode VelocityOnFinishMode, FVector SetVelocityOnFinish,
 	float ClampVelocityOnFinish, bool bEnableGravity)
 {
 
-	URootMotionTask_ConstantForce* MyTask = AOPCharacter::NewRootMotionTask<URootMotionTask_ConstantForce>(Owner, TaskInstanceName);
+	URootMotionTask_ConstantForce* MyTask = ARadicalCharacter::NewRootMotionTask<URootMotionTask_ConstantForce>(Owner, TaskInstanceName);
 
 	MyTask->ForceName = TaskInstanceName;
 	MyTask->WorldDirection = WorldDirection.GetSafeNormal();
@@ -77,14 +77,14 @@ void URootMotionTask_ConstantForce::SharedInitAndApply()
 {
 	if (CharacterOwner.IsValid() && IsValid(CharacterOwner->GetCharacterMovement()))
 	{
-		MovementComponent = Cast<UCustomMovementComponent>(CharacterOwner->GetCharacterMovement());
+		MovementComponent = Cast<URadicalMovementComponent>(CharacterOwner->GetCharacterMovement());
 		StartTime = CharacterOwner->GetWorld()->GetTimeSeconds();
 		EndTime = StartTime + Duration;
 
 		if (MovementComponent)
 		{
 			ForceName = ForceName.IsNone() ? FName("AbilityTaskApplyRootMotionConstantForce"): ForceName;
-			TSharedPtr<FOPRootMotionSource_ConstantForce> ConstantForce = MakeShared<FOPRootMotionSource_ConstantForce>();
+			TSharedPtr<FRootMotionSourceCFW_ConstantForce> ConstantForce = MakeShared<FRootMotionSourceCFW_ConstantForce>();
 			ConstantForce->InstanceName = ForceName;
 			ConstantForce->AccumulateMode = bIsAdditive ? ERootMotionAccumulateMode::Additive : ERootMotionAccumulateMode::Override;
 			ConstantForce->Priority = 5;

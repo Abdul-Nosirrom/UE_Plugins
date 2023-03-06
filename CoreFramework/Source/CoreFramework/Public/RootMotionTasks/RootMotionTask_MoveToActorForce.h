@@ -7,8 +7,8 @@
 #include "UObject/Object.h"
 #include "RootMotionTask_MoveToActorForce.generated.h"
 
-class AOPCharacter;
-class UCustomMovementComponent;
+class ARadicalCharacter;
+class URadicalMovementComponent;
 class UCurveFloat;
 class UCurveVector;
 enum EMovementState;
@@ -41,7 +41,7 @@ class COREFRAMEWORK_API URootMotionTask_MoveToActorForce : public URootMotionTas
 
 	/* Apply force to character's movement */
 	UFUNCTION(BlueprintCallable, Category = "Root Motion|Tasks", meta = (BlueprintInternalUseOnly = "TRUE"))
-	static URootMotionTask_MoveToActorForce* ApplyRootMotionMoveToActorForce(AOPCharacter* Owner, FName TaskInstanceName, AActor* TargetActor, FVector TargetLocationOffset, ERootMotionTaskMoveToActorTargetOffsetType OffsetAlignment, float Duration, UCurveFloat* TargetLerpSpeedHorizontal, UCurveFloat* TargetLerpSpeedVertical, bool bSetNewMovementMode, EMovementState MovementMode, bool bRestrictSpeedToExpected, UCurveVector* PathOffsetCurve, UCurveFloat* TimeMappingCurve, ERootMotionFinishVelocityMode VelocityOnFinishMode, FVector SetVelocityOnFinish, float ClampVelocityOnFinish, bool bDisableDestinationReachedInterrupt);
+	static URootMotionTask_MoveToActorForce* ApplyRootMotionMoveToActorForce(ARadicalCharacter* Owner, FName TaskInstanceName, AActor* TargetActor, FVector TargetLocationOffset, ERootMotionTaskMoveToActorTargetOffsetType OffsetAlignment, float Duration, UCurveFloat* TargetLerpSpeedHorizontal, UCurveFloat* TargetLerpSpeedVertical, bool bSetNewMovementMode, EMovementState MovementMode, bool bRestrictSpeedToExpected, UCurveVector* PathOffsetCurve, UCurveFloat* TimeMappingCurve, ERootMotionFinishVelocityMode VelocityOnFinishMode, FVector SetVelocityOnFinish, float ClampVelocityOnFinish, bool bDisableDestinationReachedInterrupt);
 	
 	virtual void TickTask(float DeltaTime) override;
 

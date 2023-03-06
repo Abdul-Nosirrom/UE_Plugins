@@ -6,15 +6,15 @@
 #include "UObject/Object.h"
 #include "RootMotionTask_Base.generated.h"
 
-class AOPCharacter;
-class UCustomMovementComponent;
+class ARadicalCharacter;
+class URadicalMovementComponent;
 enum class ERootMotionFinishVelocityMode : uint8;
 
 /** Base class for specialized root motion attributes */
 UCLASS()
 class COREFRAMEWORK_API URootMotionTask_Base : public UObject, public FTickableGameObject
 {
-	friend class AOPCharacter;
+	friend class ARadicalCharacter;
 	friend class URootMotionTask_MoveToActorForce;
 	friend class URootMotionTask_MoveToForce;
 	friend class URootMotionTask_JumpForce;
@@ -34,7 +34,7 @@ class COREFRAMEWORK_API URootMotionTask_Base : public UObject, public FTickableG
 	// END FTickableGameObject Interface
 	
 public:
-	void InitTask(AOPCharacter* InTaskOwner);
+	void InitTask(ARadicalCharacter* InTaskOwner);
 	
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true"))
 	void ReadyForActivation();
@@ -78,10 +78,10 @@ protected:
 	float FinishClampVelocity;
 
 	UPROPERTY()
-	TWeakObjectPtr<AOPCharacter> CharacterOwner;
+	TWeakObjectPtr<ARadicalCharacter> CharacterOwner;
 	
 	UPROPERTY()
-	TObjectPtr<UCustomMovementComponent> MovementComponent; 
+	TObjectPtr<URadicalMovementComponent> MovementComponent; 
 	
 	uint16 RootMotionSourceID;
 

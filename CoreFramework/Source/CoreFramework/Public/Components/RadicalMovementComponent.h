@@ -4,9 +4,9 @@
 
 #include "CoreMinimal.h"
 #include "MovementData.h"
-#include "OPRootMotionSource.h"
+#include "RootMotionSourceCFW.h"
 #include "GameFramework/PawnMovementComponent.h"
-#include "CustomMovementComponent.generated.h"
+#include "RadicalMovementComponent.generated.h"
 
 /* Profiling */
 DECLARE_STATS_GROUP(TEXT("RadicalMovementComponent_Game"), STATGROUP_RadicalMovementComp, STATCAT_Advanced)
@@ -14,12 +14,12 @@ DECLARE_LOG_CATEGORY_EXTERN(LogRMCMovement, Log, All);
 /* ~~~~~~~~ */
 
 /* Events */
-DECLARE_DYNAMIC_DELEGATE_TwoParams(FCalculateVelocitySignature, UCustomMovementComponent*, MovementComponent, float, DeltaTime);
-DECLARE_DYNAMIC_DELEGATE_TwoParams(FUpdateRotationSignature, UCustomMovementComponent*, MovementComponent, float, DeltaTime);
+DECLARE_DYNAMIC_DELEGATE_TwoParams(FCalculateVelocitySignature, URadicalMovementComponent*, MovementComponent, float, DeltaTime);
+DECLARE_DYNAMIC_DELEGATE_TwoParams(FUpdateRotationSignature, URadicalMovementComponent*, MovementComponent, float, DeltaTime);
 /* ~~~~~~ */
 
 /* Forward Declarations */
-class AOPCharacter;
+class ARadicalCharacter;
 class UMovementData;
 
 //struct FBasedMovementInfo;
@@ -55,15 +55,15 @@ enum EOrientationMode
 #pragma region Structs
 
 /** 
- * Tick function that calls UCustomMovementComponent::PostPhysicsTickComponent
+ * Tick function that calls URadicalMovementComponent::PostPhysicsTickComponent
  **/
 USTRUCT()
-struct COREFRAMEWORK_API FCustomMovementComponentPostPhysicsTickFunction : public FTickFunction
+struct COREFRAMEWORK_API FRadicalMovementComponentPostPhysicsTickFunction : public FTickFunction
 {
 	GENERATED_USTRUCT_BODY()
 
-	/** CustomMovementComponent that is the target of this tick **/
-	class UCustomMovementComponent* Target;
+	/** RadicalMovementComponent that is the target of this tick **/
+	class URadicalMovementComponent* Target;
 
 	/** 
 	 * Abstract function actually execute the tick. 
@@ -76,7 +76,7 @@ struct COREFRAMEWORK_API FCustomMovementComponentPostPhysicsTickFunction : publi
 };
 
 template<>
-struct TStructOpsTypeTraits<FCustomMovementComponentPostPhysicsTickFunction> : public TStructOpsTypeTraitsBase2<FCustomMovementComponentPostPhysicsTickFunction>
+struct TStructOpsTypeTraits<FRadicalMovementComponentPostPhysicsTickFunction> : public TStructOpsTypeTraitsBase2<FRadicalMovementComponentPostPhysicsTickFunction>
 {
 	enum
 	{
@@ -230,16 +230,16 @@ struct FSimulationState
 #pragma endregion Debug & Logging
 
 UCLASS(ClassGroup = "Kinematic Movement", BlueprintType, Blueprintable)
-class COREFRAMEWORK_API UCustomMovementComponent : public UPawnMovementComponent
+class COREFRAMEWORK_API URadicalMovementComponent : public UPawnMovementComponent
 {
 	GENERATED_BODY()
 
 public:
 	// Sets default values for this component's properties
-	UCustomMovementComponent();
+	URadicalMovementComponent();
 
 	UPROPERTY(Transient, DuplicateTransient)
-	TObjectPtr<AOPCharacter> CharacterOwner;
+	TObjectPtr<ARadicalCharacter> CharacterOwner;
 
 public:
 	// BEGIN UActorComponent Interface
@@ -250,9 +250,9 @@ public:
 	// END UActorComponent Interface
 
 	UPROPERTY()
-	FCustomMovementComponentPostPhysicsTickFunction PostPhysicsTickFunction;
+	FRadicalMovementComponentPostPhysicsTickFunction PostPhysicsTickFunction;
 	
-	virtual void PostPhysicsTickComponent(float DeltaTime, FCustomMovementComponentPostPhysicsTickFunction& ThisTickFunction);
+	virtual void PostPhysicsTickComponent(float DeltaTime, FRadicalMovementComponentPostPhysicsTickFunction& ThisTickFunction);
 	
 
 	
@@ -697,7 +697,7 @@ protected:
 public:
 	/// @brief  Root motion source group containing active root motion sources being applied to movement
 	UPROPERTY(Transient)
-	FOPRootMotionSourceGroup CurrentRootMotion;
+	FRootMotionSourceGroupCFW CurrentRootMotion;
 
 protected:
 	UPROPERTY(Category="(Radical Movement): Animation", EditDefaultsOnly)
@@ -735,22 +735,22 @@ public:
 		return RootMotionParams.bHasRootMotion;
 	}
 
-	/// @brief  Checks if any root motion being used is a FOPRootMotionSource
+	/// @brief  Checks if any root motion being used is a FRootMotionSourceCFW
 	/// @return Returns true if we have root motion from any source to use in PerformMovement() physics
 	bool HasRootMotionSources() const;
 
-	/// @brief  Apply a FOPRootMotionSource to current root motion
+	/// @brief  Apply a FRootMotionSourceCFW to current root motion
 	/// @return LocalID for this root motion source
-	uint16 ApplyRootMotionSource(TSharedPtr<FOPRootMotionSource> SourcePtr);
+	uint16 ApplyRootMotionSource(TSharedPtr<FRootMotionSourceCFW> SourcePtr);
 
 	/// @brief  Called during ApplyRootMotionSource call, useful for project-specific alerts for "something is about to be altering our movement"
 	virtual void OnRootMotionSourceBeingApplied(const FRootMotionSource* Source);
 
 	/// @brief  Gets a root motion source from current root motion by name
-	TSharedPtr<FOPRootMotionSource> GetRootMotionSource(FName InstanceName);
+	TSharedPtr<FRootMotionSourceCFW> GetRootMotionSource(FName InstanceName);
 
 	/// @brief  Gets a root motion source from current root motion by ID
-	TSharedPtr<FOPRootMotionSource> GetRootMotionSourceByID(uint16 RootMotionSourceID);
+	TSharedPtr<FRootMotionSourceCFW> GetRootMotionSourceByID(uint16 RootMotionSourceID);
 
 	/// @brief  Remove a RootMotionSource from current root motion by name
 	void RemoveRootMotionSource(FName InstanceName);

@@ -7,8 +7,8 @@
 #include "UObject/Object.h"
 #include "RootMotionTask_MoveToForce.generated.h"
 
-class UCustomMovementComponent;
-class AOPCharacter;
+class URadicalMovementComponent;
+class ARadicalCharacter;
 class UCurveVector;
 enum class ERootMotionFinishVelocityMode : uint8;
 enum EMovementState;
@@ -29,7 +29,7 @@ class COREFRAMEWORK_API URootMotionTask_MoveToForce : public URootMotionTask_Bas
 
 	/** Apply force to character's movement */
 	UFUNCTION(BlueprintCallable, Category = "Root Motion|Tasks", meta = (BlueprintInternalUseOnly = "TRUE"))
-	static URootMotionTask_MoveToForce* ApplyRootMotionMoveToForce(AOPCharacter* Owner, FName TaskInstanceName, FVector TargetLocation, float Duration, bool bSetNewMovementMode, EMovementState MovementMode, bool bRestrictSpeedToExpected, UCurveVector* PathOffsetCurve, ERootMotionFinishVelocityMode VelocityOnFinishMode, FVector SetVelocityOnFinish, float ClampVelocityOnFinish);
+	static URootMotionTask_MoveToForce* ApplyRootMotionMoveToForce(ARadicalCharacter* Owner, FName TaskInstanceName, FVector TargetLocation, float Duration, bool bSetNewMovementMode, EMovementState MovementMode, bool bRestrictSpeedToExpected, UCurveVector* PathOffsetCurve, ERootMotionFinishVelocityMode VelocityOnFinishMode, FVector SetVelocityOnFinish, float ClampVelocityOnFinish);
 
 	/** Tick function for this task, if bTickingTask == true */
 	virtual void TickTask(float DeltaTime) override;

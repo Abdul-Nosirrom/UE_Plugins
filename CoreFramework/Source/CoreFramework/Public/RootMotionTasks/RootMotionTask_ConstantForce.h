@@ -25,7 +25,7 @@ class COREFRAMEWORK_API URootMotionTask_ConstantForce : public URootMotionTask_B
 	UFUNCTION(BlueprintCallable, Category = "Root Motion|Tasks", meta = (BlueprintInternalUseOnly = "TRUE"))
 	static URootMotionTask_ConstantForce* ApplyRootMotionConstantForce
 	(
-		AOPCharacter* Owner, 
+		ARadicalCharacter* Owner, 
 		FName TaskInstanceName, 
 		FVector WorldDirection, 
 		float Strength, 

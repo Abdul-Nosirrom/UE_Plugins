@@ -2,17 +2,17 @@
 
 
 #include "RootMotionTasks/RootMotionTask_MoveToForce.h"
-#include "CustomMovementComponent.h"
-#include "OPCharacter.h"
-#include "OPRootMotionSource.h"
+#include "RadicalMovementComponent.h"
+#include "RadicalCharacter.h"
+#include "RootMotionSourceCFW.h"
 
-URootMotionTask_MoveToForce* URootMotionTask_MoveToForce::ApplyRootMotionMoveToForce(AOPCharacter* Owner,
+URootMotionTask_MoveToForce* URootMotionTask_MoveToForce::ApplyRootMotionMoveToForce(ARadicalCharacter* Owner,
 	FName TaskInstanceName, FVector TargetLocation, float Duration, bool bSetNewMovementMode,
 	EMovementState MovementMode, bool bRestrictSpeedToExpected, UCurveVector* PathOffsetCurve,
 	ERootMotionFinishVelocityMode VelocityOnFinishMode, FVector SetVelocityOnFinish, float ClampVelocityOnFinish)
 {
 
-	URootMotionTask_MoveToForce* MyTask = AOPCharacter::NewRootMotionTask<URootMotionTask_MoveToForce>(Owner);
+	URootMotionTask_MoveToForce* MyTask = ARadicalCharacter::NewRootMotionTask<URootMotionTask_MoveToForce>(Owner);
 
 	MyTask->ForceName = TaskInstanceName;
 	MyTask->TargetLocation = TargetLocation;
@@ -96,7 +96,7 @@ void URootMotionTask_MoveToForce::SharedInitAndApply()
 {
 	if (CharacterOwner.Get() && CharacterOwner->GetMovementComponent())
 	{
-		MovementComponent = Cast<UCustomMovementComponent>(CharacterOwner->GetMovementComponent());
+		MovementComponent = Cast<URadicalMovementComponent>(CharacterOwner->GetMovementComponent());
 		StartTime = MovementComponent->GetWorld()->GetTimeSeconds();
 		EndTime = StartTime + Duration;
 
@@ -109,7 +109,7 @@ void URootMotionTask_MoveToForce::SharedInitAndApply()
 			}
 
 			ForceName = ForceName.IsNone() ? FName("AbilityTaskApplyRootMotionMoveToForce") : ForceName;
-			TSharedPtr<FOPRootMotionSource_MoveToForce> MoveToForce = MakeShared<FOPRootMotionSource_MoveToForce>();
+			TSharedPtr<FRootMotionSourceCFW_MoveToForce> MoveToForce = MakeShared<FRootMotionSourceCFW_MoveToForce>();
 			MoveToForce->InstanceName = ForceName;
 			MoveToForce->AccumulateMode = ERootMotionAccumulateMode::Override;
 			MoveToForce->Settings.SetFlag(ERootMotionSourceSettingsFlags::UseSensitiveLiftoffCheck);

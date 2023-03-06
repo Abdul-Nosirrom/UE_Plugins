@@ -7,7 +7,7 @@
 #include "UObject/Object.h"
 #include "RootMotionTask_JumpForce.generated.h"
 
-class UCustomMovementComponent;
+class URadicalMovementComponent;
 class UCurveFloat;
 class UCurveVector;
 class AActor;
@@ -36,7 +36,7 @@ class COREFRAMEWORK_API URootMotionTask_JumpForce : public URootMotionTask_Base
 
 	/** Apply force to character's movement */
 	UFUNCTION(BlueprintCallable, Category = "Root Motion|Tasks", meta = (BlueprintInternalUseOnly = "TRUE"))
-	static URootMotionTask_JumpForce* ApplyRootMotionJumpForce(AOPCharacter* Owner, FName TaskInstanceName, FRotator Rotation, float Distance, float Height, float Duration, float MinimumLandedTriggerTime,
+	static URootMotionTask_JumpForce* ApplyRootMotionJumpForce(ARadicalCharacter* Owner, FName TaskInstanceName, FRotator Rotation, float Distance, float Height, float Duration, float MinimumLandedTriggerTime,
 		bool bFinishOnLanded, ERootMotionFinishVelocityMode VelocityOnFinishMode, FVector SetVelocityOnFinish, float ClampVelocityOnFinish, UCurveVector* PathOffsetCurve, UCurveFloat* TimeMappingCurve);
 
 	virtual void Activate() override;
