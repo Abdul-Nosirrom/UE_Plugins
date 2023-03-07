@@ -137,6 +137,12 @@ public:
 		return bBlockingHit && bWalkableFloor;
 	}
 
+	void SetWalkable(bool bIsWalkable)
+	{
+		bWalkableFloor = bIsWalkable;
+		bUnstableFloor = !bIsWalkable && bBlockingHit;
+	}
+
 	void Clear()
 	{
 		bBlockingHit = false;
@@ -263,6 +269,7 @@ public:
 	virtual void SetUpdatedComponent(USceneComponent* NewUpdatedComponent) override;
 	FORCEINLINE virtual bool IsMovingOnGround() const override { return PhysicsState == STATE_Grounded; }
 	FORCEINLINE virtual bool IsFalling() const override { return PhysicsState == STATE_Falling; }
+	FORCEINLINE virtual float GetGravityZ() const override { return MovementData ? MovementData->GravityScale * Super::GetGravityZ() : Super::GetGravityZ(); };
 	virtual void AddRadialForce(const FVector& Origin, float Radius, float Strength, ERadialImpulseFalloff Falloff) override;
 	virtual void AddRadialImpulse(const FVector& Origin, float Radius, float Strength, ERadialImpulseFalloff Falloff, bool bVelChange) override;
 	virtual void StopActiveMovement() override;			// Check CMC

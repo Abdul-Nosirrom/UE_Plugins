@@ -423,10 +423,7 @@ void URadicalMovementComponent::OnMovementStateChanged(EMovementState PreviousMo
 	else if (PhysicsState == STATE_Falling)
 	{
 		
-		if (!CurrentFloor.bBlockingHit)
-		{
-			CurrentFloor.Clear();
-		}
+		CurrentFloor.Clear();
 
 		if (!CharacterOwner->HasBasedMovementOverride())
 		{
@@ -999,7 +996,7 @@ void URadicalMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteratio
 		/* Perform the move */
 		FHitResult Hit(1.f);
 		SafeMoveUpdatedComponent(Adjusted, PawnRotation, true, Hit);
-
+		
 		/* Account for time of the move */
 		float LastMoveTimeSlice = IterTick;
 		float SubTimeTickRemaining = IterTick * (1.f - Hit.Time);
@@ -1030,6 +1027,11 @@ void URadicalMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteratio
 						RemainingTime += SubTimeTickRemaining;
 						ProcessLanded(Hit, RemainingTime, Iterations); // Swap to grounded move update
 						return;
+					}
+					else
+					{
+						CurrentFloor.bBlockingHit = true;
+						CurrentFloor.bUnstableFloor = true;
 					}
 				}
 
@@ -1123,6 +1125,12 @@ void URadicalMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteratio
 					}
 				}
 			} // Not a landing spot, solve for hit adjustment
+		}
+		else
+		{
+			/* For unstable floors NOTE: A shit approach but it works (UnstableFloor may be checked without being properly valid) */
+			CurrentFloor.bBlockingHit = false;
+			CurrentFloor.bUnstableFloor = false;
 		}
 	}
 }
@@ -1502,6 +1510,7 @@ void URadicalMovementComponent::AdjustFloorHeight()
 			{
 				CurrentFloor.SetFromSweep(AdjustHit, CurrentFloor.FloorDist, true);
 			}
+			else CurrentFloor.bUnstableFloor = true;
 		} // Above MAX_FLOOR_DIST, could be a new floor value so we set that if its walkable
 
 		/* Don't recalculate velocity based on snapping, also avoid if we moved out of penetration */
@@ -1619,7 +1628,7 @@ void URadicalMovementComponent::ComputeFloorDist(const FVector& CapsuleLocation,
 			{
 				if (SweepResult <= SweepDistance)
 				{
-					OutFloorResult.bWalkableFloor = true;
+					OutFloorResult.SetWalkable(true);
 					return;
 				}
 			}
@@ -1659,6 +1668,7 @@ void URadicalMovementComponent::ComputeFloorDist(const FVector& CapsuleLocation,
 				const float LineResult = FMath::Max(-MaxPenetrationAdjust, Hit.Time * TraceDist - ShrinkHeight);
 
 				OutFloorResult.bBlockingHit = true;
+				OutFloorResult.bUnstableFloor = true; // NOTE: SetFromLineTrace will set it to unstable otherwise
 				if (LineResult <= LineDistance && IsFloorStable(Hit))
 				{
 					OutFloorResult.SetFromLineTrace(Hit, OutFloorResult.FloorDist, LineResult, true);
@@ -1669,7 +1679,7 @@ void URadicalMovementComponent::ComputeFloorDist(const FVector& CapsuleLocation,
 	}
 
 	/* If we're here, that means no hits were acceptable */
-	OutFloorResult.bWalkableFloor = false;
+	OutFloorResult.SetWalkable(false);
 }
 
 // TODO
@@ -1775,7 +1785,7 @@ void URadicalMovementComponent::FindFloor(const FVector& CapsuleLocation, FGroun
 			else
 			{
 				/* Had no floor or an unwalkable floor and couldn't perch there. So invalidate it to move us to falling */
-				OutFloorResult.bWalkableFloor = false;
+				OutFloorResult.SetWalkable(false);
 			}
 		}
 	}
@@ -1880,7 +1890,8 @@ bool URadicalMovementComponent::ShouldCheckForValidLandingSpot(const FHitResult&
 	 * In this case the normal will not equal the impact normal and a downward sweep may find a walkable surface on top of the edge
 	 */
 	const FVector PawnUp = GetUpOrientation(MODE_PawnUp); // DEBUG: Pawn up should be the right thing here
-	if ((Hit.Normal | PawnUp) > UE_KINDA_SMALL_NUMBER && !Hit.Normal.Equals(Hit.ImpactNormal))
+
+	if ((Hit.Normal | PawnUp) > UE_KINDA_SMALL_NUMBER)// && !Hit.Normal.Equals(Hit.ImpactNormal)) BUG: Temporary removed that check to get unstable floors working w/out an extra FindFloor call, will it break anything?
 	{
 		const FVector PawnLocation = UpdatedComponent->GetComponentLocation();
 		if (IsWithinEdgeTolerance(PawnLocation, Hit.ImpactPoint, CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleRadius()))
@@ -2244,7 +2255,7 @@ bool URadicalMovementComponent::ComputePerchResult(const float TestRadius, const
 	else if (InHitAboveBase + OutPerchFloorResult.FloorDist > InMaxFloorDist)
 	{
 		/* Hit something past max distance */
-		OutPerchFloorResult.bWalkableFloor = false;
+		OutPerchFloorResult.SetWalkable(false);
 		return false;
 	}
 	
@@ -3335,6 +3346,14 @@ void URadicalMovementComponent::DisplayDebug(UCanvas* Canvas, const FDebugDispla
 
 	// Movement Information
 	T = FString::Printf(TEXT("Movement State: %s"), (PhysicsState == STATE_Grounded ? TEXT("Grounded") : TEXT("Aerial")));
+	DisplayDebugManager.DrawString(T);
+
+	DisplayDebugManager.SetDrawColor(CurrentFloor.bUnstableFloor ? FColor::Red : FColor::Green);
+	T = FString::Printf(TEXT("CurrentFloor.bUnstableFloor: %s"), BOOL2STR(CurrentFloor.bUnstableFloor));
+	DisplayDebugManager.DrawString(T);
+
+	DisplayDebugManager.SetDrawColor((!CurrentFloor.bBlockingHit ) ? FColor::Red : FColor::Green);
+	T = FString::Printf(TEXT("CurrentFloor.bBlockingHit: %s"), BOOL2STR((CurrentFloor.bBlockingHit)));
 	DisplayDebugManager.DrawString(T);
 
 	DisplayDebugManager.SetDrawColor(FColor::White);

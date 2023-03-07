@@ -80,7 +80,7 @@ public:
 	FORCEINLINE FVector GetGravityDir() const { return Gravity.GetSafeNormal(); }
 
 	UFUNCTION(Category="Shared Movement Data", BlueprintCallable)
-	FORCEINLINE FVector GetGravity() const { return Gravity.GetSafeNormal() * GravityScale; }
+	FORCEINLINE FVector GetGravity() const { return Gravity.GetSafeNormal() * GravityZ; }
 
 #pragma region ACCELERATION_METHODS: Default UE
 protected:

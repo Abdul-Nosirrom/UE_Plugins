@@ -231,7 +231,7 @@ void UMovementData::CalculateInputVelocity(const URadicalMovementComponent* Move
 
 void UMovementData::ApplyGravity(FVector& Velocity, float TerminalLimit, float DeltaTime) const
 {
-	Velocity += GetGravity() * GravityZ * DeltaTime;
+	Velocity += GetGravity() * DeltaTime;
 	TerminalLimit = FMath::Abs(TerminalLimit);
 
 	if (Velocity.SizeSquared() > FMath::Square(TerminalLimit))
@@ -249,7 +249,7 @@ void UMovementData::PhysicsRotation(URadicalMovementComponent* MovementComponent
 	// If orient to ground, just snap for now
 	if (!ShouldRemainVertical())
 	{
-		if (!MovementComponent->CurrentFloor.bBlockingHit) return;
+		if (!MovementComponent->CurrentFloor.bWalkableFloor) return;
 
 		const FVector Normal = MovementComponent->CurrentFloor.HitResult.Normal;
 		const FVector Forward = MovementComponent->GetVelocity().IsZero() ? MovementComponent->UpdatedComponent->GetForwardVector() : MovementComponent->GetVelocity().GetSafeNormal();
