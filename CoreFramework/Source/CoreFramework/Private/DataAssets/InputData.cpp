@@ -3,6 +3,7 @@
 
 #include "InputData.h"
 
+#include "Debug/CFW_Log.h"
 #include "Subsystems/InputBufferSubsystem.h"
 
 void UInputBufferMap::GenerateInputActions()
@@ -120,7 +121,10 @@ bool UMotionAction::IsAlignedWithFacingDirection(const FVector2D& AxisInput) con
 
 EMotionCommandDirection UMotionAction::GetAxisDirection(const FVector2D& AxisInput, const FVector& ProcessedInput, const FVector& PlayerForward, const FVector& PlayerRight) const
 {
-	if (AxisInput.IsZero()) return EMotionCommandDirection::NEUTRAL;
+	if (AxisInput.IsZero())
+	{
+		return EMotionCommandDirection::NEUTRAL;
+	}
 	
 	FVector ProperAxisInput(AxisInput.X, AxisInput.Y, 0);
 	FVector EvaluationDirection(0, 1, 0);

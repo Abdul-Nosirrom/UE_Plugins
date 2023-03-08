@@ -80,12 +80,14 @@ void ATOPCharacter::SetupPlayerInputComponent(class UInputComponent* PlayerInput
 				Subsystem->AddMappingContext(DefaultInputBufferMapping, EnhancedInputComponent);
 
 				// Bind Input Buffer Shit
-				Subsystem->InputPressedDelegate.AddDynamic(this, &ATOPCharacter::InputTriggered);
+				//Subsystem->InputPressedDelegate.AddDynamic(this, &ATOPCharacter::InputTriggered);
 				//Subsystem->DirectionalAndButtonDelegate.AddDynamic(this, &ATOPCharacter::DirectionalRegistered);
 				//Subsystem->DirectionalInputRegisteredDelegate.AddDynamic(this, &ATOPCharacter::DirectionalRegistered);
 				//Subsystem->InputPressedDelegate.AddUFunction(this, &ATOPCharacter::InputTriggered);
 				//Subsystem->InputPressedDelegate.Add()
-				Subsystem->InputReleasedDelegate.AddDynamic(this, &ATOPCharacter::InputReleased);
+				//Subsystem->InputReleasedDelegate.AddDynamic(this, &ATOPCharacter::InputReleased);
+				Event.BindDynamic(this, &ATOPCharacter::Jump);
+				Subsystem->BindAction(Event, JumpAction, TRIGGER_Press, false);
 			}
 		}
 		//Jumping
@@ -107,7 +109,7 @@ void ATOPCharacter::InputTriggered(const UInputAction* InputAction, const FInput
 {
 	if (InputAction == JumpAction)
 	{
-		Jump(Value);
+		//Jump(Value);
 	}
 	else
 	{
@@ -116,13 +118,13 @@ void ATOPCharacter::InputTriggered(const UInputAction* InputAction, const FInput
 
 void ATOPCharacter::DirectionalRegistered(const UMotionAction* Motion)
 {
-	if (DirectionalInput == Motion) Jump(FInputActionValue());
+
 }
 
 
 void ATOPCharacter::InputReleased(const UInputAction* InputAction)
 {
-	if (InputAction == JumpAction) StopJumping(FInputActionValue());
+
 }
 
 
@@ -162,14 +164,14 @@ void ATOPCharacter::Look(const FInputActionValue& Value)
 	}
 }
 
-void ATOPCharacter::Jump(const FInputActionValue& Value)
+void ATOPCharacter::Jump(const FInputActionValue& Value, float ElapsedTime)
 {
 	if (GetMovementComponent()->IsMovingOnGround())
 	{
-		APlayerController* PC = Cast<APlayerController>(GetController());
-		ULocalPlayer::GetSubsystem<UInputBufferSubsystem>(PC->GetLocalPlayer())->ConsumeButtonInput(JumpAction);
-		OnJumpedDelegate.Broadcast();
-		LaunchCharacter(FVector(0,0, JumpZVelocity), false, true);
+		//APlayerController* PC = Cast<APlayerController>(GetController());
+		//ULocalPlayer::GetSubsystem<UInputBufferSubsystem>(PC->GetLocalPlayer())->ConsumeButtonInput(JumpAction);
+		//OnJumpedDelegate.Broadcast();
+		//LaunchCharacter(FVector(0,0, JumpZVelocity), false, true);
 	}
 }
 

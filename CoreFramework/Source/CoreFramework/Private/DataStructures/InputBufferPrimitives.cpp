@@ -35,6 +35,7 @@ void FBufferFrame::CopyFrameState(FBufferFrame& FrameState)
 		InputsFrameState[ID].Value = FrameState.InputsFrameState[ID].Value;
 		InputsFrameState[ID].HoldTime = FrameState.InputsFrameState[ID].HoldTime;
 		InputsFrameState[ID].bUsed = FrameState.InputsFrameState[ID].bUsed;
+		InputsFrameState[ID].bReleaseFlagged = false;
 	}
 }
 
@@ -50,8 +51,8 @@ void FInputFrameState::ResolveCommand()
 		}
 		else
 		{
-			bUsed = false; // NOTE: Let bUsed carry over from previous frames (to invoke valid Holds), it's reset when the input is released (if never consumed that carries over so its fine)
-			ReleaseHold();
+			//bUsed = false; // NOTE: Let bUsed carry over from previous frames (to invoke valid Holds), it's reset when the input is released (if never consumed that carries over so its fine)
+			ReleaseHold(UInputBufferSubsystem::RawValueContainer[ID].GetValue());
 		}
 	}
 }
@@ -63,7 +64,7 @@ bool FInputFrameState::CanInvokePress() const
 
 bool FInputFrameState::CanInvokeHold() const
 {
-	return (HoldTime > 1 && bUsed);
+	return (HoldTime > 1 && bUsed); 
 }
 
 bool FInputFrameState::CanInvokeRelease() const
@@ -72,22 +73,29 @@ bool FInputFrameState::CanInvokeRelease() const
 }
 
 
-void FInputFrameState::HoldUp(FInputActionValue InValue)
+void FInputFrameState::HoldUp(const FInputActionValue InValue)
 {
 	Value = InValue;
 
-	if (HoldTime < 0) HoldTime = 1;
+	if (HoldTime < 0)
+	{
+		HoldTime = 1;
+		bUsed = false;
+	}
 	else HoldTime += 1;
 }
 
-void FInputFrameState::ReleaseHold()
+void FInputFrameState::ReleaseHold(const FInputActionValue InValue)
 {
-	Value = 0;
+	Value = InValue;
 	
 	if (HoldTime > 0)
 	{
 		HoldTime = -1;
+	}
+	else
+	{
+		HoldTime = 0;
 		bUsed = false;
 	}
-	else HoldTime = 0;
 }

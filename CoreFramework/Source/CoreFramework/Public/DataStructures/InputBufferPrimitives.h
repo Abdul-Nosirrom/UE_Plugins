@@ -4,19 +4,32 @@
 #include "CoreMinimal.h"
 #include "InputBufferPrimitives.generated.h"
 
+/// @brief	State of a given input within the buffer window
+///			- Press: Corresponds to an input in the buffer which hasn't been consumed and its first frame is in the window
+///			- Hold: Corresponds to an input press that's been consumed, frame value is the most recent
+///			- Released: Corresponds to an input press that's been consumed, frame value is that in which it was released
 USTRUCT()
-struct COREFRAMEWORK_API FBufferState
+struct COREFRAMEWORK_API FBufferState 
 {
 	GENERATED_BODY()
 
+	
 protected:
 	int8 FrameVal = -1;
 	float HoldTime = 0.f;
 	bool bPressInstanceConsumed = false;
+	FInputActionValue AssociatedVal;
 
 public:
 	FBufferState() : FrameVal(-1), HoldTime(0), bPressInstanceConsumed(false) {}
-	FBufferState(uint8 InFrameVal, float InHoldTime, bool bConsumed) : FrameVal(InFrameVal), HoldTime(InHoldTime), bPressInstanceConsumed(bConsumed) {}
+	//FBufferState(uint8 InFrameVal, float InHoldTime, bool bConsumed) : FrameVal(InFrameVal), HoldTime(InHoldTime), bPressInstanceConsumed(bConsumed) {}
+
+	void SetValues(int8 InFrameVal, float InHoldTime, bool bConsumed)
+	{
+		FrameVal = InFrameVal;
+		HoldTime = InHoldTime;
+		bPressInstanceConsumed = bConsumed;
+	}
 	
 	void Reset()
 	{
@@ -24,11 +37,15 @@ public:
 		HoldTime = 0.f;
 		bPressInstanceConsumed = false;
 	};
-	uint8 GetAssociatedFrame() const { return FrameVal; }
+public:
+	int8 GetAssociatedFrame() const { return FrameVal; }
+	float GetHoldTime() const { return HoldTime; } // NOTE: This is in seconds, we multiply w/ TICK_INTERVAL on construction
+	void SetActionValue(const FInputActionValue InValue) { AssociatedVal = InValue; }
+	bool IsConsumed() const { return bPressInstanceConsumed; }
 	
-	bool IsPress() const { return FrameVal > 0 && HoldTime == 0 && bPressInstanceConsumed == false; }
-	bool IsHold() const { return FrameVal > 0 && HoldTime > 0 && bPressInstanceConsumed == true; }
-	bool IsRelase() const { return FrameVal > 0 && HoldTime == 0 && bPressInstanceConsumed == true; }
+	bool IsPress() const { return FrameVal >= 0 && HoldTime == 0 && bPressInstanceConsumed == false; }
+	bool IsHold() const { return FrameVal >= 0 && HoldTime > 0 && bPressInstanceConsumed == true; }
+	bool IsRelease() const { return FrameVal >= 0 && HoldTime == 0 && bPressInstanceConsumed == true; }
 };
 
 /* Wrapper for incoming input values to later be processed by FInputFrameState */
@@ -38,8 +55,10 @@ struct COREFRAMEWORK_API FRawInputValue
 	GENERATED_BODY()
 	
 protected:
+	UPROPERTY(Transient)
 	FInputActionValue InputValue;
 
+	UPROPERTY(Transient)
 	float ElapsedTriggeredTime = 0.f;
 
 public:
@@ -55,6 +74,39 @@ public:
 	bool GetBoolValue() const { return InputValue.Get<bool>(); }
 	FVector2D GetVectorValue() const { return InputValue.Get<FVector2D>(); }
 	float GetTriggeredTime() const { return ElapsedTriggeredTime; }
+};
+
+/// @brief	Container to hold two frame states to account for a sequence of the same action
+///			NOTE: If any input is actually registered, the older frame is guaranteed to be valid but not the newer frame
+///			(NewerState is only checked whenever there's a binding for Action Sequence where both actions are of the same input)
+USTRUCT()
+struct COREFRAMEWORK_API FBufferStateTuple
+{
+	GENERATED_BODY()
+
+	UPROPERTY(Transient)
+	FBufferState OlderState;
+	UPROPERTY(Transient)
+	FBufferState NewerState;
+
+	FBufferStateTuple()
+	{
+		OlderState = FBufferState();
+		NewerState = FBufferState();
+	}
+
+	void SetFrameStateValues(bool bOlderFrame, int8 InFrameVal, float InHoldTime, bool bConsumed) 
+	{
+		bOlderFrame ? OlderState.SetValues(InFrameVal, InHoldTime, bConsumed) : NewerState.SetValues(InFrameVal, InHoldTime, bConsumed);
+	}
+
+	void ResetAll()
+	{
+		OlderState.Reset();
+		NewerState.Reset();
+	}
+
+	bool IsEitherPress() const { return OlderState.IsPress() || NewerState.IsPress(); }
 };
 
 /* Struct defining the state of a given input in a frame, whether its been used, being held, and so on  */
@@ -77,6 +129,9 @@ public:
 	/// @brief	True if the input has been consumed already and invalid for further use.
 	bool bUsed{false};
 
+	/// @brief  Used to keep track of a release event being invoked so it doesnt linger in the buffer
+	bool bReleaseFlagged{false};
+
 	float DebugTime{0};
 public:
 	FInputFrameState() {};
@@ -87,10 +142,10 @@ public:
 
 	/// @brief Called when the input is being held
 	/// @param InValue Current value of the input in seconds
-	void HoldUp(FInputActionValue InValue);
+	void HoldUp(const FInputActionValue InValue);
 	
 	/// @brief Called when the assigned input has been released or has not been registered
-	void ReleaseHold();
+	void ReleaseHold(const FInputActionValue InValue);
 
 	/// @brief  Returns true if the current frame state has not been used and is the first of its input registered to the buffer
 	///			(e.g HoldTime == 1)

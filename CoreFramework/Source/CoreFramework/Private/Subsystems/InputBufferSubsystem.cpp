@@ -17,7 +17,7 @@ TMap<FName, FRawInputValue> UInputBufferSubsystem::RawValueContainer;
 void UInputBufferSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
-
+	
 	bInitialized = false;
 	ElapsedTime = 0;
 }
@@ -95,7 +95,7 @@ void UInputBufferSubsystem::InitializeInputBufferData()
 {
 	bInitialized = true;
 	InputBuffer = TBufferContainer<FBufferFrame>(BUFFER_SIZE);
-
+	
 	/* Populate the buffer */
 	for (int i = 0; i < BUFFER_SIZE; i++)
 	{
@@ -109,7 +109,7 @@ void UInputBufferSubsystem::InitializeInputBufferData()
 	for (auto ID : InputMap->GetActionIDs())
 	{
 		IB_FLog(Display, "[%s] - Action Added To Buffer", *ID.ToString())
-		ButtonInputValidFrame.Add(ID, FBufferState());
+		ButtonInputValidFrame.Add(ID, FBufferStateTuple());
 	}
 
 	DirectionalInputValidFrame.Empty();
@@ -149,24 +149,28 @@ void UInputBufferSubsystem::UpdateBuffer()
 	/* Store the frame value in which each action input can be used */
 	for (const auto InputID : InputMap->GetActionIDs())
 	{
-		ButtonInputValidFrame[InputID].Reset();
-		
-		for (int frame = 0; frame < BUFFER_SIZE; frame++) // Iterating From Newest To Oldest Input (Most Valid Oldest Input Takes Prescedence)
-		{
-			const auto FrameState = InputBuffer[frame].InputsFrameState[InputID];
+		ButtonInputValidFrame[InputID].ResetAll();
+		bool bOnOlderState = true;
 
-			/* Set the button state to the frame it can be used */
-			if (FrameState.CanInvokePress()) // This input has a valid hold
+		// We fill out the "Old" input buffer state until we encounter a second valid input, then copy the old into the new and fill out the old
+		/* Loop through all buffer frames in order of newest to oldest */
+		for (int frame = BUTTON_BUFFER_SIZE - 1; frame >= 0; frame--)
+		{
+			auto FrameState = InputBuffer[frame].InputsFrameState[InputID];
+
+			/* Evaluate the frame state of the given input */
+			if (FrameState.CanInvokePress())
 			{
-				ButtonInputValidFrame[InputID] = FBufferState(frame, 0, FrameState.bUsed);
+				ButtonInputValidFrame[InputID].SetFrameStateValues(bOnOlderState, frame, 0, false);
+				bOnOlderState = false;
 			}
-			else if (FrameState.CanInvokeHold()) // This input has a valid hold
+			if (FrameState.CanInvokeHold())
 			{
-				ButtonInputValidFrame[InputID] = FBufferState(frame, FrameState.HoldTime * TICK_INTERVAL, FrameState.bUsed);
+				ButtonInputValidFrame[InputID].SetFrameStateValues(bOnOlderState, frame, RawValueContainer[InputID].GetTriggeredTime(), true); 
 			}
-			else if (FrameState.CanInvokeRelease()) // This input has a valid release
+			if (FrameState.CanInvokeRelease())
 			{
-				ButtonInputValidFrame[InputID] = FBufferState(frame, 0, FrameState.bUsed);
+				ButtonInputValidFrame[InputID].SetFrameStateValues(bOnOlderState, frame, 0, true);
 			}
 		}
 	}
@@ -181,7 +185,7 @@ void UInputBufferSubsystem::UpdateBuffer()
 		
 		DirectionalInputValidFrame[InputID] = -1;
 		DirectionalInput->Reset(); // Resets transient values that are to be checked during the buffer window
-
+		
 		for (int frame = BUFFER_SIZE-1; frame >= 0; frame--) // Iterating From Oldest To Newest (To Check Sequence Order)
 		{
 			const FVector2D DirectionInputVector = InputBuffer[frame].InputsFrameState[DirectionInputAxisID].Value.Get<FVector2D>();
@@ -190,65 +194,198 @@ void UInputBufferSubsystem::UpdateBuffer()
 			
 			if (DirectionalInput->CheckMotionDirection(DirectionInputVector, ProcessedInputVector, PlayerForward, PlayerRight))
 			{
-				DirectionalInputValidFrame[InputID] = frame; // Will usually be zero, the frame in which the input was satisfied
+				DirectionalInputValidFrame[InputID] = frame; 
+				break; // Break out of inner loop otherwise the frame value won't represent the frame in which the input is registered and will always default to 0 if directional was satisfied
 			}
 		}
 	}
 }
 
-
 void UInputBufferSubsystem::EvaluateEvents()
 {
 	SCOPE_CYCLE_COUNTER(STAT_EvalEvents)
-	
-	/* Invoke Action Events */
-	for (auto Action : InputMap->GetInputActions())
+	static int Calls = 0;
+	// NOTE: Consuming has possible overlap w/ ActionEvent if SEQUENCE_ButtonFirst
+	/* Evaluate Directional + Action Events */
+	for (auto DirActSeqBinding : DirectionAndActionDelegates)
 	{
-		const FName ActionID = FName(Action->ActionDescription.ToString());
-		const float HoldThreshold = 0.f;
-
-		// Or could consolidate it into 1 event and have an Enum differentiate it?
-
-		const bool bPressed = ButtonInputValidFrame[ActionID].IsPress();
-		const bool bHeld = ButtonInputValidFrame[ActionID].IsHold();
-		const bool bReleased = ButtonInputValidFrame[ActionID].IsRelase();
-
-		if (bPressed)
+		// If no binding for the delegate, skip and delete
+		if (!DirActSeqBinding.Key.IsBound())
 		{
-			InputPressedDelegate.Broadcast(Action, FInputActionValue());
+			IB_FLog(Error, "Delegate In Action Bindings Not Bound [%s]", *DirActSeqBinding.Key.GetFunctionName().ToString());
+			DirectionAndActionDelegates.Remove(DirActSeqBinding.Key);
+			continue;
 		}
-		//if (bHeld)
-		//{
-		//	float TimeHeld = 0.f;
-			//InputHeldDelegateSignature.Broadcast(Action.Action, TimeHeld);
-		//}
-		if (bReleased)
+		
+		if (ButtonInputValidFrame.Contains(DirActSeqBinding.Value.InputAction) && DirectionalInputValidFrame.Contains(DirActSeqBinding.Value.DirectionalAction))
 		{
-			InputReleasedDelegate.Broadcast(Action);
+			const auto ActionState = ButtonInputValidFrame[DirActSeqBinding.Value.InputAction].OlderState;
+			const auto DirectionalFrame = DirectionalInputValidFrame[DirActSeqBinding.Value.DirectionalAction];
+			
+			if (ActionState.IsPress() && DirectionalFrame > 0)
+			{
+				// Skip if order matters and first action is more recent than second
+				bool bInvokeEvent = true;
+				switch (DirActSeqBinding.Value.SequenceOrder)
+				{
+					case SEQUENCE_None:
+						break;
+					case SEQUENCE_ButtonFirst:
+						bInvokeEvent = ActionState.GetAssociatedFrame() >= DirectionalFrame;
+						break;
+					case SEQUENCE_DirectionalFirst:
+						bInvokeEvent = ActionState.GetAssociatedFrame() <= DirectionalFrame;
+						break;
+					default:;
+				}
+		
+				// Otherwise invoke event and maybe consume input
+				if (bInvokeEvent)
+				{
+					auto Value = InputBuffer[ButtonInputValidFrame[DirActSeqBinding.Value.InputAction].OlderState.GetAssociatedFrame()].InputsFrameState[DirActSeqBinding.Value.InputAction].Value;
+					DirActSeqBinding.Key.Execute(Value, ButtonInputValidFrame[DirActSeqBinding.Value.InputAction].OlderState.GetHoldTime());
+					if (DirActSeqBinding.Value.bAutoConsume)
+					{
+						ConsumeButtonInput(DirActSeqBinding.Value.InputAction);
+						ConsumeDirectionalInput(DirActSeqBinding.Value.DirectionalAction);
+					}
+				}
+			}
+		}
+		else
+		{
+			IB_FLog(Error, "One Or Both Bound Actions Don't Exit In Buffer [1 - %s] & [2 - %s]", *DirActSeqBinding.Value.InputAction.ToString(), *DirActSeqBinding.Value.DirectionalAction.ToString())
 		}
 	}
 
-	/* For Directional Events */
-	for (auto Direction : InputMap->DirectionalActionMap->GetMappings())
+
+	/* Evaluate Button Seq Events */
+	for (auto ActionSeqBinding : ActionSeqDelegates)
 	{
-		
-		const bool bRegistered = DirectionalInputValidFrame[Direction->GetID()] >= 0;
-		if (bRegistered)
+		// If no binding for the delegate, skip and delete
+		if (!ActionSeqBinding.Key.IsBound())
 		{
-			DirectionalInputRegisteredDelegate.Broadcast(Direction);
-
-			/*
-			for (auto Action : InputMap->GetInputActions())
+			IB_FLog(Error, "Delegate In Action Bindings Not Bound [%s]", *ActionSeqBinding.Key.GetFunctionName().ToString());
+			ActionSeqDelegates.Remove(ActionSeqBinding.Key);
+			continue;
+		}
+		
+		if (ButtonInputValidFrame.Contains(ActionSeqBinding.Value.FirstAction) && ButtonInputValidFrame.Contains(ActionSeqBinding.Value.SecondAction))
+		{
+			// NOTE: Order doesn't matter here, but if we go with the tuple approach, we should guarantee first element is "older" than the second
+			const bool bRepeatedAction = ActionSeqBinding.Value.FirstAction.IsEqual(ActionSeqBinding.Value.SecondAction);
+			
+			const auto FirstAction = ButtonInputValidFrame[ActionSeqBinding.Value.FirstAction].OlderState;
+			const auto SecondAction = bRepeatedAction ? ButtonInputValidFrame[ActionSeqBinding.Value.SecondAction].NewerState : ButtonInputValidFrame[ActionSeqBinding.Value.SecondAction].OlderState;
+			
+			if (FirstAction.IsPress() && SecondAction.IsPress())
 			{
-				const FName ActionID = FName(Action->ActionDescription.ToString());
-				const bool bPressed = ButtonInputValidFrame[ActionID] > 0 && DirectionalInputValidFrame[Direction->GetID()] > ButtonInputValidFrame[ActionID];
+				// Skip if order matters and first action is more recent than second
+				if (ActionSeqBinding.Value.bButtonOrderMatters && (FirstAction.GetAssociatedFrame() < SecondAction.GetAssociatedFrame())) continue;
 
-				if (bPressed)
+				// Otherwise invoke event and maybe consume input
+				auto FirstValue = InputBuffer[FirstAction.GetAssociatedFrame()].InputsFrameState[ActionSeqBinding.Value.FirstAction].Value;
+				auto SecondValue = InputBuffer[FirstAction.GetAssociatedFrame()].InputsFrameState[ActionSeqBinding.Value.FirstAction].Value;
+				ActionSeqBinding.Key.Execute(FirstValue, SecondValue); 
+				if (ActionSeqBinding.Value.bAutoConsume)
 				{
-					DirectionalAndButtonDelegate.Broadcast(Action, Direction);
+					ConsumeButtonInput(ActionSeqBinding.Value.FirstAction);
+					ConsumeButtonInput(ActionSeqBinding.Value.SecondAction, bRepeatedAction);
 				}
 			}
-			*/
+		}
+		else
+		{
+			IB_FLog(Error, "One Or Both Bound Actions Don't Exit In Buffer [1 - %s] & [2 - %s]", *ActionSeqBinding.Value.FirstAction.ToString(), *ActionSeqBinding.Value.FirstAction.ToString())
+		}
+	}
+	
+	/* Evaluate Directional Events */
+	for (auto DirectionalBindings : DirectionalDelegates)
+	{
+		// If no binding for the delegate, skip and delete
+		if (!DirectionalBindings.Key.IsBound())
+		{
+			IB_FLog(Error, "Delegate In Action Bindings Not Bound [%s]", *DirectionalBindings.Key.GetFunctionName().ToString());
+			DirectionalDelegates.Remove(DirectionalBindings.Key);
+			continue;
+		}
+		
+		if (DirectionalInputValidFrame.Contains(DirectionalBindings.Value.DirectionalAction))
+		{
+			if (DirectionalInputValidFrame[DirectionalBindings.Value.DirectionalAction] >= 0)
+			{
+				DirectionalBindings.Key.Execute();
+				if (DirectionalBindings.Value.bAutoConsume)
+				{
+					ConsumeDirectionalInput(DirectionalBindings.Value.DirectionalAction);
+				}
+			}
+		}
+		else
+		{
+			IB_FLog(Error, "Bound Directional Action Doesn't Exist In Buffer [%s]", *DirectionalBindings.Value.DirectionalAction.ToString())
+		}
+	}
+	
+	/* Evaluate Action Events */
+	for (auto ActionBindings : ActionDelegates)
+	{
+		// If no binding for the delegate, skip and delete
+		if (!ActionBindings.Key.IsBound())
+		{
+			IB_FLog(Error, "Delegate In Action Bindings Not Bound [%s]", *ActionBindings.Key.GetFunctionName().ToString());
+			ActionDelegates.Remove(ActionBindings.Key);
+			continue;
+		}
+		
+		if (ButtonInputValidFrame.Contains(ActionBindings.Value.InputAction))
+		{
+			switch (ActionBindings.Value.TriggerType)
+			{
+				case TRIGGER_Press:
+					if (ButtonInputValidFrame[ActionBindings.Value.InputAction].OlderState.IsPress())
+					{
+						auto Value = InputBuffer[ButtonInputValidFrame[ActionBindings.Value.InputAction].OlderState.GetAssociatedFrame()].InputsFrameState[ActionBindings.Value.InputAction].Value;
+						ActionBindings.Key.Execute(Value, 0);
+						if (ActionBindings.Value.bAutoConsume) // Only press knows what "consume" is
+						{
+							ConsumeButtonInput(ActionBindings.Value.InputAction);
+						}
+					}
+					break;
+				case TRIGGER_Hold:
+					if (ButtonInputValidFrame[ActionBindings.Value.InputAction].NewerState.IsHold()) // Newer input hold takes presedence as prev input was released and its hold invalidated
+					{
+						auto Value = InputBuffer[ButtonInputValidFrame[ActionBindings.Value.InputAction].NewerState.GetAssociatedFrame()].InputsFrameState[ActionBindings.Value.InputAction].Value;
+						ActionBindings.Key.Execute(Value, ButtonInputValidFrame[ActionBindings.Value.InputAction].NewerState.GetHoldTime());
+					}
+					else if (ButtonInputValidFrame[ActionBindings.Value.InputAction].OlderState.IsHold())
+					{
+						auto Value = InputBuffer[ButtonInputValidFrame[ActionBindings.Value.InputAction].OlderState.GetAssociatedFrame()].InputsFrameState[ActionBindings.Value.InputAction].Value;
+						ActionBindings.Key.Execute(Value, ButtonInputValidFrame[ActionBindings.Value.InputAction].OlderState.GetHoldTime());
+					}
+					break;
+				case TRIGGER_Release:
+					if (ButtonInputValidFrame[ActionBindings.Value.InputAction].NewerState.IsRelease())
+					{
+						if (InputBuffer[ButtonInputValidFrame[ActionBindings.Value.InputAction].NewerState.GetAssociatedFrame()].InputsFrameState[ActionBindings.Value.InputAction].bReleaseFlagged) continue;
+						ActionBindings.Key.Execute(FInputActionValue(), 0);
+						InputBuffer[ButtonInputValidFrame[ActionBindings.Value.InputAction].NewerState.GetAssociatedFrame()].InputsFrameState[ActionBindings.Value.InputAction].bReleaseFlagged = true;
+					}
+					else if (ButtonInputValidFrame[ActionBindings.Value.InputAction].OlderState.IsRelease())
+					{
+						if (InputBuffer[ButtonInputValidFrame[ActionBindings.Value.InputAction].OlderState.GetAssociatedFrame()].InputsFrameState[ActionBindings.Value.InputAction].bReleaseFlagged) continue;
+						ActionBindings.Key.Execute(FInputActionValue(), 0);
+						InputBuffer[ButtonInputValidFrame[ActionBindings.Value.InputAction].OlderState.GetAssociatedFrame()].InputsFrameState[ActionBindings.Value.InputAction].bReleaseFlagged = true;
+					}
+					break;
+				default:;
+			}
+		}
+		else
+		{
+			IB_FLog(Error, "Bound Action Doesn't Exist In Buffer [%s]", *ActionBindings.Value.InputAction.ToString())
 		}
 	}
 }
@@ -258,41 +395,73 @@ bool UInputBufferSubsystem::ConsumeButtonInput(const UInputAction* Input)
 {
 	if (!Input) return false;
 	
-	const FName InputID = FName(Input->ActionDescription.ToString());
+	return ConsumeButtonInput(FName(Input->ActionDescription.ToString()));
+}
 
+bool UInputBufferSubsystem::ConsumeButtonInput(const FName InputID, bool bConsumeNewer)
+{
 	if (!ButtonInputValidFrame.Contains(InputID))
 	{
 		IB_FLog(Error, "%s - Input Action Registered But Not Collected In Buffer", *InputID.ToString())
 		return false;
 	}
 
-	if (ButtonInputValidFrame[InputID].IsPress())
+	// NOTE: We reset the states here because ButtonInputValidFrame won't be updated until the next buffer update (fixed tick interval), but EvalEvents has no fixed interval so we wanna avoid invoking the same event multiple times within a buffer-tick
+	if (ButtonInputValidFrame[InputID].OlderState.IsPress() && !bConsumeNewer) // Check older input first
 	{
-		InputBuffer[ButtonInputValidFrame[InputID].GetAssociatedFrame()].InputsFrameState[InputID].bUsed = true;
+		InputBuffer[ButtonInputValidFrame[InputID].OlderState.GetAssociatedFrame()].InputsFrameState[InputID].bUsed = true;
+		PropagateConsume(InputID, ButtonInputValidFrame[InputID].OlderState.GetAssociatedFrame());
+		ButtonInputValidFrame[InputID].OlderState.Reset();
+		return true;
+	}
+	if (ButtonInputValidFrame[InputID].NewerState.IsPress()) // Now check newer input if older wasn't valid
+	{
+		InputBuffer[ButtonInputValidFrame[InputID].NewerState.GetAssociatedFrame()].InputsFrameState[InputID].bUsed = true;
+		PropagateConsume(InputID, ButtonInputValidFrame[InputID].NewerState.GetAssociatedFrame());
+		ButtonInputValidFrame[InputID].NewerState.Reset();
 		return true;
 	}
 	
 	return false;
 }
+
 
 bool UInputBufferSubsystem::ConsumeDirectionalInput(const UMotionAction* Input)
 {
 	if (!Input) return false;
 	
-	const FName DirectionalID = Input->GetID();
+	return ConsumeDirectionalInput(Input->GetID());
+}
+
+bool UInputBufferSubsystem::ConsumeDirectionalInput(const FName DirectionalID)
+{
+	// Flush it out of the buffer so we don't get repeated event invokes
 	const FName ActionID = InputMap->DirectionalActionMap->GetDirectionalActionID();
 
 	if (!DirectionalInputValidFrame.Contains(DirectionalID)) return false;
 	
 	if (DirectionalInputValidFrame[DirectionalID] < 0) return false;
-	if (InputBuffer[DirectionalInputValidFrame[DirectionalID]].InputsFrameState[ActionID].CanInvokePress()) // TODO: UMotionAction ID doesnt exist in frame state
+	if (InputBuffer[DirectionalInputValidFrame[DirectionalID]].InputsFrameState.Contains(ActionID))
 	{
-		InputBuffer[DirectionalInputValidFrame[DirectionalID]].InputsFrameState[ActionID].bUsed = true;
+		for (int frame = BUFFER_SIZE; frame >= DirectionalInputValidFrame[DirectionalID]; frame--)
+		{
+			InputBuffer[frame].InputsFrameState[ActionID].Value = 0;
+		}
 		DirectionalInputValidFrame[DirectionalID] = -1;
 		return true;
 	}
 	return false;
 }
+
+void UInputBufferSubsystem::PropagateConsume(const FName InputID, const uint8 FromFrame)
+{
+	for (int frame = FromFrame; frame >= 0; frame--)
+	{
+		if (InputBuffer[frame].InputsFrameState[InputID].HoldTime == -1) return;
+		InputBuffer[frame].InputsFrameState[InputID].bUsed = true;
+	}
+}
+
 
 void UInputBufferSubsystem::ProcessDirectionVector(const FVector2D& DirectionInputVector, FVector& ProcessedInputVector, FVector& OutPlayerForward, FVector& OutPlayerRight) const
 {
@@ -336,7 +505,7 @@ void UInputBufferSubsystem::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInf
 	FString InputFrames = "";
 	for (auto ID : InputMap->GetActionIDs())
 	{
-		InputFrames += FString::FromInt(ButtonInputValidFrame[ID].GetAssociatedFrame());
+		InputFrames += FString::FromInt(ButtonInputValidFrame[ID].NewerState.IsHold() ? ButtonInputValidFrame[ID].NewerState.GetHoldTime() : ButtonInputValidFrame[ID].OlderState.GetHoldTime());
 		InputFrames += "            ";
 	}
 	DisplayDebugManager.SetDrawColor(FColor::Red);
@@ -353,6 +522,67 @@ void UInputBufferSubsystem::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInf
 		InputNames += "    "; // Spacing
 	}
 	DisplayDebugManager.DrawString(InputNames);
+
+	/* Draw Total States */
+	FString ButtonStates = "";
+	DisplayDebugManager.SetDrawColor(FColor::Red);
+	for (auto State : ButtonInputValidFrame)
+	{
+		ButtonStates += "New Value State";
+		ButtonStates += "            ";
+	}
+	DisplayDebugManager.DrawString(ButtonStates);
+	YPosD = DisplayDebugManager.GetYPos();
+	
+	DisplayDebugManager.SetDrawColor(FColor::White);
+	ButtonStates = "";
+	int j = 0;
+	for (auto State : ButtonInputValidFrame)
+	{
+		DisplayDebugManager.SetYPos(YPosD);
+
+		XOffset += j * 12.f * DisplayDebugManager.GetMaxCharHeight() * 0.75f;
+		
+		ButtonStates = "(Consumed) " + FString::FromInt(State.Value.NewerState.IsConsumed());
+		DisplayDebugManager.DrawString(ButtonStates, XOffset);
+		ButtonStates = "(Frame) " + FString::FromInt(State.Value.NewerState.GetAssociatedFrame());
+		DisplayDebugManager.DrawString(ButtonStates, XOffset);
+		ButtonStates = "(HoldTime) " + FString::FromInt(State.Value.NewerState.GetHoldTime());
+		DisplayDebugManager.DrawString(ButtonStates, XOffset);
+		j++;
+	}
+
+	XOffset = DisplayDebugManager.GetMaxCharHeight();
+	ButtonStates = "";
+	DisplayDebugManager.SetDrawColor(FColor::Red);
+	for (auto State : ButtonInputValidFrame)
+	{
+		ButtonStates += "Old Value State";
+		ButtonStates += "            ";
+	}
+	DisplayDebugManager.DrawString(ButtonStates);
+	YPosD = DisplayDebugManager.GetYPos();
+	
+	DisplayDebugManager.SetDrawColor(FColor::White);
+	ButtonStates = "";
+	j = 0;
+	for (auto State : ButtonInputValidFrame)
+	{
+		DisplayDebugManager.SetYPos(YPosD);
+
+		XOffset += j * 12.f * DisplayDebugManager.GetMaxCharHeight() * 0.75f;
+		
+		ButtonStates = "(Consumed) " + FString::FromInt(State.Value.OlderState.IsConsumed());
+		DisplayDebugManager.DrawString(ButtonStates, XOffset);
+		ButtonStates = "(Frame) " + FString::FromInt(State.Value.OlderState.GetAssociatedFrame());
+		DisplayDebugManager.DrawString(ButtonStates, XOffset);
+		ButtonStates = "(HoldTime) " + FString::FromInt(State.Value.OlderState.GetHoldTime());
+		DisplayDebugManager.DrawString(ButtonStates, XOffset);
+		j++;
+	}
+
+	XOffset = DisplayDebugManager.GetMaxCharHeight();
+	
 	DisplayDebugManager.SetDrawColor(FColor::White);
 
 	XOffset *= 0.75 * InputNames.Len();
@@ -360,6 +590,8 @@ void UInputBufferSubsystem::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInf
 	/* Next we iterate through each row of the input buffer, drawing it to the screen */
 	for (int i = 0; i < BUFFER_SIZE; i++)
 	{
+		if (i >= BUTTON_BUFFER_SIZE) DisplayDebugManager.SetDrawColor(FColor::Red);
+		
 		auto BufferRow = InputBuffer[i].InputsFrameState;
 		FString BufferRowText = "";
 		for (auto InputID : InputMap->GetActionIDs())

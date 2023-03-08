@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "InputData.h"
 #include "RadicalCharacter.h"
+#include "RadicalMovementComponent.h"
 #include "GameFramework/Character.h"
 #include "TOPCharacter.generated.h"
 
@@ -65,7 +66,9 @@ private:
 public:
 	ATOPCharacter();
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
-	
+
+	UPROPERTY()
+	FInputActionEventSignature Event;
 protected:
 
 	/** General Input Registration Binding */
@@ -83,11 +86,11 @@ protected:
 	void Look(const FInputActionValue& Value);
 
 	/** Action Binding */
-	void Jump(const FInputActionValue& Value);
+	UFUNCTION()
+	void Jump(const FInputActionValue& Value, float ElapsedTime);
 
 	/** Action Binding */
 	void StopJumping(const FInputActionValue& Value);
-			
 
 protected:
 	// APawn interface

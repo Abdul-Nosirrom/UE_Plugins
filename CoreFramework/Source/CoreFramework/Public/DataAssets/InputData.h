@@ -28,7 +28,7 @@ namespace EvalCache
 #pragma region General Definitions
 
 UCLASS()
-class UInputBufferMap : public UDataAsset
+class COREFRAMEWORK_API UInputBufferMap : public UDataAsset
 {
 	GENERATED_BODY()
 
@@ -69,7 +69,7 @@ private:
 #pragma region Directional Input Definitions
 
 UCLASS()
-class UMotionMappingContext : public UDataAsset
+class COREFRAMEWORK_API UMotionMappingContext : public UDataAsset
 {
 	GENERATED_BODY()
 
@@ -121,7 +121,7 @@ enum ETurnDirection
 
 
 UCLASS()
-class UMotionAction : public UDataAsset
+class COREFRAMEWORK_API UMotionAction : public UDataAsset
 {
 	GENERATED_BODY()
 
@@ -243,79 +243,127 @@ public:
 #pragma endregion Directional Input Definitions
 
 
-// TODO: Mimic EnhancedInputComponent Event Bindings?
 #pragma region Buffer Event Signatures
 
-/*
-template<typename TSignature>
-struct TInputBufferUnifiedDelegate
+// Input Action Registration
+DECLARE_DYNAMIC_DELEGATE_TwoParams(FInputActionEventSignature, const FInputActionValue&, Value, float, ElapsedTime);
+
+// Input Action Sequence
+DECLARE_DYNAMIC_DELEGATE_TwoParams(FInputActionSequenceSignature, const FInputActionValue&, ValueOne, const FInputActionValue&, ValueTwo);
+
+// Directional Action Registration
+DECLARE_DYNAMIC_DELEGATE(FDirectionalActionSignature);
+
+// Directional Action & Input Action Serquence
+DECLARE_DYNAMIC_DELEGATE_TwoParams(FDirectionalAndActionSequenceSignature, const FInputActionValue&, ActionValue, float, ActionElapsedTime);
+
+UENUM()
+enum EBufferTriggerEvent
 {
-private:
-	TSharedPtr<TSignature> Delegate;
-
-public:
-
-	bool IsBound() const { return Delegate.IsValid() && Delegate->IsBound(); }
-
-	bool IsBoundToObject(void const* Object) const
-	{
-		return IsBound() && Delegate->IsBoundToObject(Object);
-	}
-
-	void Unbind()
-	{
-		if (Delegate)
-		{
-			Delegate->Unbind();
-		}
-	}
-
-	/** Binds a native delegate, hidden for script delegates 
-	template<	typename UserClass,
-				typename TSig = TSignature,
-				typename... TVars>
-	void BindDelegate(UserClass* Object, typename TSig::template TMethodPtr<UserClass, TVars...> Func, TVars... Vars)
-	{
-		Unbind();
-		Delegate = MakeShared<TSig>(TSig::CreateUObject(Object, Func, Vars...));
-	}
-
-	/** Binds a script delegate on an arbitrary UObject, hidden for native delegates 
-	template<	typename TSig = TSignature,
-				typename = typename TEnableIf<TIsDerivedFrom<TSig, TScriptDelegate<FWeakObjectPtr> >::IsDerived || TIsDerivedFrom<TSig, TMulticastScriptDelegate<FWeakObjectPtr> >::IsDerived>::Type>
-	void BindDelegate(UObject* Object, const FName FuncName)
-	{
-		Unbind();
-		Delegate = MakeShared<TSig>();
-		Delegate->BindUFunction(Object, FuncName);
-	}
-
-	template<typename TSig = TSignature>
-	TSig& MakeDelegate()
-	{
-		Unbind();
-		Delegate = MakeShared<TSig>();
-		return *Delegate;
-	}
-
-	template<typename... TArgs>
-	void Execute(TArgs... Args) const
-	{
-		if (IsBound())
-		{
-			Delegate->Execute(Args...);
-		}
-	}
+	TRIGGER_Press	UMETA(DisplayName="Pressed"),
+	TRIGGER_Hold	UMETA(DisplayName="Hold"),
+	TRIGGER_Release	UMETA(DisplayName="Release")
 };
 
-template<typename TSignature>
-struct FInputBufferEventBinding : public FInputBindingHandle
+UENUM()
+enum EDirectionalSequenceOrder
 {
-public:
-
-
-	void Execute(const FName& ActionID) const;
-	TInputBufferUnifiedDelegate<TSignature> Delegate;
+	SEQUENCE_None				UMETA(DisplayName="Doesn't Matter"),
+	SEQUENCE_DirectionalFirst	UMETA(DisplayName="Directional First"),
+	SEQUENCE_ButtonFirst		UMETA(DisplayName="Button First")
 };
-*/
+
+USTRUCT()
+struct COREFRAMEWORK_API FInputActionDelegateHandle
+{
+	GENERATED_BODY()
+
+	friend class UInputBufferSubsystem;
+
+	FInputActionDelegateHandle() : InputAction(NAME_None), TriggerType(EBufferTriggerEvent::TRIGGER_Press), bAutoConsume(false)
+	{}
+	
+	FInputActionDelegateHandle(const FName InAction, EBufferTriggerEvent SetTriggerEvent, const bool bSetAutoConsume)
+	: InputAction(InAction), TriggerType(SetTriggerEvent), bAutoConsume(bSetAutoConsume)
+	{}
+
+protected:
+	UPROPERTY()
+	FName InputAction;
+	UPROPERTY()
+	TEnumAsByte<EBufferTriggerEvent> TriggerType;
+	UPROPERTY()
+	bool bAutoConsume;
+};
+
+USTRUCT()
+struct COREFRAMEWORK_API FInputActionSequenceDelegateHandle
+{
+	GENERATED_BODY()
+
+	friend class UInputBufferSubsystem;
+
+	FInputActionSequenceDelegateHandle() : FirstAction(NAME_None), SecondAction(NAME_None), bButtonOrderMatters(false), bAutoConsume(false)
+	{}
+	
+	FInputActionSequenceDelegateHandle(const FName ActionOne, const FName ActionTwo, bool bSetAutoConsume, bool bSetOrderMatters)
+	: FirstAction(ActionOne), SecondAction(ActionTwo), bAutoConsume(bSetAutoConsume), bButtonOrderMatters(bSetOrderMatters)
+	{}
+
+protected:
+	UPROPERTY()
+	FName FirstAction;
+	UPROPERTY()
+	FName SecondAction;
+	UPROPERTY()
+	bool bButtonOrderMatters;
+	UPROPERTY()
+	bool bAutoConsume;
+};
+
+USTRUCT()
+struct COREFRAMEWORK_API FDirectionalActionDelegateHandle
+{
+	GENERATED_BODY()
+
+	friend class UInputBufferSubsystem;
+	
+	FDirectionalActionDelegateHandle() : DirectionalAction(NAME_None), bAutoConsume(false) {}
+	
+	FDirectionalActionDelegateHandle(const FName Directional, const bool bSetAutoConsume)
+	: DirectionalAction(Directional), bAutoConsume(bSetAutoConsume)
+	{}
+
+protected:
+	UPROPERTY()
+	FName DirectionalAction;
+	UPROPERTY()
+	bool bAutoConsume;
+};
+
+USTRUCT()
+struct COREFRAMEWORK_API FDirectionalAndActionDelegateHandle
+{
+	GENERATED_BODY()
+
+	friend class UInputBufferSubsystem;
+
+	FDirectionalAndActionDelegateHandle() : InputAction(NAME_None), DirectionalAction(NAME_None), bAutoConsume(false), SequenceOrder(SEQUENCE_None)
+	{}
+	
+	FDirectionalAndActionDelegateHandle(const FName Action, const FName Directional, bool bSetAutoConsume, EDirectionalSequenceOrder Sequence)
+	: InputAction(Action), DirectionalAction(Directional), bAutoConsume(bSetAutoConsume), SequenceOrder(Sequence)
+	{}
+
+protected:
+	UPROPERTY()
+	FName InputAction;
+	UPROPERTY()
+	FName DirectionalAction;
+	UPROPERTY()
+	bool bAutoConsume;
+	UPROPERTY()
+	TEnumAsByte<EDirectionalSequenceOrder> SequenceOrder;
+};
+
 #pragma endregion Buffer Event Signatures
