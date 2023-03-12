@@ -7,6 +7,7 @@
 #include "BufferContainer.h"
 #include "InputData.h"
 #include "InputBufferPrimitives.h"
+#include "InputAction.h"
 #include "InputBufferSubsystem.generated.h"
 
 /* Profiling & Log Groups */

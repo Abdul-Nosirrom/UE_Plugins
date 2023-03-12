@@ -17,7 +17,7 @@
  * @param T The type of elements held in the queue.
  */
 template<typename T>
-class TBufferContainer
+class COREFRAMEWORK_API TBufferContainer
 {
 public:
 	using FElementType = T;

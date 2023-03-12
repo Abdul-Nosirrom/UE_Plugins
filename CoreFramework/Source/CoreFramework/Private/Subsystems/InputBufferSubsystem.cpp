@@ -17,7 +17,7 @@ TMap<FName, FRawInputValue> UInputBufferSubsystem::RawValueContainer;
 void UInputBufferSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
-	
+
 	bInitialized = false;
 	ElapsedTime = 0;
 }
@@ -204,7 +204,7 @@ void UInputBufferSubsystem::UpdateBuffer()
 void UInputBufferSubsystem::EvaluateEvents()
 {
 	SCOPE_CYCLE_COUNTER(STAT_EvalEvents)
-	static int Calls = 0;
+
 	// NOTE: Consuming has possible overlap w/ ActionEvent if SEQUENCE_ButtonFirst
 	/* Evaluate Directional + Action Events */
 	for (auto DirActSeqBinding : DirectionAndActionDelegates)

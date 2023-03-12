@@ -24,7 +24,8 @@ public class CoreFramework : ModuleRules
 	    PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public/Components"));
 	    PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public/DataAssets"));
 	    PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public/DataStructures"));
-	
+	    PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public/Subsystems"));
+	    
 	    // Private includes directories.
 	    PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "Private"));
 	    PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "Private/Actors"));
@@ -32,6 +33,7 @@ public class CoreFramework : ModuleRules
 	    PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "Private/DataAssets"));
 	    PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "Private/DataStructures"));
 	    PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "Private/Debug"));
+	    PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "Private/Subsystems"));
 	    
 	    // Specify Defs (For Logging)
 	    PrivateDefinitions.Add("CFW_MOVEMENT_LOG");

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "InputActionValue.h"
 #include "InputBufferPrimitives.generated.h"
 
 /// @brief	State of a given input within the buffer window
