@@ -238,6 +238,8 @@ struct FSimulationState
 UCLASS(ClassGroup = "Kinematic Movement", BlueprintType, Blueprintable)
 class COREFRAMEWORK_API URadicalMovementComponent : public UPawnMovementComponent
 {
+	//friend class UMovementData;
+	
 	GENERATED_BODY()
 
 public:
@@ -269,6 +271,7 @@ public:
 	virtual void SetUpdatedComponent(USceneComponent* NewUpdatedComponent) override;
 	FORCEINLINE virtual bool IsMovingOnGround() const override { return PhysicsState == STATE_Grounded; }
 	FORCEINLINE virtual bool IsFalling() const override { return PhysicsState == STATE_Falling; }
+	FORCEINLINE virtual bool IsFlying() const override { return PhysicsState == STATE_General; }
 	FORCEINLINE virtual float GetGravityZ() const override { return MovementData ? MovementData->GravityScale * Super::GetGravityZ() : Super::GetGravityZ(); };
 	virtual void AddRadialForce(const FVector& Origin, float Radius, float Strength, ERadialImpulseFalloff Falloff) override;
 	virtual void AddRadialImpulse(const FVector& Origin, float Radius, float Strength, ERadialImpulseFalloff Falloff, bool bVelChange) override;
@@ -304,7 +307,8 @@ protected:
 	FVector LastUpdateLocation;
 	UPROPERTY()
 	FVector LastUpdateVelocity;
-
+	
+	// NOTE: None of these are really valid outside of a movement tick. They'd correspond to the current ones.
 	/** Returns the location at the end of the last tick. */
 	UFUNCTION(BlueprintCallable)
 	FVector GetLastUpdateLocation() const { return LastUpdateLocation; }
@@ -337,7 +341,7 @@ protected:
 	/* ~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 	
 public:
-
+	
 	/*~~~~~ Orientation, scale all that jazz ~~~~~*/
 
 	/// @brief There are 3 possible values here to return, Either: 
@@ -361,7 +365,9 @@ public:
 	// TODO: Might wanna also (not here but in utilities) add some math methods for computing stuff in w.r.t a given orientation mode (e.g steps). Would be super nice to localize that math in one place.
 
 	/*~~~~~ Movement State Interface ~~~~~*/
-
+	UFUNCTION(BlueprintCallable)
+	UMovementData* GetMovementData() const { return MovementData; }
+	
 	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
 	virtual void SetMovementState(EMovementState NewMovementState);
 

@@ -372,7 +372,8 @@ void URadicalMovementComponent::OnTeleported()
 	
 	if (!CurrentFloor.IsWalkableFloor() || (OldBase && !NewBase))
 	{
-		SetMovementState(STATE_Falling);
+		if (PhysicsState == STATE_Grounded) // NOTE: Assume that if we were set to STATE_General, it will be manually handled
+			SetMovementState(STATE_Falling);
 	}
 	else if (NewBase && bWasFalling)
 	{
@@ -1203,10 +1204,15 @@ void URadicalMovementComponent::GeneralMovementTick(float DeltaTime, uint32 Iter
 			}
 		}
 		
-		/* Make velocity reflect actual move */
-		if (!bJustTeleported && !HasAnimRootMotion() && !CurrentRootMotion.HasOverrideVelocity() && IterTick >= MIN_TICK_TIME) 
+		/* Make velocity reflect actual move */ 
+		if (!bJustTeleported && !HasAnimRootMotion() && !CurrentRootMotion.HasOverrideVelocity() && IterTick >= MIN_TICK_TIME)
 		{
-			RecalculateVelocityToReflectMove(OldLocation, IterTick);
+			// NOTE: We're not guaranteed to have a floor result in STATE_General
+			if (CurrentFloor.bWalkableFloor)
+				RecalculateVelocityToReflectMove(OldLocation, IterTick);
+			else
+				Velocity = (UpdatedComponent->GetComponentLocation() - OldLocation) / IterTick;
+				
 		}
 
 		/* If we didn't move at all, abort since future iterations will also be stuck */
