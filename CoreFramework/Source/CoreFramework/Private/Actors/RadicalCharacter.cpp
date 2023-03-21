@@ -237,7 +237,6 @@ float ARadicalCharacter::GetDefaultHalfHeight() const
 // TODO: This
 void ARadicalCharacter::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL, float& YPos)
 {
-	Super::DisplayDebug(Canvas, DebugDisplay, YL, YPos);
 
 	float Indent = 0.f;
 	static FName NAME_Physics = FName(TEXT("Physics"));
@@ -280,6 +279,7 @@ void ARadicalCharacter::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& D
 		}
 		*/
 	}
+	Super::DisplayDebug(Canvas, DebugDisplay, YL, YPos);
 }
 
 void ARadicalCharacter::RecalculateBaseEyeHeight()
@@ -310,7 +310,7 @@ void ARadicalCharacter::LaunchCharacter(FVector LaunchVelocity, bool bPlanarOver
 		{
 			FinalVel += FVector::VectorPlaneProject(Velocity, MovementComponent->GetUpOrientation(MODE_Gravity));
 		}
-		if (bVerticalOverride)
+		if (!bVerticalOverride)
 		{
 			FinalVel += Velocity.ProjectOnToNormal(MovementComponent->GetUpOrientation(MODE_Gravity));
 		}
