@@ -758,7 +758,12 @@ void FRootMotionSourceCFW_MoveToForce::PrepareCustomRootMotion
 		const float MoveFraction = (GetTime() + SimulationTime) / Duration;
 
 		FVector CurrentTargetLocation = FMath::Lerp<FVector, float>(StartLocation, TargetLocation, MoveFraction);
-		CurrentTargetLocation += GetPathOffsetInWorldSpace(MoveFraction);
+
+		// BEGIN Change to local basis
+		FVector PathOffset = GetPathOffsetInWorldSpace(MoveFraction);
+		CurrentTargetLocation += PathOffset.X * Character.GetActorForwardVector() + PathOffset.Y * Character.GetActorRightVector() + PathOffset.Z * Character.GetActorUpVector();
+		// END Change to local basis
+		//CurrentTargetLocation += GetPathOffsetInWorldSpace(MoveFraction);
 
 		const FVector CurrentLocation = Character.GetActorLocation();
 
@@ -769,7 +774,12 @@ void FRootMotionSourceCFW_MoveToForce::PrepareCustomRootMotion
 			// Calculate expected current location (if we didn't have collision and moved exactly where our velocity should have taken us)
 			const float PreviousMoveFraction = GetTime() / Duration;
 			FVector CurrentExpectedLocation = FMath::Lerp<FVector, float>(StartLocation, TargetLocation, PreviousMoveFraction);
-			CurrentExpectedLocation += GetPathOffsetInWorldSpace(PreviousMoveFraction);
+
+			// BEGIN Change to local basis
+			CurrentExpectedLocation = PathOffset.X * Character.GetActorForwardVector() + PathOffset.Y * Character.GetActorRightVector() + PathOffset.Z * Character.GetActorUpVector();
+			// END Change to local basis
+			
+			//CurrentExpectedLocation += GetPathOffsetInWorldSpace(PreviousMoveFraction);
 
 			// Restrict speed to the expected speed, allowing some small amount of error
 			const FVector ExpectedForce = (CurrentTargetLocation - CurrentExpectedLocation) / MovementTickTime;

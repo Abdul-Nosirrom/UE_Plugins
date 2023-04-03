@@ -52,21 +52,12 @@ namespace RMCCVars
 		ECVF_Default
 	);
 	
-	int32 StatMovementValues = 0;
-	FAutoConsoleVariableRef CVarStatMovementValues
+	int32 VisualizeTrajectories = 0;
+	FAutoConsoleVariableRef CVarShowTrajectories
 	(
-		TEXT("rmc.StatMovementValues"),
-		StatMovementValues,
-		TEXT("Display Realtime motion values from the movement component. 0: Disable, 1: Enable"),
-		ECVF_Default
-	);
-
-	int32 LogMovementValues = 0;
-	FAutoConsoleVariableRef CVarLogMovementValues
-	(
-		TEXT("rmc.LogMovementValues"),
-		LogMovementValues,
-		TEXT("Log Realtime motion values from the movement component. 0: Disable, 1: Enable"),
+		TEXT("rmc.VisualizeTrajectories"),
+		VisualizeTrajectories,
+		TEXT("Visualize Trajectories. 0: Disable, 1: Mesh and Root, 2: Root Only"),
 		ECVF_Default
 	);
 
@@ -147,8 +138,8 @@ void URadicalMovementComponent::BeginPlay()
 	// Bind default events
 	if (MovementData)
 	{
-		CalculateVelocityDelegate.BindDynamic(MovementData, &UMovementData::CalculateVelocity);
-		UpdateRotationDelegate.BindDynamic(MovementData, &UMovementData::UpdateRotation);
+		//CalculateVelocityDelegate.BindDynamic(MovementData, &UMovementData::CalculateVelocity);
+		//UpdateRotationDelegate.BindDynamic(MovementData, &UMovementData::UpdateRotation);
 	}
 	else
 	{
@@ -209,6 +200,9 @@ void URadicalMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 		return;
 	}
 	
+	/* Store Previous Mesh and Root info for trajectory visualization (separate from LastUpdateLocation since we never have proper access to it here)*/
+	const FVector OldRootLocation = UpdatedComponent->GetComponentLocation();
+	
 	/* Perform Move */
 	PerformMovement(DeltaTime);
 	
@@ -227,6 +221,14 @@ void URadicalMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	{
 		VisualizeMovement();
 	}
+	const bool bVisualizeTrajectories = RMCCVars::VisualizeTrajectories > 0;
+	if (bVisualizeTrajectories)
+	{
+		VisualizeTrajectories(OldRootLocation);
+	}
+
+	// Set it after so when its used during VisualizeTrajectories, it's using the last updates version (Mesh ticks after this)
+	OldMeshLocation = (CharacterOwner ? CharacterOwner->GetMesh()->GetBoneLocation(TrajectoryBoneName) : FVector::ZeroVector);
 #endif 
 }
 
@@ -522,7 +524,7 @@ bool URadicalMovementComponent::HandlePendingLaunch()
 	{
 		Velocity = PendingLaunchVelocity;
 		PendingLaunchVelocity = FVector::ZeroVector;
-		if ((Velocity | GetUpOrientation(MODE_Gravity)) > 0)
+		if (IsMovingOnGround() && (Velocity | GetUpOrientation(MODE_Gravity)) > 0)
 			SetMovementState(STATE_Falling);
 		return true;
 	}
@@ -641,7 +643,12 @@ void URadicalMovementComponent::PerformMovement(float DeltaTime)
 			const FQuat RootMotionRotationQuat = RootMotionParams.GetRootMotionTransform().GetRotation();
 			if (!RootMotionRotationQuat.Equals(FQuat::Identity))
 			{
-				const FQuat NewActorRotationQuat = RootMotionRotationQuat * OldActorRotationQuat;
+				FQuat NewActorRotationQuat = RootMotionRotationQuat * OldActorRotationQuat;
+				// Post Process RM Rotation Event before its applied
+				if (!PostProcessRMRotationDelegate.ExecuteIfBound(this, NewActorRotationQuat, DeltaTime))
+				{
+					RMC_FLog(Log, "Post Process RM Rotation Event Not Bound");
+				}
 				MoveUpdatedComponent(FVector::ZeroVector, NewActorRotationQuat, true);
 			}
 
@@ -653,7 +660,12 @@ void URadicalMovementComponent::PerformMovement(float DeltaTime)
 			if (CharacterOwner && UpdatedComponent && CurrentRootMotion.GetOverrideRootMotionRotation(DeltaTime, *CharacterOwner, *this, RootMotionRotationQuat))
 			{
 				const FQuat OldActorRotationQuat = UpdatedComponent->GetComponentQuat();
-				const FQuat NewActorRotationQuat = RootMotionRotationQuat * OldActorRotationQuat;
+				FQuat NewActorRotationQuat = RootMotionRotationQuat * OldActorRotationQuat;
+				// Post Process RM Rotation Event before its applied
+				if (!PostProcessRMRotationDelegate.ExecuteIfBound(this, NewActorRotationQuat, DeltaTime))
+				{
+					RMC_FLog(Log, "Post Process RM Rotation Event Not Bound");
+				}
 				MoveUpdatedComponent(FVector::ZeroVector, NewActorRotationQuat, true);
 			}
 		} // Rotation from root motion sources
@@ -2597,13 +2609,20 @@ void URadicalMovementComponent::InitApplyRootMotionToVelocity(float DeltaTime)
 			Velocity = NewVelocity;
 		}
 	} // Have root motion from sources
+
+	// Post Process Root Motion Velocity
+	if (!PostProcessRMVelocityDelegate.ExecuteIfBound(this, Velocity, DeltaTime))
+	{
+		RMC_FLog(Log, "Post Process RM Velocity Not Bound")
+	}
 }
 
 
 void URadicalMovementComponent::ApplyRootMotionToVelocity(float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_RootMotion);
-	
+	// NOTE: Only calling on PostProcessRMVelocity in the case of overrides. Most changes here are additive and some not through RM
+
 	// Animation root motion is distinct from root motion sources and takes precedence (NOTE: UE comment mentions "right now" so maybe they'll be mixed later?)
 	if (HasAnimRootMotion() && DeltaTime > 0.f)
 	{
@@ -2622,13 +2641,16 @@ void URadicalMovementComponent::ApplyRootMotionToVelocity(float DeltaTime)
 	if (CurrentRootMotion.HasOverrideVelocity())
 	{
 		CurrentRootMotion.AccumulateOverrideRootMotionVelocity(DeltaTime, *CharacterOwner, *this, Velocity);
-
+		// Post Process Override Velocity
+		if (!PostProcessRMVelocityDelegate.ExecuteIfBound(this, Velocity, DeltaTime)) // NOTE: Is this needed here? Think so otherwise prev PP are discarded with override sources
+		{
+			RMC_FLog(Log, "Post Process RM Velocity Not Bound")
+		}
 		if (IsFalling())
 		{
 			Velocity += CurrentRootMotion.HasOverrideVelocityWithIgnoreZAccumulate() ? FVector::VectorPlaneProject(DecayingFormerBaseVelocity, GetUpOrientation(MODE_Gravity)) : DecayingFormerBaseVelocity;
 		}
 		bAppliedRootMotion = true;
-		
 	}
 
 	// Next apply additive root motion
@@ -2638,7 +2660,6 @@ void URadicalMovementComponent::ApplyRootMotionToVelocity(float DeltaTime)
 		CurrentRootMotion.AccumulateAdditiveRootMotionVelocity(DeltaTime, *CharacterOwner, *this, Velocity);
 		CurrentRootMotion.bIsAdditiveVelocityApplied = true; // Remember that we have it applied
 		bAppliedRootMotion = true;
-
 	}
 
 	// Switch to Falling if we have vertical velocity from root motion so we can lift off the ground
@@ -3280,6 +3301,7 @@ void URadicalMovementComponent::SaveBaseLocation()
 void URadicalMovementComponent::OnUnableToFollowBaseMove(const FVector& DeltaPosition, const FVector& OldPosition,
 	const FHitResult& MoveOnBaseHit)
 {
+	// TODO:
 }
 
 #pragma endregion Moving Base
@@ -3340,6 +3362,53 @@ void URadicalMovementComponent::VisualizeMovement() const
 #endif // !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 }
 
+void URadicalMovementComponent::VisualizeTrajectories(const FVector& OldLocation) const
+{
+	// TODO: For now just drawing base trajectory
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+
+	int32 DebugVal = RMCCVars::VisualizeTrajectories;
+
+	// Setup draw colors
+	static const FColor RootLineColor = FColor::Turquoise;
+	static const FColor RootNormalColor = FColor::Blue;
+	static const FColor MeshLineColor = FColor::Orange;
+	static const FColor MeshNormalColor = FColor::Red;
+	static const FColor ConnectingLineColor = FColor::Yellow;
+	const float VerticalOffset = DebugVal < 2 ? 30.f : 0.f;
+
+	// Get Current Info
+	const FVector CurrentRootLocation = UpdatedComponent->GetComponentLocation() + UpdatedComponent->GetUpVector() * VerticalOffset;
+	const FVector OldRootLocation = OldLocation + UpdatedComponent->GetUpVector() * VerticalOffset;
+	const FVector CurrentMeshLocation = (CharacterOwner ? CharacterOwner->GetMesh()->GetBoneLocation(TrajectoryBoneName) : FVector::ZeroVector);
+	const FVector MeanMeshPoint = (OldMeshLocation + CurrentMeshLocation) / 2.f;
+	const FVector MeanRootPoint = (OldRootLocation + CurrentRootLocation) / 2.f;
+
+	// Move root location up a bit for better visibility
+	
+	
+	// Draw Capsule Movement Connected Trajectory If Not Equal
+	if (!CurrentRootLocation.Equals(OldRootLocation))
+	{
+		DrawDebugLine(GetWorld(), OldRootLocation, CurrentRootLocation, RootLineColor, false, 5.f, 0, 4.f);
+		const FVector VelUp = UpdatedComponent->GetUpVector();//CurrentRootLocation - OldRootLocation) ^ UpdatedComponent->GetRightVector();
+		DrawDebugLine(GetWorld(), MeanRootPoint, MeanRootPoint + 10.f * VelUp.GetSafeNormal(), RootNormalColor, false, 5.f, 0.f, 1.f);
+	}
+	
+	// Draw Mesh Movement Connected Trajectory w/ Normals
+	if (!CurrentMeshLocation.Equals(OldMeshLocation) && DebugVal < 2)
+	{
+		DrawDebugLine(GetWorld(), OldMeshLocation, CurrentMeshLocation, MeshLineColor, false, 5.f, 0, 4.f);
+		const FVector VelUp = (CharacterOwner ? CharacterOwner->GetMesh()->GetBoneQuaternion(TrajectoryBoneName).GetUpVector() : FVector::ZeroVector);
+		DrawDebugLine(GetWorld(), MeanMeshPoint, MeanMeshPoint + 10.f * VelUp.GetSafeNormal(), MeshNormalColor, false, 5.f, 0.f, 1.f);
+
+		// Draw connected line
+		DrawDebugLine(GetWorld(), MeanMeshPoint, MeanRootPoint, ConnectingLineColor, false, 5.f, 0.f, 1.5f);
+	}
+#endif 
+}
+
+
 void URadicalMovementComponent::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL, float& YPos)
 {
 	FDisplayDebugManager& DisplayDebugManager = Canvas->DisplayDebugManager;
@@ -3351,7 +3420,7 @@ void URadicalMovementComponent::DisplayDebug(UCanvas* Canvas, const FDebugDispla
 	DisplayDebugManager.SetDrawColor(PhysicsState == STATE_Grounded ? FColor::Orange : FColor::Red);
 
 	// Movement Information
-	T = FString::Printf(TEXT("Movement State: %s"), (PhysicsState == STATE_Grounded ? TEXT("Grounded") : TEXT("Aerial")));
+	T = FString::Printf(TEXT("Movement State: %s"), (PhysicsState != STATE_Falling ? (PhysicsState == STATE_Grounded ? TEXT("Grounded") : TEXT("General")) : TEXT("Aerial")));
 	DisplayDebugManager.DrawString(T);
 
 	DisplayDebugManager.SetDrawColor(CurrentFloor.bUnstableFloor ? FColor::Red : FColor::Green);

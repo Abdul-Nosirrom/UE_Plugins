@@ -16,6 +16,9 @@ DECLARE_LOG_CATEGORY_EXTERN(LogRMCMovement, Log, All);
 /* Events */
 DECLARE_DYNAMIC_DELEGATE_TwoParams(FCalculateVelocitySignature, URadicalMovementComponent*, MovementComponent, float, DeltaTime);
 DECLARE_DYNAMIC_DELEGATE_TwoParams(FUpdateRotationSignature, URadicalMovementComponent*, MovementComponent, float, DeltaTime);
+
+DECLARE_DYNAMIC_DELEGATE_ThreeParams(FPostProcessRootMotionVelocitySignature, URadicalMovementComponent*, MovementComponent, FVector&, RootMotionVelocity, float, DeltaTime);
+DECLARE_DYNAMIC_DELEGATE_ThreeParams(FPostProcessRootMotionRotationSignature, URadicalMovementComponent*, MovementComponent, FQuat&, RootMotionRotation, float, DeltaTime);
 /* ~~~~~~ */
 
 /* Forward Declarations */
@@ -439,6 +442,12 @@ public:
 	
 	UPROPERTY()
 	FUpdateRotationSignature UpdateRotationDelegate;
+
+	UPROPERTY()
+	FPostProcessRootMotionVelocitySignature PostProcessRMVelocityDelegate;
+
+	UPROPERTY()
+	FPostProcessRootMotionRotationSignature PostProcessRMRotationDelegate;
 
 
 #pragma endregion Events
@@ -978,7 +987,16 @@ protected:
 /* Math shit or whatever helpers */
 #pragma region Utility
 
+	/// @brief  Used to draw movement trajectories between capsule movement and mesh movement via rmc.VisualizeTrajectories.
+	///			Mesh trajectory tracking this bone. Used for debug purposes only.
+	UPROPERTY(Category="(Radical Movement): Animation", EditDefaultsOnly, AdvancedDisplay)
+	FName TrajectoryBoneName = NAME_None;
+
+	UPROPERTY(Transient)
+	FVector OldMeshLocation; // Due to tick dependencies, we have to store it like this for the bone location to be accurate (Getting it at the end of TickComponent)
+
 	void VisualizeMovement() const;
+	void VisualizeTrajectories(const FVector& OldRootLocation) const;
 
 public:
 	/// @brief  Draw important variables on canvas. Character will call DisplayDebug() on the current view target when the ShowDebug exec is used
