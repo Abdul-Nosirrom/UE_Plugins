@@ -61,6 +61,15 @@ namespace RMCCVars
 		ECVF_Default
 	);
 
+	int32 VisualizeAccelerationCurve = 0;
+	FAutoConsoleVariableRef CVarShowAcceleration
+	(
+		TEXT("rmc.VisualizeAccelerationCurve"),
+		VisualizeAccelerationCurve,
+		TEXT("Visualize Acc Curve. 0: Disable, > 0: Height Of Curve"),
+		ECVF_Default
+	);
+
 	int32 LogHits = 0;
 	FAutoConsoleVariableRef CVarShowGroundSweep
 	(
@@ -135,11 +144,12 @@ void URadicalMovementComponent::BeginPlay()
 	Super::BeginPlay();
 	PhysicsState = STATE_Grounded;
 
-	// Bind default events
-	if (MovementData)
+	// Bind default events (Default AI to use this for now, just while testing)
+	if (MovementData && Cast<AAIController>(CharacterOwner->GetController()))
 	{
-		//CalculateVelocityDelegate.BindDynamic(MovementData, &UMovementData::CalculateVelocity);
-		//UpdateRotationDelegate.BindDynamic(MovementData, &UMovementData::UpdateRotation);
+		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, "Controlled BY AI");
+		CalculateVelocityDelegate.BindDynamic(MovementData, &UMovementData::CalculateVelocity);
+		UpdateRotationDelegate.BindDynamic(MovementData, &UMovementData::UpdateRotation);
 	}
 	else
 	{
@@ -226,9 +236,14 @@ void URadicalMovementComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	{
 		VisualizeTrajectories(OldRootLocation);
 	}
+	if (RMCCVars::VisualizeAccelerationCurve > 0)
+	{
+		VisualizeAccelerationCurve(OldRootLocation);
+	}
 
 	// Set it after so when its used during VisualizeTrajectories, it's using the last updates version (Mesh ticks after this)
-	OldMeshLocation = (CharacterOwner ? CharacterOwner->GetMesh()->GetBoneLocation(TrajectoryBoneName) : FVector::ZeroVector);
+	DebugOldMeshLocation = (CharacterOwner ? CharacterOwner->GetMesh()->GetBoneLocation(TrajectoryBoneName) : FVector::ZeroVector);
+	DebugOldVelocity = Velocity;
 #endif 
 }
 
@@ -339,6 +354,9 @@ void URadicalMovementComponent::StopActiveMovement()
 	Super::StopActiveMovement();
 
 	Acceleration = FVector::ZeroVector;
+	bHasRequestedVelocity = false;
+	RequestedVelocity = FVector::ZeroVector;
+	LastUpdateRequestedVelocity = FVector::ZeroVector;
 }
 
 // END UMovementComponent
@@ -669,7 +687,10 @@ void URadicalMovementComponent::PerformMovement(float DeltaTime)
 				MoveUpdatedComponent(FVector::ZeroVector, NewActorRotationQuat, true);
 			}
 		} // Rotation from root motion sources
-		
+
+		// Consume path following requested velocity
+		LastUpdateRequestedVelocity = bHasRequestedVelocity ? RequestedVelocity : FVector::ZeroVector;
+		bHasRequestedVelocity = false;
 	}
 	
 	PostMovementUpdate(DeltaTime);
@@ -3306,6 +3327,143 @@ void URadicalMovementComponent::OnUnableToFollowBaseMove(const FVector& DeltaPos
 
 #pragma endregion Moving Base
 
+
+#pragma region AI Path Following & RVO
+
+// NOTE: This is for outside of NAV movement, speed set directly
+void URadicalMovementComponent::RequestDirectMove(const FVector& MoveVelocity, bool bForceMaxSpeed)
+{
+	// No actual velocity requested, abort
+	if (MoveVelocity.SizeSquared() < UE_KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	// TODO: Air control when falling
+
+	// Set requested move info
+	RequestedVelocity = MoveVelocity;
+	bHasRequestedVelocity = true;
+	bRequestedMoveWithMaxSpeed = bForceMaxSpeed;
+
+	// If moving on ground, ensure the velocity is on the ground plane
+	if (IsMovingOnGround())
+	{
+		RequestedVelocity = FVector::VectorPlaneProject(RequestedVelocity, CurrentFloor.HitResult.ImpactNormal);
+	}
+}
+
+void URadicalMovementComponent::RequestPathMove(const FVector& MoveInput)
+{
+	FVector AdjustedMoveInput(MoveInput);
+
+	// Preserve magnitude when moving on ground/falling and requested input has vertical component
+	if (IsMovingOnGround() && (MoveInput | CurrentFloor.HitResult.ImpactNormal) != 0)
+	{
+		AdjustedMoveInput = FVector::VectorPlaneProject(MoveInput, CurrentFloor.HitResult.ImpactNormal).GetSafeNormal() * MoveInput.Size();
+	}
+	else if (IsFalling() && (MoveInput | GetUpOrientation(MODE_Gravity)) != 0)
+	{
+		AdjustedMoveInput = FVector::VectorPlaneProject(MoveInput, GetUpOrientation(MODE_Gravity)).GetSafeNormal() * MoveInput.Size();
+	}
+
+	Super::RequestPathMove(AdjustedMoveInput);
+}
+
+bool URadicalMovementComponent::CanStartPathFollowing() const
+{
+	// Can't nav if we have root motion or our owner is invalid
+	if (!CharacterOwner || HasAnimRootMotion())
+	{
+		return false;
+	}
+
+	// Can't nav if we're simulation physics
+	if (CharacterOwner->GetRootComponent() && CharacterOwner->GetRootComponent()->IsSimulatingPhysics())
+	{
+		return false;
+	}
+
+	return Super::CanStartPathFollowing();
+}
+
+bool URadicalMovementComponent::CanStopPathFollowing() const
+{
+	return !IsFalling();
+}
+
+float URadicalMovementComponent::GetPathFollowingBrakingDistance(float MaxSpeed) const
+{
+	if (bUseFixedBrakingDistanceForPaths)
+	{
+		return FixedPathBrakingDistance;
+	}
+
+	const float BrakingDeceleration = FMath::Abs(MovementData->GetMaxBrakingDeceleration(PhysicsState));
+
+	// Character wont be able to stop with negative or near zero deceleration, use MaxSpeed for path length calculations
+	const float BrakingDistance = (BrakingDeceleration < UE_SMALL_NUMBER) ? MaxSpeed : (FMath::Square(MaxSpeed) / (2.f * BrakingDeceleration));
+	return BrakingDistance;
+}
+
+// NOTE: This can go inside of MovementData, doesn't belong here
+bool URadicalMovementComponent::ApplyRequestedMove(float DeltaTime, float MaxAccel, float MaxSpeed, float Friction,
+	float BrakingDeceleration, FVector& OutAcceleration, float& OutRequestedSpeed)
+{
+	if (bHasRequestedVelocity)
+	{
+		const float RequestedSpeedSquared = RequestedVelocity.SizeSquared();
+		if (RequestedSpeedSquared < UE_KINDA_SMALL_NUMBER)
+		{
+			return false;
+		}
+
+		// Compute requested speed from path following
+		float RequestedSpeed = FMath::Sqrt(RequestedSpeedSquared);
+		const FVector RequestedMoveDir = RequestedVelocity / RequestedSpeed;
+		RequestedSpeed = (bRequestedMoveWithMaxSpeed ? MaxSpeed : FMath::Min(MaxSpeed, RequestedSpeed));
+
+		// Compute actual requested velocity
+		const FVector MoveVelocity = RequestedMoveDir * RequestedSpeed;
+
+		// Compute acceleration. Use MaxAccel to limit speed increase (1% buffer)
+		FVector NewAcceleration = FVector::ZeroVector;
+		const float CurrentSpeedSq = Velocity.SizeSquared();
+		if (ShouldComputeAccelerationToReachRequestedVelocity(RequestedSpeed))
+		{
+			// Turn in the same manner as with input acceleration
+			const float VelSize = FMath::Sqrt(CurrentSpeedSq);
+			Velocity = Velocity - (Velocity - RequestedMoveDir * VelSize) * FMath::Min(DeltaTime * Friction, 1.f);
+
+			// How much do we need to accelerate to get to the new velocity?
+			NewAcceleration = ((MoveVelocity - Velocity)/DeltaTime);
+			NewAcceleration = NewAcceleration.GetClampedToMaxSize(MaxAccel);
+		}
+		else
+		{
+			// Just set velocity directly.
+			Velocity = MoveVelocity;
+		}
+
+		// Copy to out params
+		OutRequestedSpeed = RequestedSpeed;
+		OutAcceleration = NewAcceleration;
+
+		return true;
+	}
+
+	return false;
+}
+
+bool URadicalMovementComponent::ShouldComputeAccelerationToReachRequestedVelocity(const float RequestedSpeed) const
+{
+	// Compute acceleration if accelerating toward requested speed, 1% buffer.
+	return bRequestedMoveUseAcceleration && Velocity.SizeSquared() < FMath::Square(RequestedSpeed * 1.01f);
+}
+
+#pragma endregion AI 
+
+
 #pragma region Utility
 
 void URadicalMovementComponent::VisualizeMovement() const
@@ -3381,7 +3539,7 @@ void URadicalMovementComponent::VisualizeTrajectories(const FVector& OldLocation
 	const FVector CurrentRootLocation = UpdatedComponent->GetComponentLocation() + UpdatedComponent->GetUpVector() * VerticalOffset;
 	const FVector OldRootLocation = OldLocation + UpdatedComponent->GetUpVector() * VerticalOffset;
 	const FVector CurrentMeshLocation = (CharacterOwner ? CharacterOwner->GetMesh()->GetBoneLocation(TrajectoryBoneName) : FVector::ZeroVector);
-	const FVector MeanMeshPoint = (OldMeshLocation + CurrentMeshLocation) / 2.f;
+	const FVector MeanMeshPoint = (DebugOldMeshLocation + CurrentMeshLocation) / 2.f;
 	const FVector MeanRootPoint = (OldRootLocation + CurrentRootLocation) / 2.f;
 
 	// Move root location up a bit for better visibility
@@ -3396,9 +3554,9 @@ void URadicalMovementComponent::VisualizeTrajectories(const FVector& OldLocation
 	}
 	
 	// Draw Mesh Movement Connected Trajectory w/ Normals
-	if (!CurrentMeshLocation.Equals(OldMeshLocation) && DebugVal < 2)
+	if (!CurrentMeshLocation.Equals(DebugOldMeshLocation) && DebugVal < 2)
 	{
-		DrawDebugLine(GetWorld(), OldMeshLocation, CurrentMeshLocation, MeshLineColor, false, 5.f, 0, 4.f);
+		DrawDebugLine(GetWorld(), DebugOldMeshLocation, CurrentMeshLocation, MeshLineColor, false, 5.f, 0, 4.f);
 		const FVector VelUp = (CharacterOwner ? CharacterOwner->GetMesh()->GetBoneQuaternion(TrajectoryBoneName).GetUpVector() : FVector::ZeroVector);
 		DrawDebugLine(GetWorld(), MeanMeshPoint, MeanMeshPoint + 10.f * VelUp.GetSafeNormal(), MeshNormalColor, false, 5.f, 0.f, 1.f);
 
@@ -3406,6 +3564,22 @@ void URadicalMovementComponent::VisualizeTrajectories(const FVector& OldLocation
 		DrawDebugLine(GetWorld(), MeanMeshPoint, MeanRootPoint, ConnectingLineColor, false, 5.f, 0.f, 1.5f);
 	}
 #endif 
+}
+
+void URadicalMovementComponent::VisualizeAccelerationCurve(const FVector& OldRootLocation) const
+{
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+
+	// Draw Color
+	static const FColor CurveColor = FColor::Green;
+
+	float HeightFactor = RMCCVars::VisualizeAccelerationCurve * 1.f; 
+	
+	float OldHeightFactor = HeightFactor * DebugOldVelocity.Length() / MovementData->MaxSpeed;
+	float NewHeightFactor = HeightFactor * Velocity.Length() / MovementData->MaxSpeed;
+	
+	DrawDebugLine(GetWorld(), OldRootLocation + UpdatedComponent->GetUpVector() * OldHeightFactor, UpdatedComponent->GetComponentLocation() + UpdatedComponent->GetUpVector() * NewHeightFactor, CurveColor, false, 10.f, 0.f, 4.f);
+#endif
 }
 
 

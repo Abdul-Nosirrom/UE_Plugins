@@ -12,6 +12,7 @@
 
 /* Profiling & Log Groups */
 DECLARE_STATS_GROUP(TEXT("InputBuffer_Game"), STATGROUP_InputBuffer, STATCAT_Advanced);
+DECLARE_CYCLE_STAT(TEXT("Action Bindings"), STAT_ActionBindings, STATGROUP_InputBuffer)
 DECLARE_LOG_CATEGORY_EXTERN(LogInputBuffer, Log, All);
 /* ~~~~~~~~~~~~~~~~ */
 
@@ -65,6 +66,9 @@ public:
 	bool ConsumeDirectionalInput(const FName InputID);
 
 protected:
+	/// @brief  True if the specified input has already been consumed
+	bool IsInputConsumed(const FName InputID, bool bCheckNewer = false);
+	
 	/// @brief  If an input is consumed, propagate the consume state up the buffer to most recent register of said input
 	void PropagateConsume(const FName InputID, const uint8 FromFrame);
 
@@ -100,9 +104,9 @@ protected:
 	TObjectPtr<UInputBufferMap> InputMap;
 
 	/* CONSTANT BUFFER SETTINGS */
-	static constexpr uint8 BUTTON_BUFFER_SIZE	= 20;
+	static constexpr uint8 BUTTON_BUFFER_SIZE	= 12;
 	static constexpr uint8 BUFFER_SIZE			= 40;
-	static constexpr float TICK_INTERVAL		= 0.02;
+	static constexpr float TICK_INTERVAL		= 0.0167;
 	uint32 LastFrameNumberWeTicked = INDEX_NONE;
 	
 	/* ~~~~~ Initialization & Update Tracking ~~~~~ */
@@ -150,42 +154,78 @@ protected:
 public:
 	
 	UFUNCTION(BlueprintCallable)
-	void BindAction(FInputActionEventSignature Event, UInputAction* Action, EBufferTriggerEvent Trigger, bool bAutoConsume)
+	void BindAction(FInputActionEventSignature Event, UInputAction* Action, EBufferTriggerEvent Trigger, bool bAutoConsume, int Priority = 0)
 	{
+		SCOPE_CYCLE_COUNTER(STAT_ActionBindings);
 		if (!Action) return;
-		ActionDelegates.Add(Event, FInputActionDelegateHandle(FName(Action->ActionDescription.ToString()), Trigger, bAutoConsume));
+		ActionDelegates.Add(Event, FInputActionDelegateHandle(FName(Action->ActionDescription.ToString()), Trigger, bAutoConsume, Priority));
+
+		// Sort by Priority When New Action Is bound
+		const auto SortByPriority = [](const FInputActionDelegateHandle& Handle1, const FInputActionDelegateHandle& Handle2) -> bool
+		{
+			return Handle1.Priority > Handle2.Priority;
+		};
+
+		ActionDelegates.ValueSort(SortByPriority);
 	}
 
 
 	UFUNCTION(BlueprintCallable)
-	void BindActionSequence(FInputActionSequenceSignature Event, const UInputAction* FirstAction, const UInputAction* SecondAction, bool bAutoConsume, bool bConsiderOrder)
+	void BindActionSequence(FInputActionSequenceSignature Event, const UInputAction* FirstAction, const UInputAction* SecondAction, bool bAutoConsume, bool bConsiderOrder, int Priority = 0)
 	{
+		SCOPE_CYCLE_COUNTER(STAT_ActionBindings);
 		if (!FirstAction || !SecondAction) return;
 		const FName ID1 = FName(FirstAction->ActionDescription.ToString());
 		const FName ID2 = FName(SecondAction->ActionDescription.ToString());
-		ActionSeqDelegates.Add(Event, FInputActionSequenceDelegateHandle(ID1, ID2, bAutoConsume, bConsiderOrder));
+		ActionSeqDelegates.Add(Event, FInputActionSequenceDelegateHandle(ID1, ID2, bAutoConsume, bConsiderOrder, Priority));
+
+		// Sort by Priority When New Action Is bound
+		const auto SortByPriority = [](const FInputActionSequenceDelegateHandle& Handle1, const FInputActionSequenceDelegateHandle& Handle2) -> bool
+		{
+			return Handle1.Priority > Handle2.Priority;
+		};
+
+		ActionSeqDelegates.ValueSort(SortByPriority);
 	}
 
 	UFUNCTION(BlueprintCallable)
-	void BindDirectionalAction(FDirectionalActionSignature Event, const UMotionAction* DirectionalAction, bool bAutoConsume)
+	void BindDirectionalAction(FDirectionalActionSignature Event, const UMotionAction* DirectionalAction, bool bAutoConsume, int Priority = 0)
 	{
+		SCOPE_CYCLE_COUNTER(STAT_ActionBindings);
 		if (!DirectionalAction) return;
-		DirectionalDelegates.Add(Event, FDirectionalActionDelegateHandle(DirectionalAction->GetID(), bAutoConsume));
+		DirectionalDelegates.Add(Event, FDirectionalActionDelegateHandle(DirectionalAction->GetID(), bAutoConsume, Priority));
+
+		// Sort by Priority When New Action Is bound
+		const auto SortByPriority = [](const FDirectionalActionDelegateHandle& Handle1, const FDirectionalActionDelegateHandle& Handle2) -> bool
+		{
+			return Handle1.Priority > Handle2.Priority;
+		};
+
+		DirectionalDelegates.ValueSort(SortByPriority);
 	}
 
 	UFUNCTION(BlueprintCallable)
-	void BindDirectionalActionSequence(FDirectionalAndActionSequenceSignature Event, const UInputAction* InputAction, const UMotionAction* DirectionalAction, EDirectionalSequenceOrder SequenceOrder, bool bAutoConsume)
+	void BindDirectionalActionSequence(FDirectionalAndActionSequenceSignature Event, const UInputAction* InputAction, const UMotionAction* DirectionalAction, EDirectionalSequenceOrder SequenceOrder, bool bAutoConsume, int Priority = 0)
 	{
+		SCOPE_CYCLE_COUNTER(STAT_ActionBindings);
 		if (!InputAction) return;
-		DirectionAndActionDelegates.Add(Event, FDirectionalAndActionDelegateHandle(FName(InputAction->ActionDescription.ToString()), DirectionalAction->GetID(), bAutoConsume, SequenceOrder));
+		DirectionAndActionDelegates.Add(Event, FDirectionalAndActionDelegateHandle(FName(InputAction->ActionDescription.ToString()), DirectionalAction->GetID(), bAutoConsume, SequenceOrder, Priority));
+
+		// Sort by Priority When New Action Is bound
+		const auto SortByPriority = [](const FDirectionalAndActionDelegateHandle& Handle1, const FDirectionalAndActionDelegateHandle& Handle2) -> bool
+		{
+			return Handle1.Priority > Handle2.Priority;
+		};
+
+		DirectionAndActionDelegates.ValueSort(SortByPriority);
 	}
 
 	UFUNCTION(BlueprintCallable)
 	void UnbindAction(FInputActionEventSignature Event)
 	{
-		if (ActionDelegates.Contains(Event) && Event.IsBound())
+		if (ActionDelegates.Contains(Event))
 		{
-			Event.Unbind();
+			//if (Event.IsBound()) Event.Unbind();
 			ActionDelegates.Remove(Event);
 		}
 	}
@@ -193,9 +233,9 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void UnbindActionSequence(FInputActionSequenceSignature Event)
 	{
-		if (ActionSeqDelegates.Contains(Event) && Event.IsBound())
+		if (ActionSeqDelegates.Contains(Event))
 		{
-			Event.Unbind();
+			//if (Event.IsBound()) Event.Unbind();
 			ActionSeqDelegates.Remove(Event);
 		}
 	}
@@ -203,9 +243,9 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void UnbindDirectionalAction(FDirectionalActionSignature Event)
 	{
-		if (DirectionalDelegates.Contains(Event) && Event.IsBound())
+		if (DirectionalDelegates.Contains(Event))
 		{
-			Event.Unbind();
+			//if (Event.IsBound()) Event.Unbind();
 			DirectionalDelegates.Remove(Event);
 		}
 	}
@@ -213,9 +253,9 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void UnbindDirectionalActionSequence(FDirectionalAndActionSequenceSignature Event)
 	{
-		if (DirectionAndActionDelegates.Contains(Event) && Event.IsBound())
+		if (DirectionAndActionDelegates.Contains(Event))
 		{
-			Event.Unbind();
+			//if (Event.IsBound()) Event.Unbind();
 			DirectionAndActionDelegates.Remove(Event);
 		}
 	}

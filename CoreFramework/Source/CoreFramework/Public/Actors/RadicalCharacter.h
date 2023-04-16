@@ -22,6 +22,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FLostFloorStabilitySignature, const 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FWalkedOffLedge, const FVector&, PreviousFloorImpactNormal, const FVector&, PreviousFloorContactNormal, const FVector&, PreviousLocation, float, DeltaTime);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FMoveBlockedBySignature, const FHitResult&, Hit);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FStuckInGeometrySignature, const FHitResult&, Hit);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FReachedJumpApex);
 
 UCLASS()
 class COREFRAMEWORK_API ARadicalCharacter : public APawn
@@ -148,6 +149,9 @@ public:
 	UPROPERTY(Category="Character", BlueprintAssignable)
 	FStuckInGeometrySignature StuckInGeometryDelegate;
 
+	UPROPERTY(Category="Character", BlueprintAssignable)
+	FReachedJumpApex ReachedJumpApexDelegate;
+
 public:
 	UFUNCTION(Category="Character", BlueprintImplementableEvent)
 	void OnLanded(const FHitResult& Hit);
@@ -161,6 +165,10 @@ public:
 	void OnWalkingOffLedge(const FVector& PreviousFloorImpactNormal, const FVector& PreviousFloorContactNormal, const FVector& PreviousLocation, float DeltaTime);
 	void WalkingOffLedge(const FVector& PreviousFloorImpactNormal, const FVector& PreviousFloorContactNormal, const FVector& PreviousLocation, float DeltaTime);
 
+	UFUNCTION(Category="Character", BlueprintImplementableEvent)
+	void OnReachedJumpApex();
+	void ReachedJumpApex();
+	
 	UFUNCTION(Category="Character", BlueprintImplementableEvent)
 	void OnMoveBlocked(const FHitResult& Hit);
 	void MoveBlockedBy(const FHitResult& Hit);

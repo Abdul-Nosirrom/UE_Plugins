@@ -14,7 +14,6 @@
 
 #include "Components/CapsuleComponent.h"
 #include "Components/InputComponent.h"
-#include "Components/ScrollBox.h"
 #include "Components/ArrowComponent.h"
 
 #include "CoreMinimal.h"
@@ -34,6 +33,7 @@
 #include "Engine/GameInstance.h"
 #include "Engine/ScopedMovementUpdate.h"
 #include "Engine/Canvas.h"
+#include "Engine/LocalPlayer.h"
 
 #include "GameFramework/Actor.h"
 #include "GameFramework/Controller.h"

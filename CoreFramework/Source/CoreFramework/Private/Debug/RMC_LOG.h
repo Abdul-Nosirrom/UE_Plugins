@@ -69,4 +69,12 @@
 		}\
 	}
 
+#else
+
+#define LOG_HIT(InHit, Duration)
+#define RMC_LOG(Verbosity, Format, ...)
+#define RMC_CLOG(Condition, Verbosity, Format, ...)
+#define RMC_FLog(Verbosity, Format, ...)
+#define RMC_CLOG(Condition, Verbosity, Format, ...)
+
 #endif

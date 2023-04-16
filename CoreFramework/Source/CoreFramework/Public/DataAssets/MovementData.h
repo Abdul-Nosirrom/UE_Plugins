@@ -3,7 +3,6 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/Object.h"
 #include "Engine/DataAsset.h"
 #include "MovementData.generated.h"
 
@@ -48,7 +47,7 @@ public:
 	/// @param  UpEffectiveGravity		Gravity scaling factor to apply when dH > 0
 	/// @param  DownEffectiveGravity	Gravity scaling factor to apply when dH < 0
 	/// @param  bChangeDirection		Whether energy conservation should change direction to align with gravity if Speed = 0
-	/// @param  GravityTangentToSurface	Direction of gravity along the surface in question. Could be floor impact normal or the tangent of a spline along gravity
+	/// @param  GravityTangentToSurface	Direction of gravity along the surface in question. Could be floor impact normal (2D) or gravity projected onto a spline tangent (1D)
 	UFUNCTION()
 	void ConserveEnergy(URadicalMovementComponent* MovementComponent, const FVector& OldLocation, float UpEffectiveGravity, float DownEffectiveGravity, bool bChangeDirection, const FVector& GravityTangentToSurface = FVector::ZeroVector);
 
@@ -100,7 +99,7 @@ public:
 	///			Can be used to simulate slippery surfaces.
 	UPROPERTY(Category="Acceleration Data | Grounded", EditDefaultsOnly, BlueprintReadWrite)
 	float GroundFriction;
-
+	
 	/// @brief  Friction to apply to lateral air movement when falling.
 	///			If bUseSeparateBrakingFriction is false, also affects the ability to stop more quickly when braking (Zero Acceleration)
 	UPROPERTY(Category="Acceleration Data | Aerial", EditDefaultsOnly, BlueprintReadWrite)
@@ -110,7 +109,13 @@ public:
 	///			If false, braking uses the same friction passed to CalcVelocity (GroundFriction or AerialLateralFriction), multiplied
 	///			by BrakingFrictionFactor. @see BrakingFriction
 	UPROPERTY(Category="Acceleration Data | Shared", EditDefaultsOnly, BlueprintReadWrite)
-	bool bUseSeparateBrakingFriction;
+	uint8 bUseSeparateBrakingFriction	: 1;
+
+	UPROPERTY(Category="Acceleration Data | Shared", EditDefaultsOnly, BlueprintReadWrite, meta=(InlineEditConditionToggle))
+	uint8 bAccelerationRotates			: 1;
+
+	UPROPERTY(Category="Acceleration Data | Shared", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="bAccelerationRotates", ClampMin="0", UIMin="0"))
+	float AccelerationRotationRate;
 
 	/// @brief  Factor used to multiply the actual value of friction when braking. Applies to any friction value currently used.
 	///			@note This is 2 by default, a value of 1 gives the true drag equation
@@ -121,7 +126,7 @@ public:
 	///			When braking, this allows you to control how much friction is applied when moving, applying an opposing force that scales with current velocity (Linearly).
 	///			Braking is composed of Friction (velocity-dependent drag) and a constant deceleration.
 	///			@note Only used if bUseSeparateBrakingFriction is true. Otherwise, current friction (ground or aerial) is used.
-	UPROPERTY(Category="Acceleration Data | Shared", EditDefaultsOnly, BlueprintReadWrite)
+	UPROPERTY(Category="Acceleration Data | Shared", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="bUseSeparateBrakingFriction"))
 	float BrakingFriction;
 
 	/// @brief  Deceleration when on ground and not applying acceleration. @see MaxAcceleration
@@ -147,6 +152,33 @@ public:
 	UPROPERTY(Category="Acceleration Data | Aerial", EditDefaultsOnly, BlueprintReadWrite, meta=(ClampMin="0", UIMin="0", ForceUnits="cm/s"))
 	float AirControlBoostVelocityThreshold;
 
+
+	/// @brief  If true, curve is sampled for Ground Friction
+	UPROPERTY(Category="Acceleration Data | Curves", EditDefaultsOnly, BlueprintReadWrite, meta=(InlineEditConditionToggle))
+	uint8 bUseForwardFrictionCurve	: 1;
+
+	UPROPERTY(Category="Acceleration Data | Curves", EditDefaultsOnly, BlueprintReadWrite, meta=(InlineEditConditionToggle))
+	uint8 bUseTurnFrictionCurve	: 1;
+
+	UPROPERTY(Category="Acceleration Data | Curves", EditDefaultsOnly, BlueprintReadWrite, meta=(InlineEditConditionToggle))
+	uint8 bUseBrakingFrictionCurve	: 1;
+
+	/// @brief	Normalized curve to sample values [0, GroundFriction] parametrized by normalized max speed
+	UPROPERTY(Category="Acceleration Data | Curves", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="bUseForwardFrictionCurve"))
+	UCurveFloat* ForwardFrictionCurve;
+
+	/// @brief	Normalized curve to sample values [0, GroundFriction] parametrized by normalized max speed
+	UPROPERTY(Category="Acceleration Data | Curves", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="bUseTurnFrictionCurve"))
+	UCurveFloat* TurnFrictionCurve;
+	
+	UPROPERTY(Category="Acceleration Data | Curves", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="bUseBrakingFrictionCurve"))
+	UCurveFloat* BrakingFrictionCurve;
+
+	FORCEINLINE float SampleCurve(const UCurveFloat* Curve, const FVector& Velocity, bool bSampleStatus = false) const
+	{
+		return (bSampleStatus && Curve) ? Curve->GetFloatValue(Velocity.SquaredLength() / (MaxSpeed * MaxSpeed)) : 1.f;
+	}
+	
 public:
 	float GetFriction(EMovementState MoveState) const;
 	
@@ -158,7 +190,7 @@ public:
 	
 	FVector ComputeInputAcceleration(URadicalMovementComponent* MovementComponent) const;
 
-	void CalculateInputVelocity(const URadicalMovementComponent* MovementComponent, FVector& Velocity, FVector& Acceleration, float Friction, float BrakingDeceleration, float DeltaTime) const;
+	void CalculateInputVelocity(URadicalMovementComponent* MovementComponent, FVector& Velocity, FVector& Acceleration, float Friction, float BrakingDeceleration, float DeltaTime) const;
 
 	void ApplyGravity(FVector& Velocity, float TerminalLimit, float DeltaTime) const;
 
@@ -177,12 +209,17 @@ public:
 	UPROPERTY(Category="Rotation Data", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="RotationMethod==ERotationMethod::METHOD_OrientToGroundAndInput || RotationMethod==ERotationMethod::METHOD_OrientToGroundAndVelocity", EditConditionHides))
 	bool bRevertToGlobalUpWhenFalling;
 
+	UPROPERTY(Category="Rotation Data", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="RotationMethod==ERotationMethod::METHOD_OrientToGroundAndInput || RotationMethod==ERotationMethod::METHOD_OrientToGroundAndVelocity", EditConditionHides))
+	bool bInputOnlyRotatesWhenFalling;
+
 protected:
 	
 	void PhysicsRotation(URadicalMovementComponent* MovementComponent, float DeltaTime);
 
 	
-	FQuat GetDesiredRotation(URadicalMovementComponent* MovementComp);
+	FQuat GetDesiredRotation(const URadicalMovementComponent* MovementComp) const;
+
+	FQuat GetUniformRotation(const URadicalMovementComponent* MovementComp) const;
 
 
 #pragma endregion ROTATION_METHODS

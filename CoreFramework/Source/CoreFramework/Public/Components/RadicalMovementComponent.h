@@ -241,7 +241,7 @@ struct FSimulationState
 UCLASS(ClassGroup = "Kinematic Movement", BlueprintType, Blueprintable)
 class COREFRAMEWORK_API URadicalMovementComponent : public UPawnMovementComponent
 {
-	//friend class UMovementData;
+	friend class UMovementData;
 	
 	GENERATED_BODY()
 
@@ -961,25 +961,54 @@ protected:
 
 
 #pragma region AI Path Following & RVO
+protected:
+	/* Core parameters */
+	UPROPERTY(Category="(Radical Movement): AI Navigation", EditAnywhere, BlueprintReadWrite)
+	uint8 bRequestedMoveUseAcceleration	: 1;
+	
+	/* Transient Data */
+	/// @brief  Was a specific velocity requested by path following?
+	UPROPERTY(Transient)
+	uint8 bHasRequestedVelocity			: 1;
+	/// @brief  Was acceleration requested to be always max speed?
+	UPROPERTY(Transient)
+	uint8 bRequestedMoveWithMaxSpeed	: 1;
 
+public:
+	/// @brief  Velocity requested by path following (@see RequestDirectMove())
 	UPROPERTY(Transient)
 	FVector RequestedVelocity;
 
+	/// @brief  Velocity requested by path following duper last Update. Updated when we consume the value.
 	UPROPERTY(Transient)
 	FVector LastUpdateRequestedVelocity;
 
+	UFUNCTION(Category="AI Navigation", BlueprintCallable, meta=(Keywords="Velocity RequestedVelocity"))
 	FVector GetLastUpdateRequestedVelocity() const { return LastUpdateRequestedVelocity; }
 	
 // BEGIN UNavMovementComponent Interface
-	virtual void RequestDirectMove(const FVector& MoveVelocity, bool bForceMaxSpeed) override { Super::RequestDirectMove(MoveVelocity, bForceMaxSpeed); };
-	virtual void RequestPathMove(const FVector& MoveInput) override {Super::RequestPathMove(MoveInput); };
-	virtual bool CanStartPathFollowing() const override {return Super::CanStartPathFollowing(); };
-	virtual bool CanStopPathFollowing() const override { return Super::CanStopPathFollowing(); };
-	virtual float GetPathFollowingBrakingDistance(float MaxSpeed) const override {return Super::GetPathFollowingBrakingDistance(MaxSpeed);};
+	virtual void RequestDirectMove(const FVector& MoveVelocity, bool bForceMaxSpeed) override;
+	virtual void RequestPathMove(const FVector& MoveInput) override;
+	virtual bool CanStartPathFollowing() const override;
+	virtual bool CanStopPathFollowing() const override;
+	virtual float GetPathFollowingBrakingDistance(float MaxSpeed) const override;
 // END UNavMovementComponent Interface
 
-	//virtual bool ApplyRequestedMove(float DeltaTime, float MaxAccel, float MaxSpeed, float Friction, float BrakingDeceleration, FVector& OutAcceleration);
-	//virtual bool ShouldComputeAccelerationToReachRequestedVelocity(const float RequestedSpeed) const;
+	/// @brief  Use velocity requested by path following to compute a requested acceleration and speed. Does not affect the acceleration member variable,
+	///			as that's used to indicate input acceleration. This may directly affect current velocity.
+	/// @param  MaxAccel				Max acceleration allowed in OutAcceleration result
+	/// @param  MaxSpeed				Max speed allowed when computing OutRequestedSpeed
+	/// @param  Friction				Current Friction
+	/// @param  BrakingDeceleration		Current Braking Deceleration
+	/// @param  OutAcceleration			Acceleration computed based on requested velocity
+	/// @param	OutRequestedSpeed		Speed of resulting velocity, which can affect the max speed allowed by movement
+	/// @return Whether there is a requested velocity and acceleration, resulting in valid OutAcceleration and OutRequestedSpeed Values
+	virtual bool ApplyRequestedMove(float DeltaTime, float MaxAccel, float MaxSpeed, float Friction, float BrakingDeceleration, FVector& OutAcceleration, float& OutRequestedSpeed);
+
+protected:
+	/// @brief  When a character requestes a velocity (like when following a path), this method returns true if we should compute the
+	///			acceleration toward requested velocity (including friction). If it returns false, it will snap instantly to requested velocity
+	virtual bool ShouldComputeAccelerationToReachRequestedVelocity(const float RequestedSpeed) const;
 	//virtual void PerformAirControlForPathFollowing(FVector Direction, float ZDiff);
 	//virtual void ShouldPerformAirControlForPathFollowing() const;
 #pragma endregion AI Path Following & RVO
@@ -993,10 +1022,13 @@ protected:
 	FName TrajectoryBoneName = NAME_None;
 
 	UPROPERTY(Transient)
-	FVector OldMeshLocation; // Due to tick dependencies, we have to store it like this for the bone location to be accurate (Getting it at the end of TickComponent)
-
+	FVector DebugOldMeshLocation; // Due to tick dependencies, we have to store it like this for the bone location to be accurate (Getting it at the end of TickComponent)
+	UPROPERTY(Transient)
+	FVector DebugOldVelocity; // Same reason as above, need seperate storage for debug
+	
 	void VisualizeMovement() const;
 	void VisualizeTrajectories(const FVector& OldRootLocation) const;
+	void VisualizeAccelerationCurve(const FVector& OldRootLocation) const;
 
 public:
 	/// @brief  Draw important variables on canvas. Character will call DisplayDebug() on the current view target when the ShowDebug exec is used
@@ -1006,7 +1038,7 @@ public:
 	/// @param  YPos Y position on Canvas. YPos += YL, gives position to draw text for next debug line
 	virtual void DisplayDebug(class UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL, float& YPos);
 
-
+	UFUNCTION(BlueprintCallable)
 	FORCEINLINE FVector GetDirectionTangentToSurface(const FVector& Direction, const FVector& SurfaceNormal) const
 	{
 		const FVector DirectionRight = Direction ^ UpdatedComponent->GetUpVector();

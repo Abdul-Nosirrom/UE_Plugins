@@ -28,7 +28,7 @@ namespace EvalCache
 
 #pragma region General Definitions
 
-UCLASS()
+UCLASS(ClassGroup="Input Buffer", Category="Input Buffer")
 class COREFRAMEWORK_API UInputBufferMap : public UDataAsset
 {
 	GENERATED_BODY()
@@ -69,7 +69,7 @@ private:
 
 #pragma region Directional Input Definitions
 
-UCLASS()
+UCLASS(ClassGroup="Input Buffer", Category="Input Buffer")
 class COREFRAMEWORK_API UMotionMappingContext : public UDataAsset
 {
 	GENERATED_BODY()
@@ -121,7 +121,7 @@ enum ETurnDirection
 #pragma endregion Enum Primitives
 
 
-UCLASS()
+UCLASS(ClassGroup="Input Buffer", Category="Input Buffer")
 class COREFRAMEWORK_API UMotionAction : public UDataAsset
 {
 	GENERATED_BODY()
@@ -281,11 +281,11 @@ struct COREFRAMEWORK_API FInputActionDelegateHandle
 
 	friend class UInputBufferSubsystem;
 
-	FInputActionDelegateHandle() : InputAction(NAME_None), TriggerType(EBufferTriggerEvent::TRIGGER_Press), bAutoConsume(false)
+	FInputActionDelegateHandle() : InputAction(NAME_None), TriggerType(EBufferTriggerEvent::TRIGGER_Press), bAutoConsume(false), Priority(0)
 	{}
 	
-	FInputActionDelegateHandle(const FName InAction, EBufferTriggerEvent SetTriggerEvent, const bool bSetAutoConsume)
-	: InputAction(InAction), TriggerType(SetTriggerEvent), bAutoConsume(bSetAutoConsume)
+	FInputActionDelegateHandle(const FName InAction, EBufferTriggerEvent SetTriggerEvent, const bool bSetAutoConsume, const int InPriority)
+	: InputAction(InAction), TriggerType(SetTriggerEvent), bAutoConsume(bSetAutoConsume), Priority(InPriority)
 	{}
 
 protected:
@@ -295,6 +295,8 @@ protected:
 	TEnumAsByte<EBufferTriggerEvent> TriggerType;
 	UPROPERTY()
 	bool bAutoConsume;
+	UPROPERTY()
+	int Priority;
 };
 
 USTRUCT()
@@ -304,11 +306,11 @@ struct COREFRAMEWORK_API FInputActionSequenceDelegateHandle
 
 	friend class UInputBufferSubsystem;
 
-	FInputActionSequenceDelegateHandle() : FirstAction(NAME_None), SecondAction(NAME_None), bButtonOrderMatters(false), bAutoConsume(false)
+	FInputActionSequenceDelegateHandle() : FirstAction(NAME_None), SecondAction(NAME_None), bButtonOrderMatters(false), bAutoConsume(false), Priority(0)
 	{}
 	
-	FInputActionSequenceDelegateHandle(const FName ActionOne, const FName ActionTwo, bool bSetAutoConsume, bool bSetOrderMatters)
-	: FirstAction(ActionOne), SecondAction(ActionTwo), bAutoConsume(bSetAutoConsume), bButtonOrderMatters(bSetOrderMatters)
+	FInputActionSequenceDelegateHandle(const FName ActionOne, const FName ActionTwo, bool bSetAutoConsume, bool bSetOrderMatters, const int InPriority)
+	: FirstAction(ActionOne), SecondAction(ActionTwo), bButtonOrderMatters(bSetOrderMatters), bAutoConsume(bSetAutoConsume), Priority(InPriority)
 	{}
 
 protected:
@@ -320,6 +322,8 @@ protected:
 	bool bButtonOrderMatters;
 	UPROPERTY()
 	bool bAutoConsume;
+	UPROPERTY()
+	int Priority;
 };
 
 USTRUCT()
@@ -329,10 +333,10 @@ struct COREFRAMEWORK_API FDirectionalActionDelegateHandle
 
 	friend class UInputBufferSubsystem;
 	
-	FDirectionalActionDelegateHandle() : DirectionalAction(NAME_None), bAutoConsume(false) {}
+	FDirectionalActionDelegateHandle() : DirectionalAction(NAME_None), bAutoConsume(false), Priority(0) {}
 	
-	FDirectionalActionDelegateHandle(const FName Directional, const bool bSetAutoConsume)
-	: DirectionalAction(Directional), bAutoConsume(bSetAutoConsume)
+	FDirectionalActionDelegateHandle(const FName Directional, const bool bSetAutoConsume, const int InPriority)
+	: DirectionalAction(Directional), bAutoConsume(bSetAutoConsume), Priority(InPriority)
 	{}
 
 protected:
@@ -340,6 +344,8 @@ protected:
 	FName DirectionalAction;
 	UPROPERTY()
 	bool bAutoConsume;
+	UPROPERTY()
+	int Priority;
 };
 
 USTRUCT()
@@ -349,11 +355,11 @@ struct COREFRAMEWORK_API FDirectionalAndActionDelegateHandle
 
 	friend class UInputBufferSubsystem;
 
-	FDirectionalAndActionDelegateHandle() : InputAction(NAME_None), DirectionalAction(NAME_None), bAutoConsume(false), SequenceOrder(SEQUENCE_None)
+	FDirectionalAndActionDelegateHandle() : InputAction(NAME_None), DirectionalAction(NAME_None), bAutoConsume(false), SequenceOrder(SEQUENCE_None), Priority(0)
 	{}
 	
-	FDirectionalAndActionDelegateHandle(const FName Action, const FName Directional, bool bSetAutoConsume, EDirectionalSequenceOrder Sequence)
-	: InputAction(Action), DirectionalAction(Directional), bAutoConsume(bSetAutoConsume), SequenceOrder(Sequence)
+	FDirectionalAndActionDelegateHandle(const FName Action, const FName Directional, bool bSetAutoConsume, EDirectionalSequenceOrder Sequence, const int InPriority)
+	: InputAction(Action), DirectionalAction(Directional), bAutoConsume(bSetAutoConsume), SequenceOrder(Sequence), Priority(InPriority)
 	{}
 
 protected:
@@ -365,6 +371,8 @@ protected:
 	bool bAutoConsume;
 	UPROPERTY()
 	TEnumAsByte<EDirectionalSequenceOrder> SequenceOrder;
+	UPROPERTY()
+	int Priority;
 };
 
 #pragma endregion Buffer Event Signatures

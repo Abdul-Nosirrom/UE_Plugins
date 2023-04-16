@@ -20,11 +20,16 @@ void UInputBufferSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 	bInitialized = false;
 	ElapsedTime = 0;
+	ButtonInputValidFrame = TMap<FName, FBufferStateTuple>();
+
+	IB_FLog(Error, "Input Buffer Initialized")
 }
 
 void UInputBufferSubsystem::Deinitialize()
 {
 	Super::Deinitialize();
+	ButtonInputValidFrame.Empty(); // Deallocs, Reset() does not dealloc
+	IB_FLog(Error, "Input Buffer Deinitialized")
 }
 
 void UInputBufferSubsystem::Tick(float DeltaTime)
@@ -209,7 +214,7 @@ void UInputBufferSubsystem::EvaluateEvents()
 	/* Evaluate Directional + Action Events */
 	for (auto DirActSeqBinding : DirectionAndActionDelegates)
 	{
-		// If no binding for the delegate, skip and delete
+		// If no binding for the delegate, skip and delete same if the value is invalid
 		if (!DirActSeqBinding.Key.IsBound())
 		{
 			IB_FLog(Error, "Delegate In Action Bindings Not Bound [%s]", *DirActSeqBinding.Key.GetFunctionName().ToString());
@@ -240,7 +245,7 @@ void UInputBufferSubsystem::EvaluateEvents()
 				}
 		
 				// Otherwise invoke event and maybe consume input
-				if (bInvokeEvent)
+				if (bInvokeEvent && !IsInputConsumed(DirActSeqBinding.Value.InputAction))
 				{
 					auto Value = InputBuffer[ButtonInputValidFrame[DirActSeqBinding.Value.InputAction].OlderState.GetAssociatedFrame()].InputsFrameState[DirActSeqBinding.Value.InputAction].Value;
 					DirActSeqBinding.Key.Execute(Value, ButtonInputValidFrame[DirActSeqBinding.Value.InputAction].OlderState.GetHoldTime());
@@ -286,11 +291,15 @@ void UInputBufferSubsystem::EvaluateEvents()
 				// Otherwise invoke event and maybe consume input
 				auto FirstValue = InputBuffer[FirstAction.GetAssociatedFrame()].InputsFrameState[ActionSeqBinding.Value.FirstAction].Value;
 				auto SecondValue = InputBuffer[FirstAction.GetAssociatedFrame()].InputsFrameState[ActionSeqBinding.Value.FirstAction].Value;
-				ActionSeqBinding.Key.Execute(FirstValue, SecondValue); 
-				if (ActionSeqBinding.Value.bAutoConsume)
+
+				if (!IsInputConsumed(ActionSeqBinding.Value.FirstAction) && !IsInputConsumed(ActionSeqBinding.Value.SecondAction, bRepeatedAction))
 				{
-					ConsumeButtonInput(ActionSeqBinding.Value.FirstAction);
-					ConsumeButtonInput(ActionSeqBinding.Value.SecondAction, bRepeatedAction);
+					ActionSeqBinding.Key.Execute(FirstValue, SecondValue); 
+					if (ActionSeqBinding.Value.bAutoConsume)
+					{
+						ConsumeButtonInput(ActionSeqBinding.Value.FirstAction);
+						ConsumeButtonInput(ActionSeqBinding.Value.SecondAction, bRepeatedAction);
+					}
 				}
 			}
 		}
@@ -327,10 +336,11 @@ void UInputBufferSubsystem::EvaluateEvents()
 			IB_FLog(Error, "Bound Directional Action Doesn't Exist In Buffer [%s]", *DirectionalBindings.Value.DirectionalAction.ToString())
 		}
 	}
-	
+
 	/* Evaluate Action Events */
 	for (auto ActionBindings : ActionDelegates)
 	{
+		
 		// If no binding for the delegate, skip and delete
 		if (!ActionBindings.Key.IsBound())
 		{
@@ -344,7 +354,7 @@ void UInputBufferSubsystem::EvaluateEvents()
 			switch (ActionBindings.Value.TriggerType)
 			{
 				case TRIGGER_Press:
-					if (ButtonInputValidFrame[ActionBindings.Value.InputAction].OlderState.IsPress())
+					if (ButtonInputValidFrame[ActionBindings.Value.InputAction].OlderState.IsPress() && !IsInputConsumed(ActionBindings.Value.InputAction))
 					{
 						auto Value = InputBuffer[ButtonInputValidFrame[ActionBindings.Value.InputAction].OlderState.GetAssociatedFrame()].InputsFrameState[ActionBindings.Value.InputAction].Value;
 						ActionBindings.Key.Execute(Value, 0);
@@ -425,7 +435,6 @@ bool UInputBufferSubsystem::ConsumeButtonInput(const FName InputID, bool bConsum
 	return false;
 }
 
-
 bool UInputBufferSubsystem::ConsumeDirectionalInput(const UMotionAction* Input)
 {
 	if (!Input) return false;
@@ -450,6 +459,26 @@ bool UInputBufferSubsystem::ConsumeDirectionalInput(const FName DirectionalID)
 		DirectionalInputValidFrame[DirectionalID] = -1;
 		return true;
 	}
+	return false;
+}
+
+bool UInputBufferSubsystem::IsInputConsumed(const FName InputID, bool bCheckNewer)
+{
+	if (!ButtonInputValidFrame.Contains(InputID))
+	{
+		IB_FLog(Error, "%s - Input Action Registered But Not Collected In Buffer", *InputID.ToString())
+		return false;
+	}
+	
+	if (!bCheckNewer) // Check older input first
+	{
+		return InputBuffer[ButtonInputValidFrame[InputID].OlderState.GetAssociatedFrame()].InputsFrameState[InputID].bUsed;
+	}
+	if (ButtonInputValidFrame[InputID].NewerState.IsPress()) // Now check newer input if older wasn't valid
+	{
+		return InputBuffer[ButtonInputValidFrame[InputID].NewerState.GetAssociatedFrame()].InputsFrameState[InputID].bUsed;
+	}
+	
 	return false;
 }
 

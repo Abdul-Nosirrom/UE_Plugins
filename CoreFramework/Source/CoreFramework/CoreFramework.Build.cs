@@ -14,8 +14,9 @@ public class CoreFramework : ModuleRules
 	    PrivatePCHHeaderFile = "Private/CFW_PCH.h";
 
 	    PublicDependencyModuleNames.AddRange(new[]
-	      { "Core", "CoreUObject", "Engine", "InputCore", "PhysicsCore", "AIModule", "EnhancedInput", "GameplayTags", 					"GraphEditor",
-		      "EditorFramework", "UnrealEd", "BlueprintGraph", "Kismet", "KismetCompiler" }
+		    {
+			    "Core", "CoreUObject", "Engine", "InputCore", "PhysicsCore", "AIModule", "EnhancedInput", "GameplayTags"
+		    }
 	    );
 
 	    // Public include directories.

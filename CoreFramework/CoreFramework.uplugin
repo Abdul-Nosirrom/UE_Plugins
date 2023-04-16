@@ -23,6 +23,11 @@
     {
       "Name": "ActionFramework",
       "Type": "Runtime",
+      "LoadingPhase": "Default"
+    },
+    {
+      "Name": "EditorUtilities",
+      "Type": "UncookedOnly",
       "LoadingPhase": "PreDefault"
     }
   ],

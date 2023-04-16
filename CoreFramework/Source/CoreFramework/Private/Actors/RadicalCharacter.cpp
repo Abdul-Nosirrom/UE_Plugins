@@ -110,6 +110,7 @@ void ARadicalCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 	//bHasBasedMovementOverride = false;
+	MovementComponent->CharacterOwner = this; // NOTE: For instance
 }
 
 void ARadicalCharacter::TickActor(float DeltaTime, ELevelTick TickType, FActorTickFunction& ThisTickFunction)
@@ -342,6 +343,12 @@ void ARadicalCharacter::WalkingOffLedge(const FVector& PreviousFloorImpactNormal
 {
 	OnWalkingOffLedge(PreviousFloorImpactNormal, PreviousFloorContactNormal, PreviousLocation, DeltaTime);
 	WalkedOffLedgeDelegate.Broadcast(PreviousFloorImpactNormal, PreviousFloorContactNormal, PreviousLocation, DeltaTime);
+}
+
+void ARadicalCharacter::ReachedJumpApex()
+{
+	OnReachedJumpApex();
+	ReachedJumpApexDelegate.Broadcast();
 }
 
 void ARadicalCharacter::MoveBlockedBy(const FHitResult& Hit)
