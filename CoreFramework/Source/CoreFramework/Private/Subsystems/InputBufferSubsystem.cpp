@@ -210,6 +210,8 @@ void UInputBufferSubsystem::EvaluateEvents()
 {
 	SCOPE_CYCLE_COUNTER(STAT_EvalEvents)
 
+	// BUG: Somewhere here I'm causing an esnure fail by deleting an element in an array during the loop
+	
 	// NOTE: Consuming has possible overlap w/ ActionEvent if SEQUENCE_ButtonFirst
 	/* Evaluate Directional + Action Events */
 	for (auto DirActSeqBinding : DirectionAndActionDelegates)
@@ -218,7 +220,7 @@ void UInputBufferSubsystem::EvaluateEvents()
 		if (!DirActSeqBinding.Key.IsBound())
 		{
 			IB_FLog(Error, "Delegate In Action Bindings Not Bound [%s]", *DirActSeqBinding.Key.GetFunctionName().ToString());
-			DirectionAndActionDelegates.Remove(DirActSeqBinding.Key);
+			DirActionSeqMarkedForDelete.Add(DirActSeqBinding.Key);
 			continue;
 		}
 		
@@ -271,7 +273,7 @@ void UInputBufferSubsystem::EvaluateEvents()
 		if (!ActionSeqBinding.Key.IsBound())
 		{
 			IB_FLog(Error, "Delegate In Action Bindings Not Bound [%s]", *ActionSeqBinding.Key.GetFunctionName().ToString());
-			ActionSeqDelegates.Remove(ActionSeqBinding.Key);
+			ActionSeqMarkedForDelete.Add(ActionSeqBinding.Key);
 			continue;
 		}
 		
@@ -316,7 +318,7 @@ void UInputBufferSubsystem::EvaluateEvents()
 		if (!DirectionalBindings.Key.IsBound())
 		{
 			IB_FLog(Error, "Delegate In Action Bindings Not Bound [%s]", *DirectionalBindings.Key.GetFunctionName().ToString());
-			DirectionalDelegates.Remove(DirectionalBindings.Key);
+			DirActionsMarkedForDelete.Add(DirectionalBindings.Key);
 			continue;
 		}
 		
@@ -338,14 +340,19 @@ void UInputBufferSubsystem::EvaluateEvents()
 	}
 
 	/* Evaluate Action Events */
+	int InitLen = ActionDelegates.Num();
 	for (auto ActionBindings : ActionDelegates)
 	{
-		
+		int CurLen = ActionDelegates.Num();
+		if (InitLen != CurLen)
+		{
+			IB_FLog(Error, "Something deleted bro.");
+		}
 		// If no binding for the delegate, skip and delete
 		if (!ActionBindings.Key.IsBound())
 		{
 			IB_FLog(Error, "Delegate In Action Bindings Not Bound [%s]", *ActionBindings.Key.GetFunctionName().ToString());
-			ActionDelegates.Remove(ActionBindings.Key);
+			ActionsMarkedForDelete.Add(ActionBindings.Key);
 			continue;
 		}
 		
@@ -396,6 +403,45 @@ void UInputBufferSubsystem::EvaluateEvents()
 		else
 		{
 			IB_FLog(Error, "Bound Action Doesn't Exist In Buffer [%s]", *ActionBindings.Value.InputAction.ToString())
+		}
+	}
+
+	// Remove dirty signatures
+
+	if (DirActionSeqMarkedForDelete.Num() > 0)
+	{
+		for (int i = DirActionSeqMarkedForDelete.Num() - 1; i >= 0; i--)
+		{
+			auto Element = DirActionSeqMarkedForDelete[i];
+			DirectionAndActionDelegates.Remove(Element);
+			DirActionSeqMarkedForDelete.Remove(Element);
+		}
+	}
+	if (ActionSeqMarkedForDelete.Num() > 0)
+	{
+		for (int i = ActionSeqMarkedForDelete.Num() - 1; i >= 0; i--)
+		{
+			auto Element = ActionSeqMarkedForDelete[i];
+			ActionSeqDelegates.Remove(Element);
+			ActionSeqMarkedForDelete.Remove(Element);
+		}
+	}
+	if (DirActionsMarkedForDelete.Num() > 0)
+	{
+		for (int i = DirActionsMarkedForDelete.Num() - 1; i >= 0; i--)
+		{
+			auto Element = DirActionsMarkedForDelete[i];
+			DirectionalDelegates.Remove(Element);
+			DirActionsMarkedForDelete.Remove(Element);
+		}
+	}
+	if (ActionsMarkedForDelete.Num() > 0)
+	{
+		for (int i = ActionsMarkedForDelete.Num() - 1; i >= 0; i--)
+		{
+			auto Element = ActionsMarkedForDelete[i];
+			ActionDelegates.Remove(Element);
+			ActionsMarkedForDelete.Remove(Element);
 		}
 	}
 }

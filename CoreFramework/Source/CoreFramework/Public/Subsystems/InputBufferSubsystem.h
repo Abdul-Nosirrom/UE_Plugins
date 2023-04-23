@@ -220,43 +220,52 @@ public:
 		DirectionAndActionDelegates.ValueSort(SortByPriority);
 	}
 
+	// Can't delete them directly because apparently C++ and BP don't run in sequence. Calling this in BP can happen while EvaluateEvents is running causing an ensure fail when an element is removed during the loop
+	TArray<FInputActionEventSignature> ActionsMarkedForDelete;
 	UFUNCTION(BlueprintCallable)
 	void UnbindAction(FInputActionEventSignature Event)
 	{
 		if (ActionDelegates.Contains(Event))
 		{
 			//if (Event.IsBound()) Event.Unbind();
-			ActionDelegates.Remove(Event);
+			//ActionDelegates.Remove(Event);
+			ActionsMarkedForDelete.Add(Event);
 		}
 	}
 
+	TArray<FInputActionSequenceSignature> ActionSeqMarkedForDelete;
 	UFUNCTION(BlueprintCallable)
 	void UnbindActionSequence(FInputActionSequenceSignature Event)
 	{
 		if (ActionSeqDelegates.Contains(Event))
 		{
 			//if (Event.IsBound()) Event.Unbind();
-			ActionSeqDelegates.Remove(Event);
+			//ActionSeqDelegates.Remove(Event);
+			ActionSeqMarkedForDelete.Add(Event);
 		}
 	}
 
+	TArray<FDirectionalActionSignature> DirActionsMarkedForDelete;
 	UFUNCTION(BlueprintCallable)
 	void UnbindDirectionalAction(FDirectionalActionSignature Event)
 	{
 		if (DirectionalDelegates.Contains(Event))
 		{
 			//if (Event.IsBound()) Event.Unbind();
-			DirectionalDelegates.Remove(Event);
+			//DirectionalDelegates.Remove(Event);
+			DirActionsMarkedForDelete.Add(Event);
 		}
 	}
 
+	TArray<FDirectionalAndActionSequenceSignature> DirActionSeqMarkedForDelete;
 	UFUNCTION(BlueprintCallable)
 	void UnbindDirectionalActionSequence(FDirectionalAndActionSequenceSignature Event)
 	{
 		if (DirectionAndActionDelegates.Contains(Event))
 		{
 			//if (Event.IsBound()) Event.Unbind();
-			DirectionAndActionDelegates.Remove(Event);
+			//DirectionAndActionDelegates.Remove(Event);
+			DirActionSeqMarkedForDelete.Add(Event);
 		}
 	}
 

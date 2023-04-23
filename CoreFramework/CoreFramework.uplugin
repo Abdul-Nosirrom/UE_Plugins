@@ -29,6 +29,11 @@
       "Name": "EditorUtilities",
       "Type": "UncookedOnly",
       "LoadingPhase": "PreDefault"
+    },
+    {
+      "Name": "CameraFramework",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
     }
   ],
   "Plugins": [
