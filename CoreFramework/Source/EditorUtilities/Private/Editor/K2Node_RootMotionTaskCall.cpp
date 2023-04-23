@@ -14,7 +14,7 @@
 #include "EdGraph/EdGraphSchema.h"
 #include "EdGraphSchema_K2.h"
 #include "Engine/MemberReference.h"
-#include "RootMotionTasks/RootMotionTask_Base.h"
+
 #include "HAL/Platform.h"
 #include "Internationalization/Internationalization.h"
 #include "Internationalization/Text.h"
@@ -42,7 +42,6 @@
 #include "UObject/UnrealType.h"
 #include "UObject/WeakObjectPtr.h"
 
-// INFLUENCED BY UNREAL and the bitches by my side ayooo
 #define LOCTEXT_NAMESPACE "K2Node"
 
 TArray<TWeakObjectPtr<UClass> > UK2Node_RootMotionTaskCall::NodeClasses;

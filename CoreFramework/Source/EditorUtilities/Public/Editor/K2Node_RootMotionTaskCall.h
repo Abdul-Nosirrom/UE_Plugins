@@ -4,12 +4,18 @@
 
 #include "CoreMinimal.h"
 #include "K2Node_BaseAsyncTask.h"
+
+#include "GameFramework/RootMotionSource.h"
+#include "RootMotionTasks/RootMotionTask_Base.h"
+#include "RootMotionTasks/RootMotionTask_ConstantForce.h"
+#include "RootMotionTasks/RootMotionTask_JumpForce.h"
+#include "RootMotionTasks/RootMotionTask_MoveToActorForce.h"
+#include "RootMotionTasks/RootMotionTask_MoveToForce.h"
+
 #include "K2Node_RootMotionTaskCall.generated.h"
 
-class URootMotionTask_Base;
-
 UCLASS()
-class COREFRAMEWORK_API UK2Node_RootMotionTaskCall : public UK2Node_BaseAsyncTask
+class EDITORUTILITIES_API UK2Node_RootMotionTaskCall : public UK2Node_BaseAsyncTask
 {
 	GENERATED_BODY()
 
