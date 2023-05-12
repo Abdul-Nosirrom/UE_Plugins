@@ -2,8 +2,8 @@
 
 
 #include "Actors/LevelPrimitiveActor.h"
-#include "Actors/RadicalPlayerCharacter.h"
-#include "Components/ActionManagerComponent.h"
+#include "Actors/RadicalCharacter.h"
+#include "Components/ActionSystemComponent.h"
 #include "GameplayTagContainer.h"
 #include "GameplayTags.h"
 #include "Kismet/GameplayStatics.h"
@@ -20,15 +20,15 @@ ALevelPrimitiveActor::ALevelPrimitiveActor()
 void ALevelPrimitiveActor::BeginPlay()
 {
 	Super::BeginPlay();
-	PlayerCharacter = Cast<ARadicalPlayerCharacter>(UGameplayStatics::GetPlayerPawn(GetWorld(), 0));
+	PlayerCharacter = Cast<ARadicalCharacter>(UGameplayStatics::GetPlayerPawn(GetWorld(), 0));
 }
 
 void ALevelPrimitiveActor::RegisterWithPlayer()
 {
-	PlayerCharacter->GetActionManager()->RegisterLevelPrimitive(this);
+	Cast<UActionSystemComponent>(PlayerCharacter->FindComponentByClass(UActionSystemComponent::StaticClass()))->RegisterLevelPrimitive(this);
 }
 
 void ALevelPrimitiveActor::UnRegisterPlayer()
 {
-	PlayerCharacter->GetActionManager()->UnRegisterLevelPrimitive(this);
+	Cast<UActionSystemComponent>(PlayerCharacter->FindComponentByClass(UActionSystemComponent::StaticClass()))->UnRegisterLevelPrimitive(this);
 }

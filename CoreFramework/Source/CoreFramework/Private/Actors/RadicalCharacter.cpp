@@ -3,6 +3,7 @@
 #include "RadicalCharacter.h"
 #include "CFW_PCH.h"
 #include "RadicalMovementComponent.h"
+#include "InputBufferSubsystem.h"
 #include "Debug/CFW_LOG.h"
 
 
@@ -12,7 +13,7 @@ FName ARadicalCharacter::MovementComponentName(TEXT("Movement Component"));
 FName ARadicalCharacter::CapsuleComponentName(TEXT("Collision Component"));
 
 // Sets default values
-ARadicalCharacter::ARadicalCharacter() : Super()
+ARadicalCharacter::ARadicalCharacter(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
 	// Structure to hold one-time initialization
 	struct FConstructorStatics
@@ -30,7 +31,6 @@ ARadicalCharacter::ARadicalCharacter() : Super()
 	
 	// Set this pawn to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
-	//PrimaryActorTick.TickInterval = .5f;
 
 	/* ~~~~~ Setup and attach primary components ~~~~~ */
 
@@ -93,6 +93,15 @@ ARadicalCharacter::ARadicalCharacter() : Super()
 }
 
 #pragma region AActor & UObject Interface
+
+UInputBufferSubsystem* ARadicalCharacter::GetInputBuffer() const
+{
+	if (const APlayerController* PlayerController = Cast<APlayerController>(Controller))
+	{
+		return ULocalPlayer::GetSubsystem<UInputBufferSubsystem>(PlayerController->GetLocalPlayer());
+	}
+	return nullptr;
+}
 
 void ARadicalCharacter::PostLoad()
 {
@@ -280,6 +289,12 @@ void ARadicalCharacter::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& D
 		}
 		*/
 	}
+
+	if (DebugDisplay.IsDisplayOn(TEXT("INPUTBUFFER")))
+	{
+		GetInputBuffer()->DisplayDebug(Canvas, DebugDisplay, YL, YPos);
+	}
+	
 	Super::DisplayDebug(Canvas, DebugDisplay, YL, YPos);
 }
 

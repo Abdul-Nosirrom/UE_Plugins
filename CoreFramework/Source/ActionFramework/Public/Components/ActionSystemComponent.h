@@ -8,20 +8,20 @@
 #include "Components/ActorComponent.h"
 #include "StateMachineDefinitions/GameplayStateMachine_Base.h"
 #include "GameplayTags/Classes/GameplayTagAssetInterface.h"
-#include "ActionManagerComponent.generated.h"
+#include "ActionSystemComponent.generated.h"
 
 /* ~~~~~ Forward Declarations ~~~~~ */
 class ARadicalCharacter;
 class ALevelPrimitiveActor;
 //class UGameplayAction;
 
-DECLARE_STATS_GROUP(TEXT("ActionManager_Game"), STATGROUP_ActionManagerComp, STATCAT_Advanced)
+DECLARE_STATS_GROUP(TEXT("ActionSystem_Game"), STATGROUP_ActionSystemComp, STATCAT_Advanced)
 
 
 UCLASS(ClassGroup=(StateMachines), meta=(BlueprintSpawnableComponent, DisplayName="Action Manager Component"))
-class ACTIONFRAMEWORK_API UActionManagerComponent : public UActorComponent, public IGameplayTagAssetInterface
+class ACTIONFRAMEWORK_API UActionSystemComponent : public UActorComponent, public IGameplayTagAssetInterface
 {
-	friend class ARadicalPlayerCharacter;
+	friend class ARadicalCharacter;
 	friend class UGameplayAction;
 	
 	GENERATED_BODY()
@@ -35,21 +35,24 @@ protected:
 	TObjectPtr<UGameplayStateMachine_Base> A_Instance;
 
 	UPROPERTY(Transient, DuplicateTransient)
-	TObjectPtr<ARadicalPlayerCharacter> CharacterOwner;
+	TObjectPtr<ARadicalCharacter> CharacterOwner;
 	
 public:
 	// Sets default values for this component's properties
-	UActionManagerComponent();
+	UActionSystemComponent();
 
 	// UActorComponent
 	virtual void InitializeComponent() override;
 	virtual void BeginPlay() override;
+	virtual void PostLoad() override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	// ~ UActorComponent
 	
+	// Getters & Setters
+	FORCEINLINE ARadicalCharacter* GetCharacterOwner() const { return CharacterOwner; }
+	FORCEINLINE void SetCharacterOwner(ARadicalCharacter* InOwner) { CharacterOwner = InOwner; }
 	
-	
-protected:
+public:
 	void DisplayDebug(class UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL, float& YPos);
 
 #pragma region Level Primitive Interface
@@ -83,7 +86,7 @@ public:
 protected:
 	/// @brief  Actions that have been granted and can be executed
 	UPROPERTY()
-	TMap<TSubclassOf<UGameplayAction>, UGameplayAction*> ActivatableActions; // NOTE: Same comment as below...
+	TMap<UGameplayActionData*, UGameplayAction*> ActivatableActions; // NOTE: Same comment as below...
 	/// @brief  Currently active actions
 	UPROPERTY(Transient)
 	TArray<UGameplayAction*> RunningActions; // Maybe make these TMaps w/ TSubClass keys for faster lookup? Googling says size is not a concern, its just a ptr
@@ -109,19 +112,20 @@ public:
 
 	/// @brief  Returns a list of all currently running actions. (Ex: When one action wants to know about another)
 	UFUNCTION(Category="Actions | Accessors", BlueprintPure)
-	const UGameplayAction* GetRunningAction(UPARAM(meta=(BlueprintBaseOnly))TSubclassOf<UGameplayAction> InActionClass) const
+	const UGameplayAction* GetRunningAction(const UGameplayActionData* InActionData) const
 	{
-		for (const auto Action : RunningActions)
+		for (int i = 0; i < RunningActions.Num(); i++)
 		{
-			if (Action->GetClass() == InActionClass) return Action;
+			if (InActionData == RunningActions[i]->GetActionData()) return RunningActions[i];
 		}
+		
 		return nullptr;
 	}
 	
 	/// @brief	Given an action class, searches whether an instance has been instantiated in this component.
 	/// @return Action instance if it has been previously granted. Null otherwise.
 	UFUNCTION(Category="Actions | Accessors", BlueprintCallable)
-	UGameplayAction* FindActionInstanceFromClass(UPARAM(meta=(BlueprintBaseOnly))TSubclassOf<UGameplayAction> InActionClass);
+	UGameplayAction* FindActionInstanceFromClass(UGameplayActionData* InActionData);
 	
 	/*--------------------------------------------------------------------------------------------------------------
 	* Instantiation
@@ -130,22 +134,22 @@ public:
 	/// @brief  Will grant an action to this component, allowing it to later be performed.
 	/// @return Instance of the action created (Honestly liking the SpecHandle approach now that I think about it)
 	UFUNCTION(Category=Actions, BlueprintCallable)
-	UGameplayAction* GiveAction(UPARAM(meta=(BlueprintBaseOnly))TSubclassOf<UGameplayAction> InActionClass);
+	UGameplayAction* GiveAction(UGameplayActionData* InActionData);
 
 	/// @brief  Will grant an action to this component, activate it, then remove it once its completed
 	/// @return Instance of the action created
 	UFUNCTION(Category=Actions, BlueprintCallable)
-	UGameplayAction* GiveActionAndActivateOnce(UPARAM(meta=(BlueprintBaseOnly))TSubclassOf<UGameplayAction> InActionClass);
+	UGameplayAction* GiveActionAndActivateOnce(UGameplayActionData* InActionData);
 
 	/// @brief  Attempts to remove a granted action from this component, preventing it from being performed.
 	/// @return True if the action of the given class was ever granted in the first place.
 	UFUNCTION(Category=Actions, BlueprintCallable)
-	bool RemoveAction(UPARAM(meta=(BlueprintBaseOnly))TSubclassOf<UGameplayAction> InActionClass);
+	bool RemoveAction(UGameplayActionData* InActionData);
 	
 protected:
 	/// @brief  Internal Use Only. Called by GiveAction, creating an instance of the action class and storing it in the component.
 	///			A given action is instanced once per actor and stored for future use (or removal, which it then has to be regranted)
-	UGameplayAction* CreateNewInstanceOfAbility(TSubclassOf<UGameplayAction> InActionClass) const; 
+	UGameplayAction* CreateNewInstanceOfAbility(UGameplayActionData* InActionData) const; 
 
 	/*--------------------------------------------------------------------------------------------------------------
 	* Activation
@@ -155,7 +159,7 @@ public:
 	
 	/// @brief  Will check if the action can be activated, and if it can, it'll activate it
 	UFUNCTION(Category=Actions, BlueprintCallable)
-	bool TryActivateAbilityByClass(UPARAM(meta=(BlueprintBaseOnly))TSubclassOf<UGameplayAction> InActionToActivate);
+	bool TryActivateAbilityByClass(UGameplayActionData* InActionData);
 
 protected:
 	bool InternalTryActivateAction(UGameplayAction* Action);
@@ -165,7 +169,7 @@ protected:
 	* Cancelling and Interrupts
 	*--------------------------------------------------------------------------------------------------------------*/
 
-
+	// TODO: Need to probably configure tags first...
 	
 	/*--------------------------------------------------------------------------------------------------------------
 	* Ability Event Response: 

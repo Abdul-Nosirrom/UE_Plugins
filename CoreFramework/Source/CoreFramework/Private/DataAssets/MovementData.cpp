@@ -2,9 +2,11 @@
 
 #include "MovementData.h"
 
+#include "InputData.h"
 #include "RadicalCharacter.h"
 #include "RMC_LOG.h"
 #include "Components/RadicalMovementComponent.h"
+#include "StaticLibraries/CoreMathLibrary.h"
 
 UMovementData::UMovementData()
 {
@@ -29,6 +31,22 @@ UMovementData::UMovementData()
 	AirControl = 0.35f;
 	AirControlBoostMultiplier = 2.f;
 	AirControlBoostVelocityThreshold = 25.f;
+
+	/*~~~~ Other Defaults ~~~~*/
+	bUseSeparateGravityScaleGoingUp = false;
+	UpGravityScale = 1.f;
+
+	bAccelerationRotates = false;
+	AccelerationRotationRate = 360.f;
+
+	bUseForwardFrictionCurve = false;
+	bUseTurnFrictionCurve = false;
+	bUseBrakingFrictionCurve = false;
+
+	RotationMethod = METHOD_OrientToGroundAndVelocity;
+	RotationRate = 360.f;
+	bRevertToGlobalUpWhenFalling = true;
+	bInputOnlyRotatesWhenFalling = false; // TODO: Move this to SkatingMovementData
 }
 
 #pragma region Acceleration
@@ -81,7 +99,7 @@ void UMovementData::ConserveEnergy(URadicalMovementComponent* MovementComponent,
 	const float EffectiveGravityScale = FMath::Sign(DeltaH) < 0 ? DownEffectiveGravity : UpEffectiveGravity;
 	const float DeltaV = -FMath::Sign(DeltaH) * FMath::Sqrt(2 * GetGravity().Length() * EffectiveGravityScale * FMath::Abs(DeltaH) / 100.f); // NOTE: Dividing by 100 to make the effective gravity scales nicer numbers
 
-	const FVector Tangent = GravityTangentToSurface.IsZero() && MovementComponent->CurrentFloor.bBlockingHit ? MovementComponent->GetDirectionTangentToSurface(GetGravity(), MovementComponent->CurrentFloor.HitResult.ImpactNormal) : FVector::ZeroVector;
+	const FVector Tangent = GravityTangentToSurface.IsZero() && MovementComponent->CurrentFloor.bBlockingHit ? UCoreMathLibrary::GetDirectionTangentToSurface(GetGravity(), MovementComponent->CurrentFloor.HitResult.ImpactNormal) : FVector::ZeroVector;
 
 	if (bChangeDirection && !Tangent.IsZero())
 	{
@@ -146,12 +164,12 @@ void UMovementData::CalculateInputVelocity(URadicalMovementComponent* MovementCo
 		else
 		{
 			// Testing quaternion acceleration method
-			const FVector TargetVel = Velocity - (Velocity  - AccelDir * VelSize ) * FMath::Min(DeltaTime * ForwardFrictionFactor * Friction, 1.f);
+			const FVector TargetVel = Velocity - (Velocity  - AccelDir * VelSize ) * FMath::Min(DeltaTime * ForwardFrictionFactor * Friction, 1.f); // Controls the magnitude of the rotated vel
 			const FQuat TargetVelDir = AccelDir.ToOrientationQuat();
 			const FQuat CurrentVelDir = Velocity.ToOrientationQuat();
 			
 			// Modulate rotation rate by turn friction curve sample and acceleration mag (Otherwise turn speed is always const)
-			Velocity = FQuat::Slerp(CurrentVelDir, TargetVelDir, AccelerationRotationRate * TurnFrictionFactor * (Acceleration.Length()/MaxAcceleration) *  DeltaTime).Vector().GetSafeNormal() * TargetVel.Length();
+			Velocity = FQuat::Slerp(CurrentVelDir, TargetVelDir, AccelerationRotationRate * TurnFrictionFactor * FMath::Min(( 1 - Velocity.Length()/MaxSpeed), 0.2f) *  DeltaTime).Vector().GetSafeNormal() * TargetVel.Length();
 		}
 	}
 
@@ -360,14 +378,15 @@ FQuat UMovementData::GetUniformRotation(const URadicalMovementComponent* Movemen
 	
 	/* Transform Input Back To Its Local Basis */
 	{
-		const FRotator Rotation = MovementComponent->CharacterOwner->Controller->GetControlRotation();
-		const FQuat YawRotation = FRotator(0, -Rotation.Yaw, 0).Quaternion();
-		Input = YawRotation * Input;
+		// Currently passing input locally so commenting this out
+		//const FRotator Rotation = MovementComponent->CharacterOwner->Controller->GetControlRotation();
+		//const FQuat YawRotation = FRotator(0, -Rotation.Yaw, 0).Quaternion();
+		//Input = YawRotation * Input;
 	}
 	
 	const FQuat CurrentRotation = MovementComponent->UpdatedComponent->GetComponentRotation().Quaternion();
 
-	if (Input.Y == 0) return CurrentRotation;
+	if (Input.Y == 0) return CurrentRotation; 
 	
 	return UKismetMathLibrary::MakeRotFromXZ(MovementComponent->CharacterOwner->GetActorRightVector() * Input.Y, MovementComponent->CharacterOwner->GetActorUpVector()).Quaternion();
 }
@@ -382,7 +401,7 @@ FVector UMovementData::ComputeInputAcceleration(URadicalMovementComponent* Movem
 	const FVector RawAccel = MaxAcceleration * FVector::VectorPlaneProject(MovementComponent->GetLastInputVector(), MovementComponent->GetUpOrientation(MODE_Gravity));;
 	if (MovementComponent->IsMovingOnGround()) 
 	{
-		return MovementComponent->GetDirectionTangentToSurface(RawAccel, MovementComponent->CurrentFloor.HitResult.ImpactNormal) * RawAccel.Length();
+		return UCoreMathLibrary::GetDirectionTangentToSurface(RawAccel, MovementComponent->CurrentFloor.HitResult.ImpactNormal) * RawAccel.Length();
 	}
 	return RawAccel;
 }

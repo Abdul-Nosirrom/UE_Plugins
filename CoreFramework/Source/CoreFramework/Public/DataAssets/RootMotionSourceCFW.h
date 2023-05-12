@@ -191,9 +191,12 @@ struct COREFRAMEWORK_API FRootMotionSourceCFW_MoveToForce : public FRootMotionSo
 	bool bRestrictSpeedToExpected;
 
 	UPROPERTY()
+	bool bApplyCurveInLocalSpace;
+	
+	UPROPERTY()
 	TObjectPtr<UCurveVector> PathOffsetCurve;
 
-	FVector GetPathOffsetInWorldSpace(const float MoveFraction) const;
+	FVector GetPathOffsetInWorldSpace(const float MoveFraction, const FRotator& PawnRotation) const;
 
 	virtual FRootMotionSource* Clone() const override;
 
@@ -247,6 +250,9 @@ struct COREFRAMEWORK_API FRootMotionSourceCFW_MoveToDynamicForce : public FRootM
 	bool bRestrictSpeedToExpected;
 
 	UPROPERTY()
+	bool bApplyCurveInLocalSpace;
+	
+	UPROPERTY()
 	TObjectPtr<UCurveVector> PathOffsetCurve;
 
 	UPROPERTY()
@@ -254,7 +260,7 @@ struct COREFRAMEWORK_API FRootMotionSourceCFW_MoveToDynamicForce : public FRootM
 
 	void SetTargetLocation(FVector NewTargetLocation);
 
-	FVector GetPathOffsetInWorldSpace(const float MoveFraction) const;
+	FVector GetPathOffsetInWorldSpace(const float MoveFraction, const FRotator& PawnRotation) const;
 
 	virtual FRootMotionSource* Clone() const override;
 
@@ -302,7 +308,7 @@ struct COREFRAMEWORK_API FRootMotionSourceCFW_JumpForce : public FRootMotionSour
 
 	UPROPERTY()
 	bool bDisableTimeout;
-
+	
 	UPROPERTY()
 	TObjectPtr<UCurveVector> PathOffsetCurve;
 

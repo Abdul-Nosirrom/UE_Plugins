@@ -32,7 +32,7 @@ public:
 	/* Base State Parameters */
 
 	UPROPERTY(Category=Action, EditAnywhere, BlueprintReadWrite)
-	TSubclassOf<UGameplayAction> ActionClass;
+	UGameplayActionData* ActionData; // TODO: Make SoftObjectPtr?
 	UPROPERTY()
 	UGameplayAction* ActionInstance;
 
@@ -58,7 +58,7 @@ public:
 	/* ~~~~~~~~~~~~~~~~~~~~~ */
 protected:
 	UPROPERTY(Transient)
-	UActionManagerComponent* ActionManager;
+	TWeakObjectPtr<UActionSystemComponent> ActionSystem;
 
 	/// @brief  Shared amongst state definitions as they both share the same base params and reveal them the same way
 	virtual void ConstructionScript_Implementation() override;

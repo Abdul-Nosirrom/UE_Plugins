@@ -16,7 +16,7 @@ public class ActionFramework : ModuleRules
 		PublicDependencyModuleNames.AddRange(new[]
 			{
 				"Core", "CoreUObject", "Engine", "InputCore", "PhysicsCore", "AIModule", "EnhancedInput", "GameplayTags",
-				"Projects"
+				"Projects", "SMSystem"
 			}
 		);
 		
@@ -28,7 +28,7 @@ public class ActionFramework : ModuleRules
 		
 		// Public include directories.
 		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public"));
-		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public/StateMachineTemplates"));
+		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public/ActionTemplates"));
 		
 		// Private includes directories.
 		PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "Private"));

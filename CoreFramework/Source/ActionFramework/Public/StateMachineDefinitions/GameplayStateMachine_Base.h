@@ -7,11 +7,11 @@
 #include "GameplayStateMachine_Base.generated.h"
 
 /* ~~~~~ Forward Declarations ~~~~~ */
-class ARadicalPlayerCharacter;
-class UActionManagerComponent;
+class ARadicalCharacter;
+class UActionSystemComponent;
 
 
-/// @brief Blueprint state machine object that corresponds to gameplay state machine. Offers built in functionality for use with a RadicalCharacter & ActionManagerComponent
+/// @brief Blueprint state machine object that corresponds to gameplay state machine. Offers built in functionality for use with a RadicalCharacter & ActionSystemComponent
 UCLASS(Blueprintable, BlueprintType, ClassGroup = ActionManager, hideCategories = (SMStateMachineInstance), meta = (DisplayName = "Base Gameplay State Machine"))
 class ACTIONFRAMEWORK_API UGameplayStateMachine_Base : public USMInstance
 {
@@ -22,20 +22,20 @@ class ACTIONFRAMEWORK_API UGameplayStateMachine_Base : public USMInstance
 	
 public:
 	UPROPERTY(Transient)
-	TObjectPtr<ARadicalPlayerCharacter> RadicalOwner;
+	TObjectPtr<ARadicalCharacter> RadicalOwner;
 	UPROPERTY(Transient)
-	TObjectPtr<UActionManagerComponent> Component;
+	TObjectPtr<UActionSystemComponent> Component;
 
 	UFUNCTION(Category = "Action State Machine", BlueprintCallable)
-	void InitializeActions(ARadicalPlayerCharacter* Character, UActionManagerComponent* SetComponent);
+	void InitializeActions(ARadicalCharacter* Character, UActionSystemComponent* SetComponent);
 
 	UFUNCTION(Category="Action State Machine", BlueprintCallable)
-	void SetRadicalOwner(ARadicalPlayerCharacter* Character) { RadicalOwner = Character;}
+	void SetRadicalOwner(ARadicalCharacter* Character) { RadicalOwner = Character;}
 	
 	UFUNCTION(Category="Action State Machine", BlueprintCallable)
-	ARadicalPlayerCharacter* GetRadicalOwner() const { return RadicalOwner; }
+	ARadicalCharacter* GetRadicalOwner() const { return RadicalOwner; }
 	UFUNCTION(Category="Action State Machine", BlueprintCallable)
-	UActionManagerComponent* GetActionComponent() const { return Component; }
+	UActionSystemComponent* GetActionComponent() const { return Component; }
 	
 	// ISMInstanceInterface
 	/** The object which this state machine is running for. */

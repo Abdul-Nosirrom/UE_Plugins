@@ -41,7 +41,7 @@ class COREFRAMEWORK_API URootMotionTask_MoveToActorForce : public URootMotionTas
 
 	/* Apply force to character's movement */
 	UFUNCTION(BlueprintCallable, Category = "Root Motion|Tasks", meta = (BlueprintInternalUseOnly = "TRUE"))
-	static URootMotionTask_MoveToActorForce* ApplyRootMotionMoveToActorForce(ARadicalCharacter* Owner, FName TaskInstanceName, AActor* TargetActor, FVector TargetLocationOffset, ERootMotionTaskMoveToActorTargetOffsetType OffsetAlignment, float Duration, UCurveFloat* TargetLerpSpeedHorizontal, UCurveFloat* TargetLerpSpeedVertical, bool bSetNewMovementMode, EMovementState MovementMode, bool bRestrictSpeedToExpected, UCurveVector* PathOffsetCurve, UCurveFloat* TimeMappingCurve, ERootMotionFinishVelocityMode VelocityOnFinishMode, FVector SetVelocityOnFinish, float ClampVelocityOnFinish, bool bDisableDestinationReachedInterrupt);
+	static URootMotionTask_MoveToActorForce* ApplyRootMotionMoveToActorForce(ARadicalCharacter* Owner, FName TaskInstanceName, AActor* TargetActor, FVector TargetLocationOffset, ERootMotionTaskMoveToActorTargetOffsetType OffsetAlignment, float Duration, UCurveFloat* TargetLerpSpeedHorizontal, UCurveFloat* TargetLerpSpeedVertical, bool bSetNewMovementMode, EMovementState MovementMode, bool bRestrictSpeedToExpected, bool bApplyCurveInLocalSpace, UCurveVector* PathOffsetCurve, UCurveFloat* TimeMappingCurve, ERootMotionFinishVelocityMode VelocityOnFinishMode, FVector SetVelocityOnFinish, float ClampVelocityOnFinish, bool bDisableDestinationReachedInterrupt);
 	
 	virtual void TickTask(float DeltaTime) override;
 
@@ -97,6 +97,9 @@ protected:
 	 *  collision. Disabled means we do everything we can to velocity during the move to get to the TargetLocation. */
 	UPROPERTY()
 	bool bRestrictSpeedToExpected;
+
+	UPROPERTY()
+	bool bApplyCurveInLocalSpace;
 
 	UPROPERTY()
 	TObjectPtr<UCurveVector> PathOffsetCurve;

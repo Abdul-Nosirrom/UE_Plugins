@@ -13,6 +13,7 @@ class UCapsuleComponent;
 class URootMotionTasksComponent;
 class UArrowComponent;
 class URootMotionTask_Base;
+class UInputBufferSubsystem;
 enum EMovementState;
 
 /* Delegate Declarations */
@@ -31,7 +32,7 @@ class COREFRAMEWORK_API ARadicalCharacter : public APawn
 	
 public:
 	// Sets default values for this pawn's properties
-	ARadicalCharacter();
+	ARadicalCharacter(const FObjectInitializer& ObjectInitializer);
 
 	virtual void TickActor(float DeltaTime, ELevelTick TickType, FActorTickFunction& ThisTickFunction) override;
 
@@ -77,6 +78,10 @@ public:
 	
 	/// @brief Getter for characters capsule component
 	FORCEINLINE UCapsuleComponent* GetCapsuleComponent() const { return CapsuleComponent; }
+
+	/// @brief  Getter for local players InputBuffer, only valid if controlled by a player controller
+	UFUNCTION(Category="Input", BlueprintPure)
+	UInputBufferSubsystem* GetInputBuffer() const;
 #pragma endregion Primary Component Getters
 
 #pragma region AActor & UObject Interface

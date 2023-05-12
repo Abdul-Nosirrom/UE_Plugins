@@ -299,16 +299,16 @@ protected:
 	UPROPERTY(Category="Motor | Physics State", EditAnywhere, BlueprintReadWrite)
 	TObjectPtr<UMovementData> MovementData;
 
-	UPROPERTY(Category="Motor | Physics State", EditDefaultsOnly)
+	UPROPERTY(Category="Motor | Physics State", EditDefaultsOnly, AdvancedDisplay)
 	bool bAlwaysOrientToGravity; // TODO: Temp for debug
 	
-	UPROPERTY()
+	UPROPERTY(Transient)
 	FVector Acceleration;
-	UPROPERTY()
+	UPROPERTY(Transient)
 	FQuat LastUpdateRotation;
-	UPROPERTY()
+	UPROPERTY(Transient)
 	FVector LastUpdateLocation;
-	UPROPERTY()
+	UPROPERTY(Transient)
 	FVector LastUpdateVelocity;
 	
 	// NOTE: None of these are really valid outside of a movement tick. They'd correspond to the current ones.
@@ -333,13 +333,13 @@ protected:
 	/* ~~~~~~~~~~~~~~~~~~~~~~~ */
 	
 	/* Interface Handling Parameters */
-	UPROPERTY()
+	UPROPERTY(Transient)
 	FVector PendingLaunchVelocity;
-	UPROPERTY()
+	UPROPERTY(Transient)
 	FVector PendingImpulseToApply;
-	UPROPERTY()
+	UPROPERTY(Transient)
 	FVector PendingForceToApply;
-	UPROPERTY()
+	UPROPERTY(Transient)
 	FVector InputVector;
 	/* ~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 	
@@ -379,18 +379,11 @@ public:
 		
 	virtual void OnMovementStateChanged(EMovementState PreviousMovementState);
 
-	void DisableMovement();
-	
-	/// @brief  Get the velocity required to move [MoveDelta] amount in [DeltaTime] time.
-	/// @param  MoveDelta Movement Delta To Compute Velocity
-	/// @param  DeltaTime Delta Time In Which Move Would Be Performed
-	/// @return Velocity corresponding to MoveDelta/DeltaTime if valid delta time was passed through
 	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
-	FORCEINLINE FVector GetVelocityFromMovement(FVector MoveDelta, float DeltaTime) const 
-	{
-		if (DeltaTime <= 0.f) return FVector::ZeroVector;
-		return MoveDelta / DeltaTime;
-	}
+	void DisableMovement();
+
+	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
+	void EnableMovement();
 	
 	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
 	FORCEINLINE FVector GetVelocity() const { return Velocity; }
@@ -488,7 +481,7 @@ protected:
 	///			WARNING: If (MaxSimulationTimeStep * MaxSimulationIterations) is too low for the min framerate, the last simulation step may exceed
 	///			MaxSimulationTimeStep to complete the simulation. @see MaxSimulationIterations
 	UPROPERTY(Category= "(Radical Movement): Simulation Settings", EditDefaultsOnly, meta=(ClampMin="0.0166", ClampMax="0.50", UIMin="0.0166", UIMax="0.50"))
-	float MaxSimulationTimeStep							= 0.05f;
+	float MaxSimulationTimeStep;
 
 	/// @brief  Max number of iterations used for each discrete simulation step in the movement simulation. Increasing the value can address issues with fast-moving
 	///			objects or complex collision scenarios, at the cost of performance.
@@ -496,18 +489,18 @@ protected:
 	///			WARNING: If (MaxSimulationTimeStep * MaxSimulationIterations) is too low for the min framerate, the last simulation step may exceed
 	///			MaxSimulationTimeStep to complete the simulation. @see MaxSimulationTimeStep
 	UPROPERTY(Category= "(Radical Movement): Simulation Settings", EditDefaultsOnly, meta=(ClampMin="1", ClampMax="25", UIMin="1", UIMax="25"))
-	float MaxSimulationIterations						= 8;
+	float MaxSimulationIterations;
 
 	/// @brief  Max distance we allow to depenetrate when moving out of anything but Pawns.
 	///			This is generally more tolerant than with Pawns, because other geometry is static.
 	///			@see MaxDepenetrationWithPawn
 	UPROPERTY(Category= "(Radical Movement): Simulation Settings", EditDefaultsOnly, meta=(ClampMin="0", UIMin="0", ForceUnits=cm))
-	float MaxDepenetrationWithGeometry					= 100.f;
+	float MaxDepenetrationWithGeometry;
 
 	/// @brief  Max distance we allow to depenetrate when moving out of pawns.
 	///			@see MaxDepenetrationWithGeometry
 	UPROPERTY(Category= "(Radical Movement): Simulation Settings", EditDefaultsOnly, meta=(ClampMin="0", UIMin="0", ForceUnits=cm))
-	float MaxDepenetrationWithPawn						= 100.f;
+	float MaxDepenetrationWithPawn;
 
 protected:
 	
@@ -562,11 +555,11 @@ protected:
 
 	/// @brief  Maximum ground slope angle relative to the actor up direction.
 	UPROPERTY(Category= "(Radical Movement): Ground Settings", EditDefaultsOnly)
-	float MaxStableSlopeAngle = 60.f;
+	float MaxStableSlopeAngle;
 
 	/// @brief	Additional ground probing distance, probe distance will be chosen as the maximum between this and @see MaxStepHeight
 	UPROPERTY(Category="(Radical Movement): Ground Settings", EditDefaultsOnly, BlueprintReadWrite, AdvancedDisplay)
-	float ExtraFloorProbingDistance = 20.f;
+	float ExtraFloorProbingDistance;
 
 	/// @brief	Will always perform floor sweeps regardless of whether we are moving or not
 	UPROPERTY(Category="(Radical Movement): Ground Settings", EditAnywhere, BlueprintReadWrite, AdvancedDisplay)
@@ -635,7 +628,7 @@ protected:
 
 	/// @brief Used in determining if pawn is going off ledge.  If the ledge is "shorter" than this value then the pawn will be able to walk off it. 
 	UPROPERTY(Category="(Radical Movement): Ledge Settings", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bCanWalkOffLedges", EditConditionHides, ForceUnits=cm))
-	float LedgeCheckThreshold = 4.f;
+	float LedgeCheckThreshold;
 	
 	/// @brief  Prevents owner from perching on the edge of a surface if the contact is 'PerchRadiusThreshold' close to the edge of the capsule.
 	///			NOTE: Will not switch to Aerial if they're within the MaxStepHeight of the surface below it (Assuming stable surface)
@@ -651,13 +644,17 @@ protected:
 	UPROPERTY(Category="(Radical Movement): Ledge Settings", EditDefaultsOnly, BlueprintReadWrite)
 	uint8 bLedgeAndDenivelationHandling : 1;
 	
-	/// @brief Prevents snapping to ground on ledges beyond a certain velocity.
+	/// @brief If Velocity is less than this, we don't lose stability on any denivelation angle. Otherwise, we evaluate denivelation stability normally
 	UPROPERTY(Category= "(Radical Movement): Ledge Settings", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition = "bLedgeAndDenivelationHandling", EditConditionHides, ClampMin="0", UIMin="0", ForceUnits="cm/s"))
-	float MaxVelocityForLedgeSnap = 0.f;
+	float MinVelocityForDenivelationEvaluation;
 
-	/// @brief  Maximum downward slope angle DELTA that the actor can be subjected to and still be snapping to the ground
+	/// @brief  Maximum downward slope angle DELTA that the actor can be subjected to and still be snapping to the ground. For cases such as going left on [ -\ ] 
 	UPROPERTY(Category= "(Radical Movement): Ledge Settings", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition = "bLedgeAndDenivelationHandling", EditConditionHides, ClampMin="0", ClampMax="180", UIMin="0", UIMax="180"))
-	float MaxStableDenivelationAngle = 180.f;
+	float MaxStableUpwardsDenivelationAngle;
+
+	/// @brief  Maximum upward slope angle DELTA that the actor can be subjected to and still be snapping to the ground. For cases such as going right in [ -\ ]
+	UPROPERTY(Category= "(Radical Movement): Ledge Settings", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition = "bLedgeAndDenivelationHandling", EditConditionHides, ClampMin="0", ClampMax="180", UIMin="0", UIMax="180"))
+	float MaxStableDownwardsDenivelationAngle;
 
 	/// @brief	Returns the distance from the edge of the capsule within which we don't allow the owner to perch on the edge of a surface
 	/// @return Max of PerchRadiusThreshold and zero
@@ -809,35 +806,35 @@ protected:
 	uint8 bScalePushForceToVelocity				: 1;
 
 	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bEnablePhysicsInteraction"))
-	float RepulsionForce{2.5f};
+	float RepulsionForce;
 	
 	/// @brief  Multiplier for the force that is applied to physics objects that are touched by the pawn.
 	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bEnablePhysicsInteraction"))
-	float TouchForceFactor{1.f};
+	float TouchForceFactor;
 
 	/// @brief  The minimum force applied to physics objects touched by the pawn.
 	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bEnablePhysicsInteraction"))
-	float MinTouchForce{-1.f};
+	float MinTouchForce;
 
 	/// @brief  The maximum force applied to physics objects touched by the pawn.
 	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bEnablePhysicsInteraction"))
-	float MaxTouchForce{250.f};
+	float MaxTouchForce;
 
 	/// @brief  
 	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bEnablePhysicsInteraction"))
-	float StandingDownwardForceScale{1.f};
+	float StandingDownwardForceScale;
 
 	/// @brief  
 	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bEnablePhysicsInteraction"))
-	float InitialPushForceFactor{500.f};
+	float InitialPushForceFactor;
 
 	/// @brief  
 	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bEnablePhysicsInteraction"))
-	float PushForceFactor{750000.f};
+	float PushForceFactor;
 
 	/// @brief  
 	UPROPERTY(Category= "(Radical Movement): Physics Interactions", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bEnablePhysicsInteraction", UIMin="-1.0", UIMax="1.0"))
-	float PushForcePointVerticalOffsetFactor{-0.75f};
+	float PushForcePointVerticalOffsetFactor;
 
 	
 	/// @brief Event invoked when the root collision component hits another collision component
@@ -879,7 +876,7 @@ protected:
 	uint8 bMoveWithBase					: 1;
 
 	UPROPERTY(Category= "(Radical Movement): Movement Base Settings", EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bMoveWithBase", EditConditionHides, ClampMin="0", UIMin="0"))
-	float FormerBaseVelocityDecayHalfLife = 0.f;
+	float FormerBaseVelocityDecayHalfLife;
 	
 	/**
 	* Whether the character ignores changes in rotation of the base it is standing on.
@@ -917,7 +914,7 @@ protected:
 	///			pawn needs an update
 	FQuat OldBaseQuat;
 
-	FVector DecayingFormerBaseVelocity = FVector::ZeroVector;
+	FVector DecayingFormerBaseVelocity;
 
 	/*~~~~~ Based Movement Methods ~~~~~*/
 
@@ -1037,18 +1034,6 @@ public:
 	/// @param  YL Height of the current font
 	/// @param  YPos Y position on Canvas. YPos += YL, gives position to draw text for next debug line
 	virtual void DisplayDebug(class UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL, float& YPos);
-
-	UFUNCTION(BlueprintCallable)
-	FORCEINLINE FVector GetDirectionTangentToSurface(const FVector& Direction, const FVector& SurfaceNormal) const
-	{
-		const FVector DirectionRight = Direction ^ UpdatedComponent->GetUpVector();
-		return (SurfaceNormal ^ DirectionRight).GetSafeNormal();
-	}
-
-	FORCEINLINE float DistanceAlongAxis(const FVector& From, const FVector& To, const FVector& Axis) const 
-	{
-		return (To - From) | Axis;
-	}
 
 #pragma endregion Utility
 	

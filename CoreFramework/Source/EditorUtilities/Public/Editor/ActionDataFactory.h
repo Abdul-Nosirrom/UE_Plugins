@@ -1,24 +1,22 @@
-﻿// 
+﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/Object.h"
-#include "ActionBlueprintFactory.generated.h"
+#include "Factories/Factory.h"
+#include "ActionDataFactory.generated.h"
 
-
+/**
+ * 
+ */
 UCLASS(HideCategories=Object, MinimalAPI)
-class UActionBlueprintFactory : public UFactory
+class UActionDataFactory : public UFactory
 {
 	GENERATED_UCLASS_BODY()
 
-	// The type of blueprint that will be created
-	UPROPERTY(EditAnywhere, Category=GameplayActionsBlueprintFactory)
-	TEnumAsByte<enum EBlueprintType> BlueprintType;
-
 	// The parent class of the created blueprint
-	UPROPERTY(EditAnywhere, Category=GameplayActionsBlueprintFactory)
-	TSubclassOf<class UGameplayAction> ParentClass;
+	UPROPERTY(EditAnywhere, Category=GameplayActionDataFactory)
+	TSubclassOf<class UGameplayActionData> ParentClass;
 
 	//~ Begin UFactory Interface
 	virtual bool ConfigureProperties() override;

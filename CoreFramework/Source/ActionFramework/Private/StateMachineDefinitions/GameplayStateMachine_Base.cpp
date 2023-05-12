@@ -2,12 +2,12 @@
 
 
 #include "StateMachineDefinitions/GameplayStateMachine_Base.h"
-#include "Actors/RadicalPlayerCharacter.h"
-#include "Components/ActionManagerComponent.h"
+#include "Actors/RadicalCharacter.h"
+#include "Components/ActionSystemComponent.h"
 #include "StateMachineDefinitions/Action_CoreStateInstance.h"
 
 
-void UGameplayStateMachine_Base::InitializeActions(ARadicalPlayerCharacter* Character, UActionManagerComponent* SetComponent)
+void UGameplayStateMachine_Base::InitializeActions(ARadicalCharacter* Character, UActionSystemComponent* SetComponent)
 {
 	RadicalOwner = Character;
 	Component = SetComponent;

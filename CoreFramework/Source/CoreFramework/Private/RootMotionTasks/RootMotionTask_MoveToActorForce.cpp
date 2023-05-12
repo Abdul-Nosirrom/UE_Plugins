@@ -37,7 +37,7 @@ URootMotionTask_MoveToActorForce* URootMotionTask_MoveToActorForce::ApplyRootMot
 	ARadicalCharacter* Owner, FName TaskInstanceName, AActor* TargetActor,
 	FVector TargetLocationOffset, ERootMotionTaskMoveToActorTargetOffsetType OffsetAlignment, float Duration,
 	UCurveFloat* TargetLerpSpeedHorizontal, UCurveFloat* TargetLerpSpeedVertical, bool bSetNewMovementMode,
-	EMovementState MovementMode, bool bRestrictSpeedToExpected, UCurveVector* PathOffsetCurve,
+	EMovementState MovementMode, bool bRestrictSpeedToExpected, bool bApplyCurveInLocalSpace, UCurveVector* PathOffsetCurve,
 	UCurveFloat* TimeMappingCurve, ERootMotionFinishVelocityMode VelocityOnFinishMode, FVector SetVelocityOnFinish,
 	float ClampVelocityOnFinish, bool bDisableDestinationReachedInterrupt)
 {
@@ -55,6 +55,7 @@ URootMotionTask_MoveToActorForce* URootMotionTask_MoveToActorForce::ApplyRootMot
 	MyTask->bSetNewMovementMode = bSetNewMovementMode;
 	MyTask->NewMovementMode = MovementMode;
 	MyTask->bRestrictSpeedToExpected = bRestrictSpeedToExpected;
+	MyTask->bApplyCurveInLocalSpace = bApplyCurveInLocalSpace;
 	MyTask->PathOffsetCurve = PathOffsetCurve;
 	MyTask->TimeMappingCurve = TimeMappingCurve;
 	MyTask->FinishVelocityMode = VelocityOnFinishMode;
@@ -176,6 +177,7 @@ void URootMotionTask_MoveToActorForce::SharedInitAndApply()
 			MoveToActorForce->StartLocation = StartLocation;
 			MoveToActorForce->Duration = FMath::Max(Duration, KINDA_SMALL_NUMBER);
 			MoveToActorForce->bRestrictSpeedToExpected = bRestrictSpeedToExpected;
+			MoveToActorForce->bApplyCurveInLocalSpace = bApplyCurveInLocalSpace;
 			MoveToActorForce->PathOffsetCurve = PathOffsetCurve;
 			MoveToActorForce->TimeMappingCurve = TimeMappingCurve;
 			MoveToActorForce->FinishVelocityParams.Mode = FinishVelocityMode;

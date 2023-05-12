@@ -1,14 +1,13 @@
-﻿// 
+﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/Object.h"
-#include "ActionBlueprintFactory.generated.h"
-
+#include "Factories/BlueprintFactory.h"
+#include "ActionDataBlueprintFactory.generated.h"
 
 UCLASS(HideCategories=Object, MinimalAPI)
-class UActionBlueprintFactory : public UFactory
+class UActionDataBlueprintFactory : public UFactory
 {
 	GENERATED_UCLASS_BODY()
 
@@ -18,10 +17,10 @@ class UActionBlueprintFactory : public UFactory
 
 	// The parent class of the created blueprint
 	UPROPERTY(EditAnywhere, Category=GameplayActionsBlueprintFactory)
-	TSubclassOf<class UGameplayAction> ParentClass;
+	TSubclassOf<class UGameplayActionData> ParentClass;
 
 	//~ Begin UFactory Interface
-	virtual bool ConfigureProperties() override;
+	//virtual bool ConfigureProperties() override;
 	virtual UObject* FactoryCreateNew(UClass* Class, UObject* InParent, FName Name, EObjectFlags Flags, UObject* Context, FFeedbackContext* Warn, FName CallingContext) override;
 	virtual UObject* FactoryCreateNew(UClass* Class, UObject* InParent, FName Name, EObjectFlags Flags, UObject* Context, FFeedbackContext* Warn) override;
 	//~ Begin UFactory Interface	

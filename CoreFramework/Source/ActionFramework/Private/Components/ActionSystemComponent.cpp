@@ -1,36 +1,36 @@
 ﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 
-#include "Components/ActionManagerComponent.h"
+#include "Components/ActionSystemComponent.h"
 
 #include "RadicalCharacter.h"
 #include "RadicalMovementComponent.h"
 #include "ActionSystem/GameplayAction.h"
 #include "Actors/LevelPrimitiveActor.h"
-#include "Actors/RadicalPlayerCharacter.h"
+#include "Actors/RadicalCharacter.h"
 #include "Engine/AssetManager.h"
 #include "Engine/Canvas.h"
 
-DECLARE_CYCLE_STAT(TEXT("Tick Actions"), STAT_TickStateMachine, STATGROUP_ActionManagerComp)
-DECLARE_CYCLE_STAT(TEXT("Activate Action"), STAT_ActivateAction, STATGROUP_ActionManagerComp)
-DECLARE_CYCLE_STAT(TEXT("Calculate Action Velocity"), STAT_CalcVelocity, STATGROUP_ActionManagerComp)
-DECLARE_CYCLE_STAT(TEXT("Update Action Rotation"), STAT_UpdateRot, STATGROUP_ActionManagerComp)
+DECLARE_CYCLE_STAT(TEXT("Tick Actions"), STAT_TickStateMachine, STATGROUP_ActionSystemComp)
+DECLARE_CYCLE_STAT(TEXT("Activate Action"), STAT_ActivateAction, STATGROUP_ActionSystemComp)
+DECLARE_CYCLE_STAT(TEXT("Calculate Action Velocity"), STAT_CalcVelocity, STATGROUP_ActionSystemComp)
+DECLARE_CYCLE_STAT(TEXT("Update Action Rotation"), STAT_UpdateRot, STATGROUP_ActionSystemComp)
 
 // Sets default values for this component's properties
-UActionManagerComponent::UActionManagerComponent()
+UActionSystemComponent::UActionSystemComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	A_Instance = nullptr;
 }
 
-void UActionManagerComponent::InitializeComponent()
+void UActionSystemComponent::InitializeComponent()
 {
 	Super::InitializeComponent();
 }
 
 
 // Called when the game starts
-void UActionManagerComponent::BeginPlay()
+void UActionSystemComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
@@ -51,22 +51,28 @@ void UActionManagerComponent::BeginPlay()
 	A_Instance->SetRegisterTick(A_Instance->CanEverTick());
 	
 	A_Instance->Start();
-	
+}
+
+void UActionSystemComponent::PostLoad()
+{
+	Super::PostLoad();
+
+	// DEBUG: Make sure this reference is valid
 	/* Bind to movement component events */
-	CharacterOwner = Cast<ARadicalPlayerCharacter>(GetOuter());
-	CharacterOwner->GetCharacterMovement()->CalculateVelocityDelegate.BindDynamic(this, &UActionManagerComponent::CalculateVelocity);
-	CharacterOwner->GetCharacterMovement()->UpdateRotationDelegate.BindDynamic(this, &UActionManagerComponent::UpdateRotation);
-	CharacterOwner->GetCharacterMovement()->PostProcessRMVelocityDelegate.BindDynamic(this, &UActionManagerComponent::PostProcessRMVelocity);
-	CharacterOwner->GetCharacterMovement()->PostProcessRMRotationDelegate.BindDynamic(this, &UActionManagerComponent::PostProcessRMRotation);
+	CharacterOwner = Cast<ARadicalCharacter>(GetOwner());
+	CharacterOwner->GetCharacterMovement()->CalculateVelocityDelegate.BindDynamic(this, &UActionSystemComponent::CalculateVelocity);
+	CharacterOwner->GetCharacterMovement()->UpdateRotationDelegate.BindDynamic(this, &UActionSystemComponent::UpdateRotation);
+	CharacterOwner->GetCharacterMovement()->PostProcessRMVelocityDelegate.BindDynamic(this, &UActionSystemComponent::PostProcessRMVelocity);
+	CharacterOwner->GetCharacterMovement()->PostProcessRMRotationDelegate.BindDynamic(this, &UActionSystemComponent::PostProcessRMRotation);
 
 	/* Initialize Actor Info*/
 	ActionActorInfo.InitFromCharacter(CharacterOwner, this);
 }
 
 
-void UActionManagerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+void UActionSystemComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
-	SCOPED_NAMED_EVENT(UActionManagerComponent_TickComponent, FColor::Yellow)
+	SCOPED_NAMED_EVENT(UActionSystemComponent_TickComponent, FColor::Yellow)
 	SCOPE_CYCLE_COUNTER(STAT_TickStateMachine)
 	
 	/* Tick the active actions */
@@ -87,7 +93,7 @@ void UActionManagerComponent::TickComponent(float DeltaTime, ELevelTick TickType
 * Level Primitives Interface
 *--------------------------------------------------------------------------------------------------------------*/
 
-void UActionManagerComponent::RegisterLevelPrimitive(ALevelPrimitiveActor* LP)
+void UActionSystemComponent::RegisterLevelPrimitive(ALevelPrimitiveActor* LP)
 {
 	if (ActiveLevelPrimitives.Contains(LP->GetTag()))
 	{
@@ -102,7 +108,7 @@ void UActionManagerComponent::RegisterLevelPrimitive(ALevelPrimitiveActor* LP)
 		AddTag(LP->GetTag()); 
 }
 
-bool UActionManagerComponent::UnRegisterLevelPrimitive(ALevelPrimitiveActor* LP)
+bool UActionSystemComponent::UnRegisterLevelPrimitive(ALevelPrimitiveActor* LP)
 {
 	if (ActiveLevelPrimitives.Contains(LP->GetTag()))
 	{
@@ -112,7 +118,7 @@ bool UActionManagerComponent::UnRegisterLevelPrimitive(ALevelPrimitiveActor* LP)
 	return RemoveTag(LP->GetTag());
 }
 
-ALevelPrimitiveActor* UActionManagerComponent::GetActiveLevelPrimitive(FGameplayTag LPTag) const
+ALevelPrimitiveActor* UActionSystemComponent::GetActiveLevelPrimitive(FGameplayTag LPTag) const
 {
 	return ActiveLevelPrimitives.Contains(LPTag) ? ActiveLevelPrimitives[LPTag] : nullptr;
 }
@@ -123,30 +129,30 @@ ALevelPrimitiveActor* UActionManagerComponent::GetActiveLevelPrimitive(FGameplay
 * Actions Interface
 *--------------------------------------------------------------------------------------------------------------*/
 
-UGameplayAction* UActionManagerComponent::FindActionInstanceFromClass(TSubclassOf<UGameplayAction> InActionClass)
+UGameplayAction* UActionSystemComponent::FindActionInstanceFromClass(UGameplayActionData* InActionData)
 {
-	if (ActivatableActions.Contains(InActionClass))
+	if (ActivatableActions.Contains(InActionData))
 	{
-		return ActivatableActions[InActionClass];
+		return ActivatableActions[InActionData];
 	}
 	return nullptr;
 }
 
-UGameplayAction* UActionManagerComponent::GiveAction(TSubclassOf<UGameplayAction> InActionClass)
+UGameplayAction* UActionSystemComponent::GiveAction(UGameplayActionData* InActionData)
 {
-	if (!IsValid(InActionClass))
+	if (!IsValid(InActionData) || !IsValid(InActionData->ActionClass))
 	{
 		// Log error, class not valid
 		return nullptr;
 	}
 
-	if (const auto ActionInstance = FindActionInstanceFromClass(InActionClass))
+	if (const auto ActionInstance = FindActionInstanceFromClass(InActionData))
 	{
 		// We already have this action class granted, abort (?)
 		return ActionInstance;
 	}
 
-	UGameplayAction* InstancedAction = ActivatableActions.Contains(InActionClass) ? ActivatableActions[InActionClass] : ActivatableActions.Add(InActionClass, CreateNewInstanceOfAbility(InActionClass));
+	UGameplayAction* InstancedAction = ActivatableActions.Contains(InActionData) ? ActivatableActions[InActionData] : ActivatableActions.Add(InActionData, CreateNewInstanceOfAbility(InActionData));
 	
 	// Can also notify an action if it has been granted
 	InstancedAction->OnActionGranted(&ActionActorInfo);
@@ -154,11 +160,11 @@ UGameplayAction* UActionManagerComponent::GiveAction(TSubclassOf<UGameplayAction
 	return InstancedAction;
 }
 
-UGameplayAction* UActionManagerComponent::GiveActionAndActivateOnce(TSubclassOf<UGameplayAction> InActionClass)
+UGameplayAction* UActionSystemComponent::GiveActionAndActivateOnce(UGameplayActionData* InActionData)
 {
-	if (!InActionClass) return nullptr; // Not a valid class
+	if (!InActionData) return nullptr; // Not a valid data asset
 
-	auto Instance = GiveAction(InActionClass);
+	auto Instance = GiveAction(InActionData);
 
 	if (InternalTryActivateAction(Instance))
 	{
@@ -169,9 +175,9 @@ UGameplayAction* UActionManagerComponent::GiveActionAndActivateOnce(TSubclassOf<
 	return nullptr;
 }
 
-bool UActionManagerComponent::RemoveAction(TSubclassOf<UGameplayAction> InActionClass)
+bool UActionSystemComponent::RemoveAction(UGameplayActionData* InActionData)
 {
-	auto Action = FindActionInstanceFromClass(InActionClass);
+	auto Action = FindActionInstanceFromClass(InActionData);
 
 	if (!Action)
 	{
@@ -192,9 +198,9 @@ bool UActionManagerComponent::RemoveAction(TSubclassOf<UGameplayAction> InAction
 }
 
 
-UGameplayAction* UActionManagerComponent::CreateNewInstanceOfAbility(TSubclassOf<UGameplayAction> InActionClass) const
+UGameplayAction* UActionSystemComponent::CreateNewInstanceOfAbility(UGameplayActionData* InActionData) const
 {
-	check(InActionClass);
+	check(InActionData);
 
 	AActor* Owner = GetOwner();
 	check(Owner);
@@ -206,32 +212,35 @@ UGameplayAction* UActionManagerComponent::CreateNewInstanceOfAbility(TSubclassOf
 		//Manager->load
 	}
 	
-	UGameplayAction* ActionInstance = NewObject<UGameplayAction>(Owner, InActionClass);
+	UGameplayAction* ActionInstance = NewObject<UGameplayAction>(Owner, InActionData->ActionClass);
 	check(ActionInstance);
+
+	// Set ActionData on initial creation only
+	ActionInstance->SetActionData(InActionData);
 	
 	return ActionInstance;
 }
 
-bool UActionManagerComponent::TryActivateAbilityByClass(TSubclassOf<UGameplayAction> InActionToActivate)
+bool UActionSystemComponent::TryActivateAbilityByClass(UGameplayActionData* InActionData)
 {
 	SCOPE_CYCLE_COUNTER(STAT_ActivateAction)
 	
-	UGameplayAction* Action = FindActionInstanceFromClass(InActionToActivate);
+	UGameplayAction* Action = FindActionInstanceFromClass(InActionData);
 
 	if (!Action)
 	{
-		if (!InActionToActivate.GetDefaultObject()->bGrantOnActivation)
+		if (!InActionData->bGrantOnActivation)
 		{
 			// Log, no available action of this class (unless bGrant on activate, if so we create it here)
 			return false;
 		}
-		Action = GiveAction(InActionToActivate);
+		Action = GiveAction(InActionData);
 	}
 
 	return InternalTryActivateAction(Action);
 }
 
-bool UActionManagerComponent::InternalTryActivateAction(UGameplayAction* Action)
+bool UActionSystemComponent::InternalTryActivateAction(UGameplayAction* Action)
 {
 	// Make a FGameplayActionActorInfo struct that's held by us here. This also lets us use this independently I think
 
@@ -250,7 +259,7 @@ bool UActionManagerComponent::InternalTryActivateAction(UGameplayAction* Action)
 	// If action is already active, check to see if we have to restart it
 	if (Action->IsActive()) // Action is already active, we restart it
 	{
-		if (Action->bRetriggerAbility)
+		if (Action->GetActionData()->bRetriggerAbility)
 			Action->EndAction(true);
 		else
 		{
@@ -267,12 +276,12 @@ bool UActionManagerComponent::InternalTryActivateAction(UGameplayAction* Action)
 
 
 
-void UActionManagerComponent::NotifyActionActivated(UGameplayAction* Action)
+void UActionSystemComponent::NotifyActionActivated(UGameplayAction* Action)
 {
 	check(Action);
 	
 	// Action is already registered as active
-	if (RunningActions.Contains(Action)) return;
+	if (RunningActions.Contains(Action)) return; 
 
 	RunningActions.Add(Action);
 
@@ -287,7 +296,7 @@ void UActionManagerComponent::NotifyActionActivated(UGameplayAction* Action)
 	}
 }
 
-void UActionManagerComponent::NotifyActionEnded(UGameplayAction* Action)
+void UActionSystemComponent::NotifyActionEnded(UGameplayAction* Action)
 {
 	check(Action);
 
@@ -307,7 +316,7 @@ void UActionManagerComponent::NotifyActionEnded(UGameplayAction* Action)
 	}
 }
 
-void UActionManagerComponent::CalculateVelocity(URadicalMovementComponent* MovementComponent, float DeltaTime)
+void UActionSystemComponent::CalculateVelocity(URadicalMovementComponent* MovementComponent, float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_CalcVelocity)
 
@@ -324,7 +333,7 @@ void UActionManagerComponent::CalculateVelocity(URadicalMovementComponent* Movem
 	}
 }
 
-void UActionManagerComponent::UpdateRotation(URadicalMovementComponent* MovementComponent, float DeltaTime)
+void UActionSystemComponent::UpdateRotation(URadicalMovementComponent* MovementComponent, float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_UpdateRot)
 
@@ -341,7 +350,7 @@ void UActionManagerComponent::UpdateRotation(URadicalMovementComponent* Movement
 	}
 }
 
-void UActionManagerComponent::PostProcessRMVelocity(URadicalMovementComponent* MovementComponent, FVector& Velocity,
+void UActionSystemComponent::PostProcessRMVelocity(URadicalMovementComponent* MovementComponent, FVector& Velocity,
 	float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_CalcVelocity)
@@ -355,7 +364,7 @@ if (RunningCalcVelocityActions.Num() > 0)
 }
 }
 
-void UActionManagerComponent::PostProcessRMRotation(URadicalMovementComponent* MovementComponent, FQuat& Rotation,
+void UActionSystemComponent::PostProcessRMRotation(URadicalMovementComponent* MovementComponent, FQuat& Rotation,
 	float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_UpdateRot)
@@ -374,7 +383,7 @@ void UActionManagerComponent::PostProcessRMRotation(URadicalMovementComponent* M
 * Debug
 *--------------------------------------------------------------------------------------------------------------*/
 
-void UActionManagerComponent::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL,
+void UActionSystemComponent::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL,
 										   float& YPos)
 {
 	auto DisplayDebugManager = Canvas->DisplayDebugManager;

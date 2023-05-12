@@ -33,7 +33,7 @@ public:
 	/* Base State Parameters */
 
 	UPROPERTY(Category=Action, EditAnywhere, BlueprintReadWrite, meta=(BlueprintBaseOnly))
-	TSubclassOf<UGameplayAction> ActionClass;
+	UGameplayActionData* ActionData; // TODO: Make SoftObjectPtr?
 	UPROPERTY(Transient)
 	TSoftObjectPtr<UGameplayAction> ActionInstance;
 
@@ -59,7 +59,7 @@ public:
 	/* ~~~~~~~~~~~~~~~~~~~~~ */
 protected:
 	UPROPERTY(Transient)
-	TWeakObjectPtr<UActionManagerComponent> ActionManager;
+	TWeakObjectPtr<UActionSystemComponent> ActionSystem;
 
 	/// @brief  Shared amongst state definitions as they both share the same base params and reveal them the same way
 	virtual void ConstructionScript_Implementation() override;
@@ -73,9 +73,6 @@ protected:
 	FORCEINLINE virtual UInputAction* GetSecondButtonAction() const override {return SecondButtonInput.Get();}
 	FORCEINLINE virtual UMotionAction* GetDirectionalAction() const override {return DirectionalInput.Get();}
 	// END IActionStateFlow Interface
-
-	UFUNCTION()
-	virtual void ButtonInputBinding(const FInputActionValue& Value, float ElapsedTime) override;
 
 	virtual bool CanEnter() override;
 	virtual bool CanExit() override;

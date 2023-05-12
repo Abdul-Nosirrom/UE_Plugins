@@ -12,17 +12,77 @@
 
 /* ~~~~~ Forward Declarations ~~~~~ */
 class ARadicalCharacter;
-class UActionManagerComponent;
+class UActionSystemComponent;
 class URadicalMovementComponent;
+class UInputAction;
 struct FActionActorInfo;
 
 /* ~~~~~ Event Definitions ~~~~~ */
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnGameplayActionEnded, class UGameplayAction*, bool);
 
+/* ~~~~~ Helper Macros For Managing ActionDats ~~~~~ */
+#define DECLARE_ACTION_DATA(Class)\
+	UPROPERTY(Category="ActionData", EditDefaultsOnly, BlueprintReadOnly)\
+	Class* ActionData; \
+	virtual FORCEINLINE UGameplayActionData* GetActionData() override { return ActionData; } \
+	virtual FORCEINLINE void SetActionData(UGameplayActionData* InActionData) override \
+	{ \
+		check(Cast<Class>(InActionData))\
+		ActionData = Cast<Class>(InActionData); \
+	} 
+
+UCLASS(Abstract, Blueprintable, ClassGroup=Actions, Category="Gameplay Actions", DisplayName="Base Gameplay Action Data")
+class ACTIONFRAMEWORK_API UGameplayActionData : public UDataAsset
+{
+	friend class UGameplayAction;
+	friend class UActionSystemComponent;
+	
+	// Just needs this for access to bGrantOnActivation
+	friend class UAction_CoreStateInstance;
+	friend class UAction_CoreStateMachineInstance;
+	
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(Category=Definition, BlueprintReadOnly)
+	const TSubclassOf<UGameplayAction> ActionClass;
+
+protected:
+	/*--------------------------------------------------------------------------------------------------------------
+	* Activation Rules
+	*--------------------------------------------------------------------------------------------------------------*/
+	/// @brief  If true, if the action has not been granted in an attempted activate call, it'll be auto-granted
+	UPROPERTY(Category="Activation Rules", EditDefaultsOnly)
+	uint8 bGrantOnActivation		: 1;
+	/// @brief  If true, when trying to activate this ability when its already active, it'll end and restart
+	UPROPERTY(Category="Activation Rules", EditDefaultsOnly)
+	uint8 bRetriggerAbility			: 1;
+
+protected:
+	/*--------------------------------------------------------------------------------------------------------------
+	* Tags TODO: These
+	*--------------------------------------------------------------------------------------------------------------*/
+	/// @brief  The action has these tags associated with it. These tags describe the action.
+	UPROPERTY(Category=Tags, EditDefaultsOnly, BlueprintReadOnly)
+	FGameplayTagContainer ActionTags;
+	/// @brief  The action can only activate if the owner has all of these tags
+	UPROPERTY(Category=Tags, EditDefaultsOnly, BlueprintReadOnly)
+	FGameplayTagContainer OwnerRequiredTags;
+	/// @brief  The action will grant these tags to the owner on successful activation
+	UPROPERTY(Category=Tags, EditDefaultsOnly, BlueprintReadOnly)
+	FGameplayTagContainer OwnerGrantTags;
+	/// @brief  The action will block the activation of any other action that has any of these tags in ActionTags
+	UPROPERTY(Category=Tags, EditDefaultsOnly, BlueprintReadOnly)
+	FGameplayTagContainer BlockActionsWithTag;
+	/// @brief  The action will cancel any other running action that has any of these tags in ActionTags
+	UPROPERTY(Category=Tags, EditDefaultsOnly, BlueprintReadOnly)
+	FGameplayTagContainer CancelActionsWithTag;
+};
+
 UCLASS(Abstract, Blueprintable, ClassGroup=Actions, Category="Gameplay Actions", DisplayName="Base Gameplay Action")
 class ACTIONFRAMEWORK_API UGameplayAction : public UObject
 {
-	friend class UActionManagerComponent;
+	friend class UActionSystemComponent;
 	friend class UAction_CoreStateInstance;
 	friend class UAction_CoreStateMachineInstance;
 	
@@ -39,20 +99,19 @@ public:
 	* UObject Override
 	*--------------------------------------------------------------------------------------------------------------*/
 	virtual UWorld* GetWorld() const override;
-	
+
+	UFUNCTION(Category="Action Data", BlueprintPure)
+	virtual FORCEINLINE UGameplayActionData* GetActionData() PURE_VIRTUAL(UGameplayAction::GetActionData, return nullptr; );
+	UFUNCTION(Category="Action Data", BlueprintCallable)
+	virtual FORCEINLINE void SetActionData(UGameplayActionData* InActionData) PURE_VIRTUAL(UGameplayAction::SetActionData, );
+
 protected:
 	
 	/*--------------------------------------------------------------------------------------------------------------
 	* Rules and Runtime Data
 	*--------------------------------------------------------------------------------------------------------------*/
 	// NOTE: THE MOVEMENT EVENT FLAGS MUST BE SET IF YOU WANT TO USE THEM
-
-	/// @brief  If true, if the action has not been granted in an attempted activate call, it'll be auto-granted
-	UPROPERTY(Category=Advanced, EditDefaultsOnly)
-	uint8 bGrantOnActivation		: 1;
-	/// @brief  If true, when trying to activate this ability when its already active, it'll end and restart
-	UPROPERTY(Category=Advanced, EditDefaultsOnly)
-	uint8 bRetriggerAbility			: 1;
+	
 	/// @brief  If true, this action will receive CalcVelocity callback from the movement component. Otherwise it wont.
 	UPROPERTY(Category=Advanced, EditDefaultsOnly)
 	uint8 bRespondToMovementEvents	: 1;
@@ -73,19 +132,7 @@ private:
 	UPROPERTY(Transient)
 	float TimeActivated;
 	
-	/*--------------------------------------------------------------------------------------------------------------
-	* Tags TODO: These
-	*--------------------------------------------------------------------------------------------------------------*/
 protected:
-	/// @brief  The action has these tags associated with it
-	UPROPERTY(Category=Tags, EditDefaultsOnly, BlueprintReadWrite)
-	FGameplayTagContainer ActionTags;
-	/// @brief  ActionManager must have all of these tags for this action to activate
-	//UPROPERTY(Category=Tags, EditDefaultsOnly, BlueprintReadWrite)
-	//FGameplayTagContainer ActivationRequiredTags;
-	/// @brief  Cant enter the state if has any of these tag
-	//UPROPERTY(Category=Tags, EditDefaultsOnly, BlueprintReadWrite)
-	//FGameplayTagContainer BlockTags;
 
 	/*--------------------------------------------------------------------------------------------------------------
 	* Owner Information (Character, MovementComp, ActionManager... Or just ActionManager, the rest can be derived from it)
@@ -109,7 +156,7 @@ public:
 
 	/// @brief  Returns action manager component of owner
 	UFUNCTION(Category="Action | Info", BlueprintCallable)
-	UActionManagerComponent* GetActionManager() const { return CurrentActorInfo->ActionManagerComponent.Get(); }
+	UActionSystemComponent* GetActionManager() const { return CurrentActorInfo->ActionSystemComponent.Get(); }
 	
 	/// @brief  Returns time since the action was activated
 	UFUNCTION(Category="Action | Info", BlueprintCallable)
@@ -201,7 +248,10 @@ protected:
 	UFUNCTION(Category="Action | Activation", BlueprintCallable, meta=(HidePin="bWasCancelled"))
 	void EndAction(bool bWasCancelled = false);
 
-public:
+//public: Keeping this protected
+	/// @brief  Input that instigated this action, set from wherever relevant (e.g a state)
+	UPROPERTY(Transient)
+	UInputAction* InputInstigator;
 	/// @brief  Auto bound to the Release of the activation input if the activation input was a button
 	UFUNCTION()
 	virtual void ButtonInputReleased(float ElapsedTime) {};

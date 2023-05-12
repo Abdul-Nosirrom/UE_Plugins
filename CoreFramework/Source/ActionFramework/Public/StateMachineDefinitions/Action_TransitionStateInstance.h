@@ -10,7 +10,7 @@
 
 /* ~~~~~ Forward Declarations ~~~~~~ */
 class UAction_CoreStateInstance;
-class ARadicalPlayerCharacter;
+class ARadicalCharacter;
 
 /// @brief Base gameplay transition for state-to-state transitions. Auto handles some base attributes like input checking
 UCLASS(Blueprintable, BlueprintType, ClassGroup="ActionManager", HideCategories=(SMTransitionInstance), meta=(DisplayName="Gameplay Transition"))
@@ -34,6 +34,8 @@ protected:
 	virtual void OnRootStateMachineStart_Implementation() override;
 	virtual void OnRootStateMachineStop_Implementation() override;
 
+	UInputBufferSubsystem* GetInputBuffer() const;
+	
 	/// @brief
 	UFUNCTION()
 	void EvaluateTransition();
@@ -52,7 +54,7 @@ protected:
 
 	// Cache reference to avoid casting to check tag requirements which may be on tick
 	UPROPERTY(Transient)
-	TWeakObjectPtr<ARadicalPlayerCharacter> CharacterOwner;
+	TWeakObjectPtr<ARadicalCharacter> CharacterOwner;
 
 	UPROPERTY(Category="Transition Type", EditDefaultsOnly, BlueprintReadWrite)
 	bool bIsInterrupt{false};

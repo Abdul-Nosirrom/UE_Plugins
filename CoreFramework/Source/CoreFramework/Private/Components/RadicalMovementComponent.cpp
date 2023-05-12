@@ -4,6 +4,7 @@
 #include "Debug/RMC_LOG.h"
 #include "CFW_PCH.h"
 #include "RadicalCharacter.h"
+#include "StaticLibraries/CoreMathLibrary.h"
 
 #pragma region Profiling & CVars
 /* Core Update Loop */
@@ -89,41 +90,80 @@ DEFINE_LOG_CATEGORY(LogRMCMovement)
 // Sets default values for this component's properties
 URadicalMovementComponent::URadicalMovementComponent()
 {
+	// Setup Post Physics Tick Group
 	PostPhysicsTickFunction.bCanEverTick = true;
 	PostPhysicsTickFunction.bStartWithTickEnabled = false;
 	PostPhysicsTickFunction.SetTickFunctionEnable(false);
 	PostPhysicsTickFunction.TickGroup = TG_PostPhysics;
-
+	
+	// General Defaults
+	PhysicsState = STATE_Falling;
+	MovementData = nullptr;
+	bAlwaysOrientToGravity = false;
+	bJustTeleported = true;
+	
+	// Set Simulation Defaults
+	bEnableScopedMovementUpdates = true;
 	MaxSimulationTimeStep = 0.05f;
 	MaxSimulationIterations = 8;
-
 	MaxDepenetrationWithGeometry = 500.f;
 	MaxDepenetrationWithPawn = 100.f;
-
-	Mass = 100.0f;
-	bJustTeleported = true;
-
-	LastUpdateRotation = FQuat::Identity;
-	LastUpdateVelocity = FVector::ZeroVector;
-	PendingImpulseToApply = FVector::ZeroVector;
-	PendingLaunchVelocity = FVector::ZeroVector;
-
-	PhysicsState = STATE_Falling;
-	bForceNextFloorCheck = true;
+	
+	// Set Ground Detection Defaults
+	StabilityOrientationMode = MODE_Gravity;
+	MaxStableSlopeAngle = 60.f;
+	ExtraFloorProbingDistance = 20.f;
 	bAlwaysCheckFloor = true;
+	bForceNextFloorCheck = true;
+	bUseFlatBaseForFloorChecks = false;
+	MaxStepHeight = 45.f;
+	
+	
+	// Set Ledge Defaults
+	bCanWalkOffLedges = true;
+	LedgeCheckThreshold = 4.f;
+	PerchRadiusThreshold = 0.f;
+	PerchAdditionalHeight = 40.f;
+	
+	bLedgeAndDenivelationHandling = true;
+	MinVelocityForDenivelationEvaluation = 0.f;
+	MaxStableUpwardsDenivelationAngle = 180.f;
+	MaxStableDownwardsDenivelationAngle = 180.f;
 
+	// Set Physics Interactions Defaults
+	Mass = 100.f;
 	bEnablePhysicsInteraction = true;
-	bPushForceUsingVerticalOffset = false;
+	bTouchForceScaledToMass = true;
 	bPushForceScaledToMass = false;
+	bPushForceUsingVerticalOffset = false;
 	bScalePushForceToVelocity = true;
+	
+	RepulsionForce = 2.5f;
+	TouchForceFactor = 1.f;
+	MinTouchForce = -1.f;
+	MaxTouchForce = 250.f;
+	StandingDownwardForceScale = 1.f;
+	InitialPushForceFactor = 500.f;
+	PushForceFactor = 750000.f;
+	PushForcePointVerticalOffsetFactor = -0.75f;
 
-	bEnableScopedMovementUpdates = true;
-
-	OldBaseQuat = FQuat::Identity;
-	OldBaseLocation = FVector::ZeroVector;
-	// Set Avoidance Defaults
+	// Set MovingBase Defaults
+	bMoveWithBase = true;
+	bIgnoreBaseRotation = false;
+	bImpartBaseVelocityPlanar = true;
+	bImpartBaseVelocityVertical = true;
+	bImpartBaseAngularVelocity = true;
+	FormerBaseVelocityDecayHalfLife = 0.f;
+	
+	// Set Avoidance Defaults TODO: RVO Avoidance still not implemented...
 
 	// Set Nav-Movement defaults
+	NavAgentProps.bCanJump = true;
+	NavAgentProps.bCanWalk = true;
+	NavAgentProps.bCanSwim = false;
+	MovementState = NavAgentProps;
+
+	bRequestedMoveUseAcceleration = true;
 }
 
 // Called when the game starts
@@ -155,6 +195,10 @@ void URadicalMovementComponent::BeginPlay()
 	{
 		RMC_FLog(Error, "No movement data asset provided")
 	}
+
+	// Example condition for LP Component rail/half-pipe markup
+	// GetOwner()->FindComponentByClass(USplineComponent::StaticClass());
+	// GetOwner()->FindComponentByClass(UCollisionComponent::StaticClass()); 
 }
 
 void URadicalMovementComponent::PostLoad()
@@ -470,8 +514,15 @@ void URadicalMovementComponent::OnMovementStateChanged(EMovementState PreviousMo
 
 void URadicalMovementComponent::DisableMovement()
 {
+	StopActiveMovement();
 	SetMovementState(STATE_None);
 }
+
+void URadicalMovementComponent::EnableMovement()
+{
+	SetMovementState(STATE_Grounded);
+}
+
 
 void URadicalMovementComponent::AddImpulse(FVector Impulse, bool bVelocityChange)
 {
@@ -1045,7 +1096,7 @@ void URadicalMovementComponent::AirMovementTick(float DeltaTime, uint32 Iteratio
 				ProcessLanded(Hit, RemainingTime, Iterations); // Swap to grounded move update
 				return;
 			} // Valid Landing Spot
-			else 
+			else // TODO: Implement "Sliding off of a pawns capsule", (e.g [https://twitter.com/leztusi/status/1654501852388401153?s=19]), see the discord todo channel
 			{
 				/* Compute impact deflection based on final velocity */
 				Adjusted = Velocity * IterTick;
@@ -1739,8 +1790,6 @@ void URadicalMovementComponent::FindFloor(const FVector& CapsuleLocation, FGroun
 		DEBUG_PRINT_MSG(2, "Find Floor Downward Sweep Hit")
 		LOG_HIT((*DownwardSweepResult), 2);
 	}
-
-	RMC_FLog(Display, "At Location [%s]", *CapsuleLocation.ToString())
 	
 	const float CapsuleRadius = CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleRadius();
 
@@ -1947,8 +1996,8 @@ void URadicalMovementComponent::MaintainHorizontalGroundVelocity()
 	const float VelMag = Velocity.Size();
 	const float AccMag = Acceleration.Size();
 
-	Acceleration = GetDirectionTangentToSurface(Acceleration, CurrentFloor.HitResult.ImpactNormal) * AccMag; 
-	Velocity = GetDirectionTangentToSurface(Velocity, CurrentFloor.HitResult.ImpactNormal) * VelMag;
+	Acceleration = UCoreMathLibrary::GetDirectionTangentToSurface(Acceleration, CurrentFloor.HitResult.ImpactNormal) * AccMag; 
+	Velocity = UCoreMathLibrary::GetDirectionTangentToSurface(Velocity, CurrentFloor.HitResult.ImpactNormal) * VelMag;
 }
 
 void URadicalMovementComponent::RecalculateVelocityToReflectMove(const FVector& OldLocation, const float DeltaTime)
@@ -1990,7 +2039,7 @@ bool URadicalMovementComponent::StepUp(const FVector& Orientation, const FHitRes
 
 	/* Don't step up if top of the capsule is what recieved the hit */
 	const FVector InitialImpactPoint = StepHit.ImpactPoint;
-	if (DistanceAlongAxis(OldLocation, InitialImpactPoint, Orientation) > (PawnHalfHeight - PawnRadius)) // -Radius, want center of top hemisphere
+	if (UCoreMathLibrary::DistanceAlongAxis(OldLocation, InitialImpactPoint, Orientation) > (PawnHalfHeight - PawnRadius)) // -Radius, want center of top hemisphere
 	{
 		return false;
 	}
@@ -2024,7 +2073,7 @@ bool URadicalMovementComponent::StepUp(const FVector& Orientation, const FHitRes
 	}
 
 	/* Don't step up if impact is below us */
-	if (DistanceAlongAxis(PawnInitialFloorBaseP * Orientation, InitialImpactPoint, Orientation) <= 0.f)
+	if (UCoreMathLibrary::DistanceAlongAxis(PawnInitialFloorBaseP * Orientation, InitialImpactPoint, Orientation) <= 0.f)
 	{
 		return false;
 	}
@@ -2129,7 +2178,7 @@ bool URadicalMovementComponent::StepUp(const FVector& Orientation, const FHitRes
 			}
 
 			// Also reject if we would end up being higher than our starting location by stepping down
-			if (DistanceAlongAxis(OldLocation, Hit.Location, Orientation) > 0.f)
+			if (UCoreMathLibrary::DistanceAlongAxis(OldLocation, Hit.Location, Orientation) > 0.f)
 			{
 				ScopedStepUpMovement.RevertMove();
 				return false;
@@ -2156,7 +2205,7 @@ bool URadicalMovementComponent::StepUp(const FVector& Orientation, const FHitRes
 			FindFloor(UpdatedComponent->GetComponentLocation(), StepDownResult.FloorResult, false, &Hit);
 
 			// Reject unwalkable normals if we end up higher than our initial height (ok if we end up lower tho)
-			if (DistanceAlongAxis(OldLocation, Hit.Location, Orientation) > 0.f)
+			if (UCoreMathLibrary::DistanceAlongAxis(OldLocation, Hit.Location, Orientation) > 0.f)
 			{
 				const float MAX_STEP_SIDE_H = 0.08f; // DEBUG: Oh they're referring to normals of the step hit here...
 				if (!StepDownResult.FloorResult.bBlockingHit && StepSideP < MAX_STEP_SIDE_H)
@@ -2225,11 +2274,20 @@ float URadicalMovementComponent::GetValidPerchRadius() const
 	return FMath::Clamp(PawnRadius - GetPerchRadiusThreshold(), 0.11f, PawnRadius);
 };
 
-// TODO: Add 2 denivelation angles, one for when going "down", one for when going "up"
 bool URadicalMovementComponent::ShouldCatchAir(const FGroundingStatus& OldFloor, const FGroundingStatus& NewFloor) const
 {
+	// If our velocity is below this threshold, we should not lose stability on any denivelation angle
+	if (Velocity.SizeSquared() < MinVelocityForDenivelationEvaluation * MinVelocityForDenivelationEvaluation)
+	{
+		return false;
+	}
+	
+	// If Dot(OldFloorNormal, Gravity) < Dot(CurrentFloorNormal, Gravity), we use UpwardDenivelation given that the new normal is more aligned with "Up", indicating we are going right in a scenario [ /- ] rather than left 
+	const bool bUpDirection = (OldFloor.HitResult.ImpactNormal | GetUpOrientation(MODE_Gravity)) < (NewFloor.HitResult.ImpactNormal | GetUpOrientation(MODE_Gravity));
 	const float Angle = FMath::RadiansToDegrees(FMath::Acos(OldFloor.HitResult.ImpactNormal | NewFloor.HitResult.ImpactNormal));
-	if (Angle >= MaxStableDenivelationAngle)
+
+	// DEBUG: Need to avoid catching air on first vertex of [ _/- ], Only wanna catch air on second vertex if going up (This case may not be a big deal, will usually detect floor next tick)
+	if (Angle >= (bUpDirection ? MaxStableUpwardsDenivelationAngle : MaxStableDownwardsDenivelationAngle))
 	{
 		return true;
 	}
@@ -2812,6 +2870,7 @@ void URadicalMovementComponent::BlockSkeletalMeshPoseTick() const
 // TODO: Review this, its pretty old by now
 void URadicalMovementComponent::RootCollisionTouched(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
+	// TODO: If the OtherActor has a RadicalMovementComp, allow us to be pushed. Can make the "Push force" a parameter in Physics Interactions or a seperate thing. We move back by their Velocity direction. Only do this if planar collision, if we've been jumped on thats something else.
 	if (!bEnablePhysicsInteraction)
 	{
 		return;

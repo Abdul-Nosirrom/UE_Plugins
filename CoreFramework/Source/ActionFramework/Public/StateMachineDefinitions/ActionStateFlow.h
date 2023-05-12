@@ -9,10 +9,8 @@
 #include "ActionStateFlow.generated.h"
 
 /* ~~~~~ Forward Declarations ~~~~~ */
-class ARadicalPlayerCharacter;
+class ARadicalCharacter;
 class URadicalMovementComponent;
-class UInputBufferSubsystem;
-class UInputAction;
 enum EBufferTriggerEvent;
 enum EDirectionalSequenceOrder;
 
@@ -81,5 +79,4 @@ protected:
 	UFUNCTION()
 	virtual void ButtonInputBinding(const FInputActionValue& Value, float ElapsedTime) {};
 	// END InputBuffer Interface
-
 };

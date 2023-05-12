@@ -4,8 +4,9 @@
 #include "StateMachineDefinitions/Action_TransitionStateInstance.h"
 
 #include "InputBufferSubsystem.h"
-#include "Actors/RadicalPlayerCharacter.h"
-#include "Components/ActionManagerComponent.h"
+#include "Actors/RadicalCharacter.h"
+#include "Components/ActionSystemComponent.h"
+#include "Engine/LocalPlayer.h"
 #include "StateMachineDefinitions/Action_CoreStateInstance.h"
 #include "StateMachineDefinitions/Action_CoreStateMachineInstance.h"
 #include "StateMachineDefinitions/Action_MoveSetSMInstance.h"
@@ -13,9 +14,9 @@
 
 #define PRINT(Color, Text) GEngine->AddOnScreenDebugMessage(-1, 2.f, Color, Text);
 
-DECLARE_CYCLE_STAT(TEXT("On Transition Initialized"), STAT_TransitionInitialized, STATGROUP_ActionManagerComp)
-DECLARE_CYCLE_STAT(TEXT("Setup Bindings"), STAT_SetupBindings, STATGROUP_ActionManagerComp)
-DECLARE_CYCLE_STAT(TEXT("Bind Inputs"), STAT_BindInputs, STATGROUP_ActionManagerComp)
+DECLARE_CYCLE_STAT(TEXT("On Transition Initialized"), STAT_TransitionInitialized, STATGROUP_ActionSystemComp)
+DECLARE_CYCLE_STAT(TEXT("Setup Bindings"), STAT_SetupBindings, STATGROUP_ActionSystemComp)
+DECLARE_CYCLE_STAT(TEXT("Bind Inputs"), STAT_BindInputs, STATGROUP_ActionSystemComp)
 
 UAction_TransitionStateInstance::UAction_TransitionStateInstance()
 {
@@ -123,7 +124,7 @@ void UAction_TransitionStateInstance::OnRootStateMachineStart_Implementation()
 	
 	PrevState = TScriptInterface<IActionStateFlow>(GetPreviousStateInstance());
 	NextState = TScriptInterface<IActionStateFlow>(GetNextStateInstance());
-	CharacterOwner = Cast<ARadicalPlayerCharacter>(GetContext());
+	CharacterOwner = Cast<ARadicalCharacter>(GetContext());
 
 	// Bind them from the start, and just register them with the input buffer when necessary
 	ButtonInputDelegate.BindDynamic(this, &UAction_TransitionStateInstance::ButtonInputBinding);
@@ -141,6 +142,15 @@ void UAction_TransitionStateInstance::OnRootStateMachineStop_Implementation()
 	DirectionalInputDelegate.Unbind();
 	DirectionalAndButtonInputDelegate.Unbind();
 	ButtonSequenceInputDelegate.Unbind();
+}
+
+UInputBufferSubsystem* UAction_TransitionStateInstance::GetInputBuffer() const
+{
+	if (APlayerController* PlayerController = Cast<APlayerController>(CharacterOwner->Controller))
+	{
+		return ULocalPlayer::GetSubsystem<UInputBufferSubsystem>(PlayerController->GetLocalPlayer());
+	}
+	return nullptr;
 }
 
 void UAction_TransitionStateInstance::EvaluateTransition()
@@ -228,7 +238,7 @@ void UAction_TransitionStateInstance::BindInputsIfAny()
 {
 	/* Get Input Buffer Subsystem */
 	SCOPE_CYCLE_COUNTER(STAT_BindInputs);
-	const auto InputBuffer = CharacterOwner->GetInputBuffer();
+	const auto InputBuffer = GetInputBuffer();
 
 	if (!InputBuffer)
 	{
@@ -259,7 +269,7 @@ void UAction_TransitionStateInstance::BindInputsIfAny()
 
 void UAction_TransitionStateInstance::UnbindInputsIfAny() const
 {
-	UInputBufferSubsystem* InputBuffer = CharacterOwner->GetInputBuffer();
+	UInputBufferSubsystem* InputBuffer = GetInputBuffer();
 	
 	if (!InputBuffer)
 	{
@@ -288,7 +298,7 @@ void UAction_TransitionStateInstance::UnbindInputsIfAny() const
 
 void UAction_TransitionStateInstance::ConsumeTransitionInput() const
 {
-	UInputBufferSubsystem* InputBuffer = CharacterOwner->GetInputBuffer();
+	UInputBufferSubsystem* InputBuffer = GetInputBuffer();
 
 	if (!InputBuffer)
 	{

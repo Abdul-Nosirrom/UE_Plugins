@@ -79,7 +79,7 @@ protected:
 
 	UPROPERTY()
 	bool bFinishOnLanded;
-
+	
 	UPROPERTY()
 	TObjectPtr<UCurveVector> PathOffsetCurve;
 

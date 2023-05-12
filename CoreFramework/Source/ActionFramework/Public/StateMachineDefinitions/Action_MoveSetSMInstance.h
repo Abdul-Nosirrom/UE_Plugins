@@ -64,7 +64,7 @@ public:
 	/* ~~~~~~~~~~~~~~~~~~~~~ */
 protected:
 	UPROPERTY(Transient)
-	ARadicalPlayerCharacter* CharacterOwner;
+	ARadicalCharacter* CharacterOwner;
 	UPROPERTY(Transient)
 	UInputBufferSubsystem* InputBuffer;
 

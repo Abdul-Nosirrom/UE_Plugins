@@ -34,6 +34,7 @@ class COREFRAMEWORK_API UMovementData : public UDataAsset
 {
 	GENERATED_BODY()
 
+protected:
 	UMovementData();
 
 public:
@@ -111,9 +112,11 @@ public:
 	UPROPERTY(Category="Acceleration Data | Shared", EditDefaultsOnly, BlueprintReadWrite)
 	uint8 bUseSeparateBrakingFriction	: 1;
 
+	/// @brief  If True, we don't use friction calculations for turns, instead, we rotate the full velocity vector by some fixed rotation rate
 	UPROPERTY(Category="Acceleration Data | Shared", EditDefaultsOnly, BlueprintReadWrite, meta=(InlineEditConditionToggle))
 	uint8 bAccelerationRotates			: 1;
 
+	/// @brief  Velocity rotation rate. Higher values means much tighter turns.
 	UPROPERTY(Category="Acceleration Data | Shared", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="bAccelerationRotates", ClampMin="0", UIMin="0"))
 	float AccelerationRotationRate;
 
@@ -158,7 +161,7 @@ public:
 	uint8 bUseForwardFrictionCurve	: 1;
 
 	UPROPERTY(Category="Acceleration Data | Curves", EditDefaultsOnly, BlueprintReadWrite, meta=(InlineEditConditionToggle))
-	uint8 bUseTurnFrictionCurve	: 1;
+	uint8 bUseTurnFrictionCurve		: 1;
 
 	UPROPERTY(Category="Acceleration Data | Curves", EditDefaultsOnly, BlueprintReadWrite, meta=(InlineEditConditionToggle))
 	uint8 bUseBrakingFrictionCurve	: 1;
@@ -176,7 +179,7 @@ public:
 
 	FORCEINLINE float SampleCurve(const UCurveFloat* Curve, const FVector& Velocity, bool bSampleStatus = false) const
 	{
-		return (bSampleStatus && Curve) ? Curve->GetFloatValue(Velocity.SquaredLength() / (MaxSpeed * MaxSpeed)) : 1.f;
+		return (bSampleStatus && Curve) ? Curve->GetFloatValue(Velocity.Length() / (MaxSpeed)) : 1.f;
 	}
 	
 public:
@@ -189,11 +192,12 @@ public:
 	FVector GetFallingLateralAcceleration(const FVector& Acceleration, const FVector& Velocity, float DeltaTime) const;
 	
 	FVector ComputeInputAcceleration(URadicalMovementComponent* MovementComponent) const;
-
-	void CalculateInputVelocity(URadicalMovementComponent* MovementComponent, FVector& Velocity, FVector& Acceleration, float Friction, float BrakingDeceleration, float DeltaTime) const;
-
+	
 	void ApplyGravity(FVector& Velocity, float TerminalLimit, float DeltaTime) const;
 
+protected:
+	virtual void CalculateInputVelocity(URadicalMovementComponent* MovementComponent, FVector& Velocity, FVector& Acceleration, float Friction, float BrakingDeceleration, float DeltaTime) const;
+	
 #pragma endregion ACCELERATION_METHODS
 
 
@@ -214,8 +218,7 @@ public:
 
 protected:
 	
-	void PhysicsRotation(URadicalMovementComponent* MovementComponent, float DeltaTime);
-
+	virtual void PhysicsRotation(URadicalMovementComponent* MovementComponent, float DeltaTime);
 	
 	FQuat GetDesiredRotation(const URadicalMovementComponent* MovementComp) const;
 

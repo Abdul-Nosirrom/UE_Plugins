@@ -29,3 +29,23 @@ class ACTIONFRAMEWORK_API UActionBlueprint : public UBlueprint
 
 #endif
 };
+
+UCLASS()
+class ACTIONFRAMEWORK_API UActionDataBlueprint : public UBlueprint
+{
+	GENERATED_UCLASS_BODY()
+
+#if WITH_EDITOR
+
+	// UBlueprint interface
+	virtual bool SupportedByDefaultBlueprintFactory() const override
+	{
+		return false;
+	}
+	// End of UBlueprint interface
+
+	/** Returns the most base gameplay ability blueprint for a given blueprint (if it is inherited from another ability blueprint, returning null if only native / non-ability BP classes are it's parent) */
+	static UActionDataBlueprint* FindRootGameplayAbilityBlueprint(UActionDataBlueprint* DerivedBlueprint);
+
+#endif
+};

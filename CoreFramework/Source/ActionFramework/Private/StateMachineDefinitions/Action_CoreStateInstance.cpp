@@ -6,8 +6,8 @@
 #include "ImageUtils.h"
 #include "InputBufferSubsystem.h"
 #include "RadicalMovementComponent.h"
-#include "Actors/RadicalPlayerCharacter.h"
-#include "Components/ActionManagerComponent.h"
+#include "Actors/RadicalCharacter.h"
+#include "Components/ActionSystemComponent.h"
 #include "Engine/LocalPlayer.h"
 #include "Interfaces/IPluginManager.h"
 #include "StateMachineDefinitions/Action_CoreStateMachineInstance.h"
@@ -55,14 +55,14 @@ UAction_CoreStateInstance::UAction_CoreStateInstance()
 void UAction_CoreStateInstance::OnRootStateMachineStart_Implementation()
 {
 	/* Cache references for the state to use */
-	if (!ActionManager.IsValid())
+	if (!ActionSystem.IsValid())
 	{
-		const auto CharacterOwner = Cast<ARadicalPlayerCharacter>(GetContext());
-		ActionManager = CharacterOwner->GetActionManager();
+		const auto CharacterOwner = Cast<ARadicalCharacter>(GetContext());
+		ActionSystem = Cast<UActionSystemComponent>(CharacterOwner->FindComponentByClass(UActionSystemComponent::StaticClass()));
 
 		if (IsEntryState())
 		{
-			ActionInstance = ActionManager->GiveAction(ActionClass.Get()); // We ignore bGrantOnActivation, otherwise we enter the state with no action to execute
+			ActionInstance = ActionSystem->GiveAction(ActionData); // We ignore bGrantOnActivation, otherwise we enter the state with no action to execute
 		}
 	}
 
@@ -78,8 +78,8 @@ void UAction_CoreStateInstance::OnStateBegin_Implementation()
 	// We use this to retrieve the action instance, we assume it exists otherwise we wouldn't have entered the state to begin with (This scope is only executed once per state)
 	if (!ActionInstance)
 	{
-		ActionManager->GiveAction(ActionClass.Get()); // We ignore bGrantOnActivation, otherwise we enter the state with no action to execute
-		ActionInstance = ActionManager->FindActionInstanceFromClass(ActionClass.Get());
+		ActionSystem->GiveAction(ActionData); // We ignore bGrantOnActivation, otherwise we enter the state with no action to execute
+		ActionInstance = ActionSystem->FindActionInstanceFromClass(ActionData);
 	}
 
 	ActionInstance->ActivateAction();
@@ -88,20 +88,9 @@ void UAction_CoreStateInstance::OnStateBegin_Implementation()
 
 	if (InputType == Button && TriggerEvent == TRIGGER_Press)
 	{
-		ButtonInputDelegate.BindDynamic(this, &UAction_CoreStateInstance::ButtonInputBinding);
-		auto Player = Cast<ARadicalPlayerCharacter>(ActionManager->GetOwner());
-		if (Player)
-		{
-			Player->GetInputBuffer()->BindAction(ButtonInputDelegate, ButtonInput, TRIGGER_Release, false);
-		}
+		ActionInstance->InputInstigator = ButtonInput.Get();
 	}
 }
-
-void UAction_CoreStateInstance::ButtonInputBinding(const FInputActionValue& Value, float ElapsedTime)
-{
-	ActionInstance->ButtonInputReleased(ElapsedTime);
-}
-
 
 /* In some cases, we're here because the action ended itself. Otherwise, we check if its active and force cancel it if its not already cancellable. This is only the case for Interrupt transitions */
 void UAction_CoreStateInstance::OnStateEnd_Implementation()
@@ -114,8 +103,6 @@ void UAction_CoreStateInstance::OnStateEnd_Implementation()
 		ActionInstance->EndAction(true);
 	}
 	// else we assume the action ended naturally, hence why it's no longer active by the time we get here
-
-	ButtonInputDelegate.Unbind();
 }
 
 /* This binds to the action. If the ending of the action was not due to cancellation, we rever to entry state. */
@@ -133,8 +120,8 @@ bool UAction_CoreStateInstance::CanEnter()
 {
 	if (!ActionInstance)
 	{
-		if (ActionClass.GetDefaultObject()->bGrantOnActivation)
-			ActionInstance = ActionManager->GiveAction(ActionClass);
+		if (ActionData->bGrantOnActivation)
+			ActionInstance = ActionSystem->GiveAction(ActionData);
 		else
 			return false;
 	}
@@ -210,12 +197,7 @@ void UAction_CoreStateInstance::ConstructionScript_Implementation()
 	SetVariableHidden(GET_MEMBER_NAME_CHECKED(UAction_CoreStateInstance, TriggerEvent), bHideTriggerEvent);
 
 #pragma endregion Input Construction
-
-	if (ActionClass && !ActionClass->IsInBlueprint())
-	{
-		ActionClass = nullptr;
-		UE_LOG(LogTemp, Error, TEXT("Selected action class is not a Blueprint class. Please Select a Blueprint class"))
-	}
+	
 	
 	Super::ConstructionScript_Implementation();
 }

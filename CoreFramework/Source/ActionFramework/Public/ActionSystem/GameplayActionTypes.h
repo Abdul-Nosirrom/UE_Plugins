@@ -6,7 +6,7 @@
 #include "GameplayActionTypes.generated.h"
 
 class ARadicalCharacter;
-class UActionManagerComponent;
+class UActionSystemComponent;
 class URadicalMovementComponent;
 class UAnimInstance;
 class USkeletalMeshComponent;
@@ -25,7 +25,7 @@ struct ACTIONFRAMEWORK_API FActionActorInfo
 	TWeakObjectPtr<ARadicalCharacter> CharacterOwner;
 
 	UPROPERTY(Category=ActorInfo, BlueprintReadOnly)
-	TWeakObjectPtr<UActionManagerComponent> ActionManagerComponent;
+	TWeakObjectPtr<UActionSystemComponent> ActionSystemComponent;
 
 	UPROPERTY(Category=ActorInfo, BlueprintReadOnly)
 	TWeakObjectPtr<URadicalMovementComponent> MovementComponent;
@@ -33,5 +33,5 @@ struct ACTIONFRAMEWORK_API FActionActorInfo
 	UPROPERTY(Category=ActorInfo, BlueprintReadOnly)
 	TWeakObjectPtr<USkeletalMeshComponent> SkeletalMeshComponent;
 
-	virtual void InitFromCharacter(ARadicalCharacter* Character, UActionManagerComponent* InActionManagerComponent);
+	virtual void InitFromCharacter(ARadicalCharacter* Character, UActionSystemComponent* InActionSystemComponent);
 };

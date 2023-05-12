@@ -5,8 +5,11 @@
 
 #include "InputData.h"
 #include "ActionSystem/ActionBlueprint.h"
+#include "ActionSystem/GameplayAction.h"
 #include "AssetCategories/AssetEditorUtilities.h"
 #include "Editor/ActionBlueprintFactory.h"
+#include "Editor/ActionDataFactory.h"
+#include "Editor/ActionDataBlueprintFactory.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
 
@@ -47,6 +50,62 @@ UFactory* FAssetTypeActions_GameplayActionBlueprint::GetFactoryForBlueprintType(
 	GameplayAbilitiesBlueprintFactory->ParentClass = TSubclassOf<UGameplayAction>(*InBlueprint->GeneratedClass);
 	return GameplayAbilitiesBlueprintFactory;
 }
+
+//#undef LOCTEXT_NAMESPACE
+
+// --------------------------------------------------------------------------------------------------------------------
+// Action Data Categories
+// --------------------------------------------------------------------------------------------------------------------
+
+FText FAssetTypeActions_ActionDataBlueprint::GetName() const
+{ 
+	return NSLOCTEXT("AssetTypeActions", "AssetTypeActions_GameplayActionBlueprint", "Action Data Definition"); 
+}
+
+FColor FAssetTypeActions_ActionDataBlueprint::GetTypeColor() const
+{
+	return FColor(0, 96, 128);
+}
+
+
+bool FAssetTypeActions_ActionDataBlueprint::ShouldUseDataOnlyEditor(const UBlueprint* Blueprint) const
+{
+	return FBlueprintEditorUtils::IsDataOnlyBlueprint(Blueprint)
+		&& !FBlueprintEditorUtils::IsLevelScriptBlueprint(Blueprint)
+		&& !FBlueprintEditorUtils::IsInterfaceBlueprint(Blueprint)
+		&& !Blueprint->bForceFullEditor
+		&& !Blueprint->bIsNewlyCreated;
+}
+
+UClass* FAssetTypeActions_ActionDataBlueprint::GetSupportedClass() const
+{ 
+	return UActionDataBlueprint::StaticClass(); 
+}
+
+UFactory* FAssetTypeActions_ActionDataBlueprint::GetFactoryForBlueprintType(UBlueprint* InBlueprint) const
+{
+	UActionDataBlueprintFactory* GameplayAbilitiesBlueprintFactory = NewObject<UActionDataBlueprintFactory>();
+	GameplayAbilitiesBlueprintFactory->ParentClass = TSubclassOf<UGameplayActionData>(*InBlueprint->GeneratedClass);
+	return GameplayAbilitiesBlueprintFactory;
+}
+
+//#define LOCTEXT_NAMESPACE "ActionData"
+
+FText FATA_ActionData::GetName() const 
+{
+	return NSLOCTEXT("AssetTypeActions", "ATA_ActionData", "Action Data Asset"); 
+}
+
+FText FATA_ActionData::GetAssetDescription(const FAssetData& AssetData) const
+{
+	return LOCTEXT("AssetTypeActions", "Modifiable Parameters Of A Given Gameplay Action");
+}
+
+UClass* FATA_ActionData::GetSupportedClass() const
+{
+	return UGameplayActionData::StaticClass();//TSubclassOf<UGameplayActionData>();
+}
+
 
 #undef LOCTEXT_NAMESPACE
 

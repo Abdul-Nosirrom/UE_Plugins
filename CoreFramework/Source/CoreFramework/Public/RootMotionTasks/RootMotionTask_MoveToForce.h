@@ -29,7 +29,7 @@ class COREFRAMEWORK_API URootMotionTask_MoveToForce : public URootMotionTask_Bas
 
 	/** Apply force to character's movement */
 	UFUNCTION(BlueprintCallable, Category = "Root Motion|Tasks", meta = (BlueprintInternalUseOnly = "TRUE"))
-	static URootMotionTask_MoveToForce* ApplyRootMotionMoveToForce(ARadicalCharacter* Owner, FName TaskInstanceName, FVector TargetLocation, float Duration, bool bSetNewMovementMode, EMovementState MovementMode, bool bRestrictSpeedToExpected, UCurveVector* PathOffsetCurve, ERootMotionFinishVelocityMode VelocityOnFinishMode, FVector SetVelocityOnFinish, float ClampVelocityOnFinish);
+	static URootMotionTask_MoveToForce* ApplyRootMotionMoveToForce(ARadicalCharacter* Owner, FName TaskInstanceName, FVector TargetLocation, float Duration, bool bSetNewMovementMode, EMovementState MovementMode, bool bRestrictSpeedToExpected, bool bApplyCurveInLocalSpace, UCurveVector* PathOffsetCurve, ERootMotionFinishVelocityMode VelocityOnFinishMode, FVector SetVelocityOnFinish, float ClampVelocityOnFinish);
 
 	/** Tick function for this task, if bTickingTask == true */
 	virtual void TickTask(float DeltaTime) override;
@@ -64,6 +64,9 @@ protected:
 	UPROPERTY(Replicated)
 	bool bRestrictSpeedToExpected = false;
 
+	UPROPERTY(Replicated)
+	bool bApplyCurveInLocalSpace;
+	
 	UPROPERTY(Replicated)
 	TObjectPtr<UCurveVector> PathOffsetCurve = nullptr;
 

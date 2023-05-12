@@ -8,7 +8,7 @@
 
 URootMotionTask_MoveToForce* URootMotionTask_MoveToForce::ApplyRootMotionMoveToForce(ARadicalCharacter* Owner,
 	FName TaskInstanceName, FVector TargetLocation, float Duration, bool bSetNewMovementMode,
-	EMovementState MovementMode, bool bRestrictSpeedToExpected, UCurveVector* PathOffsetCurve,
+	EMovementState MovementMode, bool bRestrictSpeedToExpected, bool bApplyCurveInLocalSpace, UCurveVector* PathOffsetCurve,
 	ERootMotionFinishVelocityMode VelocityOnFinishMode, FVector SetVelocityOnFinish, float ClampVelocityOnFinish)
 {
 
@@ -20,6 +20,7 @@ URootMotionTask_MoveToForce* URootMotionTask_MoveToForce::ApplyRootMotionMoveToF
 	MyTask->bSetNewMovementMode = bSetNewMovementMode;
 	MyTask->NewMovementMode = MovementMode;
 	MyTask->bRestrictSpeedToExpected = bRestrictSpeedToExpected;
+	MyTask->bApplyCurveInLocalSpace = bApplyCurveInLocalSpace;
 	MyTask->PathOffsetCurve = PathOffsetCurve;
 	MyTask->FinishVelocityMode = VelocityOnFinishMode;
 	MyTask->FinishSetVelocity = SetVelocityOnFinish;
@@ -118,6 +119,7 @@ void URootMotionTask_MoveToForce::SharedInitAndApply()
 			MoveToForce->StartLocation = StartLocation;
 			MoveToForce->Duration = Duration;
 			MoveToForce->bRestrictSpeedToExpected = bRestrictSpeedToExpected;
+			MoveToForce->bApplyCurveInLocalSpace = bApplyCurveInLocalSpace;
 			MoveToForce->PathOffsetCurve = PathOffsetCurve;
 			MoveToForce->FinishVelocityParams.Mode = FinishVelocityMode;
 			MoveToForce->FinishVelocityParams.SetVelocity = FinishSetVelocity;

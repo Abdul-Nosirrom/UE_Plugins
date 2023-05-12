@@ -4,8 +4,8 @@
 #include "StateMachineDefinitions/Action_CoreStateMachineInstance.h"
 
 #include "ImageUtils.h"
-#include "Actors/RadicalPlayerCharacter.h"
-#include "Components/ActionManagerComponent.h"
+#include "Actors/RadicalCharacter.h"
+#include "Components/ActionSystemComponent.h"
 
 #include "Interfaces/IPluginManager.h"
 
@@ -52,10 +52,15 @@ UAction_CoreStateMachineInstance::UAction_CoreStateMachineInstance()
 void UAction_CoreStateMachineInstance::OnRootStateMachineStart_Implementation()
 {
 	/* Cache references for the state to use */
-	if (!ActionManager)
+	if (!ActionSystem.IsValid())
 	{
-		const auto CharacterOwner = Cast<ARadicalPlayerCharacter>(GetContext());
-		ActionManager = CharacterOwner->GetActionManager();
+		const auto CharacterOwner = Cast<ARadicalCharacter>(GetContext());
+		ActionSystem = Cast<UActionSystemComponent>(CharacterOwner->FindComponentByClass(UActionSystemComponent::StaticClass()));
+
+		if (IsEntryState())
+		{
+			ActionInstance = ActionSystem->GiveAction(ActionData); // We ignore bGrantOnActivation, otherwise we enter the state with no action to execute
+		}
 	}
 
 	// NOTE: Can't retrieve action instance here as it has never been activated at this point and therefore, never instanced
@@ -68,11 +73,20 @@ void UAction_CoreStateMachineInstance::OnStateBegin_Implementation()
 {
 	Super::OnStateBegin_Implementation();
 
-	// We use this to retrieve the action instance, we assume it exists otherwise we wouldn't have entered the state to begin with
+	// We use this to retrieve the action instance, we assume it exists otherwise we wouldn't have entered the state to begin with (This scope is only executed once per state)
 	if (!ActionInstance)
 	{
-		ActionInstance = ActionManager->FindActionInstanceFromClass(ActionClass);
-		ActionInstance->OnGameplayActionEnded.AddUObject(this, &UAction_CoreStateMachineInstance::OnActionEnded);
+		ActionSystem->GiveAction(ActionData); // We ignore bGrantOnActivation, otherwise we enter the state with no action to execute
+		ActionInstance = ActionSystem->FindActionInstanceFromClass(ActionData);
+	}
+
+	ActionInstance->ActivateAction();
+	
+	ActionInstance->OnGameplayActionEnded.AddUObject(this, &UAction_CoreStateMachineInstance::OnActionEnded);
+
+	if (InputType == Button && TriggerEvent == TRIGGER_Press)
+	{
+		ActionInstance->InputInstigator = ButtonInput.Get();
 	}
 }
 
@@ -84,12 +98,7 @@ void UAction_CoreStateMachineInstance::OnStateEnd_Implementation()
 	// Check if instance is active, if so we're cancelling it. Otherwise we were ended because the action itself was ended (or cancelled externally)
 	if (ActionInstance->IsActive())
 	{
-		if (!ActionInstance->CanBeCanceled())
-		{
-			// This is specifically for interrupt transitions which don't care about the outgoing state, we force it to be cancellable (We can't avoid the transition in here)
-			ActionInstance->SetCanBeCanceled(true);
-		}
-		ActionInstance->CancelAction(); 
+		ActionInstance->EndAction(true);
 	}
 	// else we assume the action ended naturally, hence why it's no longer active by the time we get here
 }
@@ -105,16 +114,22 @@ void UAction_CoreStateMachineInstance::OnActionEnded(UGameplayAction* Action, bo
 /* We check if we can activate the action through the actionmanager. If we can, the action manager will auto-activate it. */
 bool UAction_CoreStateMachineInstance::CanEnter()
 {
-	return ActionManager->TryActivateAbilityByClass(ActionClass);
+	if (!ActionInstance)
+	{
+		if (ActionData->bGrantOnActivation)
+			ActionInstance = ActionSystem->GiveAction(ActionData);
+		else
+			return false;
+	}
+	
+	return ActionSystem->TryActivateAbilityByClass(ActionData);
 }
 
 /* This is checked for normal transitions, we take them only if we can cancel the current action */
 bool UAction_CoreStateMachineInstance::CanExit()
 {
-	return ActionInstance->CanBeCanceled(); // need to store action instance safely, noting that it can be "removed" at any time.
+	return ActionInstance ? ActionInstance->CanBeCanceled() : true;
 }
-
-
 
 void UAction_CoreStateMachineInstance::ConstructionScript_Implementation()
 {

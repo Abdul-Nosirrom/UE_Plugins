@@ -4,13 +4,11 @@
 #include "ActionSystem/GameplayAction.h"
 
 #include "AF_PCH.h"
-#include "RadicalMovementComponent.h"
 #include "TimerManager.h"
-#include "ActionSystem/GameplayActionTypes.h"
-#include "Components/ActionManagerComponent.h"
+#include "Components/ActionSystemComponent.h"
 
-DECLARE_CYCLE_STAT(TEXT("Activating Action Internal"), STAT_ActivateActionInternal, STATGROUP_ActionManagerComp)
-DECLARE_CYCLE_STAT(TEXT("End Action Internal"), STAT_EndActionInternal, STATGROUP_ActionManagerComp)
+DECLARE_CYCLE_STAT(TEXT("Activating Action Internal"), STAT_ActivateActionInternal, STATGROUP_ActionSystemComp)
+DECLARE_CYCLE_STAT(TEXT("End Action Internal"), STAT_EndActionInternal, STATGROUP_ActionSystemComp)
 
 UWorld* UGameplayAction::GetWorld() const
 {
@@ -43,8 +41,8 @@ void UGameplayAction::OnActionRemoved(const FActionActorInfo* ActorInfo)
 
 bool UGameplayAction::CanActivateAction()
 {
-	// Ensure we hae a valid ActionmanagerComponent reference
-	if (!CurrentActorInfo->ActionManagerComponent.IsValid())
+	// Ensure we hae a valid ActionSystemComponent reference
+	if (!CurrentActorInfo->ActionSystemComponent.IsValid())
 	{
 		return false;
 	}
@@ -73,7 +71,7 @@ void UGameplayAction::ActivateAction()
 {
 	SCOPE_CYCLE_COUNTER(STAT_ActivateActionInternal);
 	
-	if (!CurrentActorInfo->ActionManagerComponent.IsValid())
+	if (!CurrentActorInfo->ActionSystemComponent.IsValid())
 	{
 		return; // No valid owner
 	}
@@ -85,14 +83,14 @@ void UGameplayAction::ActivateAction()
 	// Set current info (Not necessary in our use case I believe)
 	
 	// Grant tags to owner
-	CurrentActorInfo->ActionManagerComponent->AddTags(ActionTags);
+	CurrentActorInfo->ActionSystemComponent->AddTags(GetActionData()->ActionTags);
 
 	//if (OnActionEndedDelegate) // Pass this in
 	//{
 	//	OnActionEnded.Add(*OnActionEndedDelegate); // we clear the bindings of this when we end so no need to manually unbind
 	//}
 
-	CurrentActorInfo->ActionManagerComponent->NotifyActionActivated(this);
+	CurrentActorInfo->ActionSystemComponent->NotifyActionActivated(this);
 	// TODO: more tag stuff
 
 	OnActionActivated();
@@ -120,10 +118,10 @@ void UGameplayAction::EndAction(bool bWasCancelled)
 		OnActionEnd();
 
 		// Notify action manager
-		if (CurrentActorInfo->ActionManagerComponent.IsValid())
+		if (CurrentActorInfo->ActionSystemComponent.IsValid())
 		{
 			// Remove tags
-			CurrentActorInfo->ActionManagerComponent->NotifyActionEnded(this);
+			CurrentActorInfo->ActionSystemComponent->NotifyActionEnded(this);
 		}
 
 		bIsActive = false;

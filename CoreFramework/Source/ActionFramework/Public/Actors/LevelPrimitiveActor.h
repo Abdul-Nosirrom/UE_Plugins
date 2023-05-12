@@ -7,7 +7,7 @@
 #include "GameFramework/Actor.h"
 #include "LevelPrimitiveActor.generated.h"
 
-class ARadicalPlayerCharacter;
+class ARadicalCharacter;
 
 UCLASS()
 class ACTIONFRAMEWORK_API ALevelPrimitiveActor : public AActor
@@ -29,7 +29,7 @@ protected:
 	void UnRegisterPlayer();
 
 	UPROPERTY(Transient)
-	ARadicalPlayerCharacter* PlayerCharacter;
+	ARadicalCharacter* PlayerCharacter;
 	UPROPERTY( Category="GamplayTags",EditDefaultsOnly, BlueprintReadOnly)
 	FGameplayTag TagToGrant;
 };
