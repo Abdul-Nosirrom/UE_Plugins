@@ -21,25 +21,44 @@ struct FActionActorInfo;
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnGameplayActionEnded, class UGameplayAction*, bool);
 
 /* ~~~~~ Helper Macros For Managing ActionDats ~~~~~ */
-#define DECLARE_ACTION_DATA(Class)\
-	UPROPERTY(Category="ActionData", EditDefaultsOnly, BlueprintReadOnly)\
-	Class* ActionData; \
-	virtual FORCEINLINE UGameplayActionData* GetActionData() override { return ActionData; } \
-	virtual FORCEINLINE void SetActionData(UGameplayActionData* InActionData) override \
+#define DECLARE_ACTION_DATA(Class) \
+	virtual FORCEINLINE UGameplayActionData* GetActionData_Implementation() const override { return ActionData; } \
+	virtual FORCEINLINE void SetActionData_Implementation(UGameplayActionData* InActionData) override \
 	{ \
-		check(Cast<Class>(InActionData))\
+		checkf(Cast<Class>(InActionData), TEXT("[%s]: Incompatible Action Data Class Given, Require Data Of Type [%s]"), *StaticClass()->GetName(), *Class::StaticClass()->GetName())\
 		ActionData = Cast<Class>(InActionData); \
-	} 
+	}
+
+#define CALC_VEL_false		virtual void CalcVelocity_Implementation(URadicalMovementComponent* MovementComponent, float DeltaTime) override {}
+#define CALC_VEL_true		virtual void CalcVelocity_Implementation(URadicalMovementComponent* MovementComponent, float DeltaTime) override;
+#define CALC_VEL(Val)		CALC_VEL_ ## Val 
+#define UPDATE_ROT_false	virtual void UpdateRotation_Implementation(URadicalMovementComponent* MovementComponent, float DeltaTime) override {}
+#define UPDATE_ROT_true		virtual void UpdateRotation_Implementation(URadicalMovementComponent* MovementComponent, float DeltaTime) override;
+#define UPDATE_ROT(Val)		UPDATE_ROT_ ## Val
+#define ANIM_ACTION_false \
+	virtual void PostProcessRMVelocity_Implementation(FVector& Velocity, float DeltaTime) {} \
+	virtual void PostProcessRMRotation_Implementation(FVector& Velocity, float DeltaTime) {}
+#define ANIM_ACTION_true \
+	virtual void PostProcessRMVelocity_Implementation(FVector& Velocity, float DeltaTime);\
+	virtual void PostProcessRMRotation_Implementation(FVector& Velocity, float DeltaTime);
+#define ANIM_ACTION(Val)	ANIM_ACTION_ ## Val
+
+#define SETUP_ACTION(Class, DataClass, bRequiresCalcVelocity, bRequiresUpdateRot, bPostProcessRootMotion)					\
+	Class() { bRespondToMovementEvents = bRequiresCalcVelocity; bRespondToRotationEvents = bRequiresUpdateRot; }			\
+	virtual void OnActionActivated_Implementation() override;																\
+	virtual void OnActionTick_Implementation(float DeltaTime) override;														\
+	virtual void OnActionEnd_Implementation() override;																		\
+	CALC_VEL(bRequiresCalcVelocity)																							\
+	UPDATE_ROT(bRequiresUpdateRot)																							\
+	ANIM_ACTION(bPostProcessRootMotion)																						\
+	virtual bool EnterCondition_Implementation() override;																	\
+	DECLARE_ACTION_DATA(DataClass);																							\
 
 UCLASS(Abstract, Blueprintable, ClassGroup=Actions, Category="Gameplay Actions", DisplayName="Base Gameplay Action Data")
 class ACTIONFRAMEWORK_API UGameplayActionData : public UDataAsset
 {
 	friend class UGameplayAction;
 	friend class UActionSystemComponent;
-	
-	// Just needs this for access to bGrantOnActivation
-	friend class UAction_CoreStateInstance;
-	friend class UAction_CoreStateMachineInstance;
 	
 	GENERATED_BODY()
 
@@ -60,17 +79,16 @@ protected:
 
 protected:
 	/*--------------------------------------------------------------------------------------------------------------
-	* Tags TODO: These
+	* Tags 
 	*--------------------------------------------------------------------------------------------------------------*/
 	/// @brief  The action has these tags associated with it. These tags describe the action.
+	///			Example, a combat action would have Action.Combat, an action that modifies movement Action.Movement.
+	///			These tags are also granted to the owning ActionSystemComponent on activation and removed on end
 	UPROPERTY(Category=Tags, EditDefaultsOnly, BlueprintReadOnly)
 	FGameplayTagContainer ActionTags;
 	/// @brief  The action can only activate if the owner has all of these tags
 	UPROPERTY(Category=Tags, EditDefaultsOnly, BlueprintReadOnly)
 	FGameplayTagContainer OwnerRequiredTags;
-	/// @brief  The action will grant these tags to the owner on successful activation
-	UPROPERTY(Category=Tags, EditDefaultsOnly, BlueprintReadOnly)
-	FGameplayTagContainer OwnerGrantTags;
 	/// @brief  The action will block the activation of any other action that has any of these tags in ActionTags
 	UPROPERTY(Category=Tags, EditDefaultsOnly, BlueprintReadOnly)
 	FGameplayTagContainer BlockActionsWithTag;
@@ -100,10 +118,12 @@ public:
 	*--------------------------------------------------------------------------------------------------------------*/
 	virtual UWorld* GetWorld() const override;
 
-	UFUNCTION(Category="Action Data", BlueprintPure)
-	virtual FORCEINLINE UGameplayActionData* GetActionData() PURE_VIRTUAL(UGameplayAction::GetActionData, return nullptr; );
-	UFUNCTION(Category="Action Data", BlueprintCallable)
-	virtual FORCEINLINE void SetActionData(UGameplayActionData* InActionData) PURE_VIRTUAL(UGameplayAction::SetActionData, );
+	UFUNCTION(Category="Action Data", BlueprintNativeEvent, BlueprintPure)
+	UGameplayActionData* GetActionData() const;
+	virtual FORCEINLINE UGameplayActionData* GetActionData_Implementation() const PURE_VIRTUAL(UGameplayAction::GetActionData, return nullptr; );
+	UFUNCTION(Category="Action Data", BlueprintNativeEvent, BlueprintCallable)
+	void SetActionData(UGameplayActionData* InActionData);
+	virtual FORCEINLINE void SetActionData_Implementation(UGameplayActionData* InActionData) PURE_VIRTUAL(UGameplayAction::SetActionData, );
 
 protected:
 	

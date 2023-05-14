@@ -118,15 +118,11 @@ void UAction_CoreStateInstance::OnActionEnded(UGameplayAction* Action, bool bWas
 /* We check if we can activate the action through the actionmanager. If we can, the action manager will auto-activate it. */
 bool UAction_CoreStateInstance::CanEnter()
 {
-	if (!ActionInstance)
-	{
-		if (ActionData->bGrantOnActivation)
-			ActionInstance = ActionSystem->GiveAction(ActionData);
-		else
-			return false;
-	}
+	if (!ActionSystem->TryActivateAbilityByClass(ActionData)) return false;
 
-	return ActionInstance->CanActivateAction();
+	if (!ActionInstance) ActionInstance = ActionSystem->FindActionInstanceFromClass(ActionData);
+	
+	return true;
 }
 
 /* This is checked for normal transitions, we take them only if we can cancel the current action */

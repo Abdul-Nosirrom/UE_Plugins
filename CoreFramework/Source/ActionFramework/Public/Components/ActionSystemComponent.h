@@ -8,11 +8,12 @@
 #include "Components/ActorComponent.h"
 #include "StateMachineDefinitions/GameplayStateMachine_Base.h"
 #include "GameplayTags/Classes/GameplayTagAssetInterface.h"
+#include "GameplayEffectTypes.h"
 #include "ActionSystemComponent.generated.h"
 
 /* ~~~~~ Forward Declarations ~~~~~ */
 class ARadicalCharacter;
-class ALevelPrimitiveActor;
+class ULevelPrimitiveComponent;
 //class UGameplayAction;
 
 DECLARE_STATS_GROUP(TEXT("ActionSystem_Game"), STATGROUP_ActionSystemComp, STATCAT_Advanced)
@@ -59,16 +60,16 @@ public:
 
 protected:
 	UPROPERTY(Transient)
-	TMap<FGameplayTag, ALevelPrimitiveActor*> ActiveLevelPrimitives;
+	TMap<FGameplayTag, ULevelPrimitiveComponent*> ActiveLevelPrimitives;
 	
 public:
 	// Level primitive Interface
 	UFUNCTION(BlueprintCallable)
-	void RegisterLevelPrimitive(ALevelPrimitiveActor* LP);
+	void RegisterLevelPrimitive(ULevelPrimitiveComponent* LP);
 	UFUNCTION(BlueprintCallable)
-	bool UnRegisterLevelPrimitive(ALevelPrimitiveActor* LP);
+	bool UnRegisterLevelPrimitive(ULevelPrimitiveComponent* LP);
 	UFUNCTION(BlueprintCallable)
-	ALevelPrimitiveActor* GetActiveLevelPrimitive(FGameplayTag LPTag) const;
+	ULevelPrimitiveComponent* GetActiveLevelPrimitive(FGameplayTag LPTag) const;
 	// ~ Level primitive Interface
 
 #pragma endregion Level Primitive Interface
@@ -99,16 +100,24 @@ protected:
 	UPROPERTY(Transient)
 	TArray<UGameplayAction*> RunningUpdateRotationActions;
 
+
+	/**
+	If ever needed, this will be here
+	UPROPERTY(Transient)
+	TArray<UGameplayAction*> RunningRootMotionActions;
+	*/
+
+	
 	/*--------------------------------------------------------------------------------------------------------------
 	* Accessors
 	*--------------------------------------------------------------------------------------------------------------*/
 public:
 	/// @brief  Returns list of all activatable actions. Read-only.
-	//UFUNCTION(Category="Actions | Accessors", BlueprintPure)
-	//const TArray<UGameplayAction*>& GetActivatableActions() const
-	//{
-	//	return ActivatableActions.valu;
-	//}
+	UFUNCTION(Category="Actions | Accessors", BlueprintPure)
+	const TMap<UGameplayActionData*, UGameplayAction*>& GetActivatableActions() const
+	{
+		return  ActivatableActions;
+	}
 
 	/// @brief  Returns a list of all currently running actions. (Ex: When one action wants to know about another)
 	UFUNCTION(Category="Actions | Accessors", BlueprintPure)
@@ -132,7 +141,7 @@ public:
 	*--------------------------------------------------------------------------------------------------------------*/
 public:
 	/// @brief  Will grant an action to this component, allowing it to later be performed.
-	/// @return Instance of the action created (Honestly liking the SpecHandle approach now that I think about it)
+	/// @return Instance of the action created (Honestly liking the SpecHandle approach now that I think about it)(nvm)
 	UFUNCTION(Category=Actions, BlueprintCallable)
 	UGameplayAction* GiveAction(UGameplayActionData* InActionData);
 
@@ -164,12 +173,39 @@ public:
 protected:
 	bool InternalTryActivateAction(UGameplayAction* Action);
 
+	
 
 	/*--------------------------------------------------------------------------------------------------------------
 	* Cancelling and Interrupts
 	*--------------------------------------------------------------------------------------------------------------*/
 
-	// TODO: Need to probably configure tags first...
+	/// @brief  Given an action, will check if it's currently active. If so, it will force cancel it.
+	UFUNCTION(Category=Actions, BlueprintCallable)
+	void CancelAction(UGameplayActionData* Action);
+
+	/// @brief	Will cancel all currently running actions with any matching CancelTags in their ActionTags container
+	UFUNCTION(Category=Actions, BlueprintCallable)
+	void CancelActionsWithTags(const FGameplayTagContainer& CancelTags, const UGameplayActionData* Ignore=nullptr);
+
+	/// @brief	Will cancel all running actions except the ignored one
+	UFUNCTION(Category=Actions, BlueprintCallable)
+	void CancelAllActions(const UGameplayActionData* Ignore=nullptr);
+
+	/// @brief  Internal Use. Will setup an actions Block & Cancel tags. Adding block tags to an internal container to prevent activation
+	///			and cancel running actions with the incoming ones CancelTags.
+	void ApplyActionBlockAndCancelTags(const UGameplayActionData* InAction, bool bEnabledBlockTags, bool bExecuteCancelTags);
+
+	/// @brief  Given an actions ActionTags, will check if it's currently blocked from activation
+	UFUNCTION(Category=Actions, BlueprintCallable)
+	FORCEINLINE bool AreActionTagsBlocked(const FGameplayTagContainer& Tags) const { return BlockedTags.HasAnyMatchingGameplayTags(Tags); }
+
+	/// @brief	Adds tags to the BlockActionsWithTags local container
+	UFUNCTION(Category=Actions, BlueprintCallable)
+	FORCEINLINE void BlockActionsWithTags(const FGameplayTagContainer& Tags) { BlockedTags.UpdateTagCount(Tags, 1); }
+
+	/// @brief	Remove tags from the BlockActionsWithTags local container
+	UFUNCTION(Category=Actions, BlueprintCallable)
+	FORCEINLINE void UnBlockActionsWithTags(const FGameplayTagContainer& Tags) { BlockedTags.UpdateTagCount(Tags, -1); };
 	
 	/*--------------------------------------------------------------------------------------------------------------
 	* Ability Event Response: 
@@ -196,14 +232,18 @@ public:
 	UFUNCTION()
 	void PostProcessRMRotation(URadicalMovementComponent* MovementComponent, FQuat& Rotation, float DeltaTime);
 
+	UPROPERTY(EditDefaultsOnly)
+	class UBoxComponent* BoxTest;
+	
 #pragma endregion Gameplay Actions
 
 #pragma region Gameplay Tag Interface
 	
 protected:
-	UPROPERTY(Category="Action Tags", EditDefaultsOnly, BlueprintReadWrite)
-	FGameplayTagContainer GrantedTags;
-	
+	//UPROPERTY(Category="Action Tags", EditDefaultsOnly, BlueprintReadWrite)
+	FGameplayTagCountContainer GrantedTags;
+	FGameplayTagCountContainer BlockedTags;
+
 public:
 	/*--------------------------------------------------------------------------------------------------------------
 	* IGameplayTagInterface
@@ -211,19 +251,19 @@ public:
 
 	// NOTE: Can add optional delegate to bind to in case we wanna listen to any added tags from anywhere
 	UFUNCTION(BlueprintCallable)
-	void AddTag(const FGameplayTag& TagToAdd) { GrantedTags.AddTag(TagToAdd); }
+	void AddTag(const FGameplayTag& TagToAdd) { GrantedTags.UpdateTagCount(TagToAdd,1); }
 	UFUNCTION(BlueprintCallable)
-	void AddTags(const FGameplayTagContainer& TagContainer) { GrantedTags.AppendTags(TagContainer); }
+	void AddTags(const FGameplayTagContainer& TagContainer) { GrantedTags.UpdateTagCount(TagContainer, 1); }
 	UFUNCTION(BlueprintCallable)
-	bool RemoveTag(const FGameplayTag& TagToRemove) { return GrantedTags.RemoveTag(TagToRemove); }
+	bool RemoveTag(const FGameplayTag& TagToRemove) { return GrantedTags.UpdateTagCount(TagToRemove, -1); }
 	UFUNCTION(BlueprintCallable)
-	void RemoveTags(const FGameplayTagContainer& TagContainer) { GrantedTags.RemoveTags(TagContainer); }
+	void RemoveTags(const FGameplayTagContainer& TagContainer) { GrantedTags.UpdateTagCount(TagContainer, -1); }
 	
 	// IGameplayTagAssetInterface
-	FORCEINLINE virtual void GetOwnedGameplayTags(FGameplayTagContainer& TagContainer) const override { TagContainer.AppendTags(GrantedTags); }
-	FORCEINLINE virtual bool HasMatchingGameplayTag(FGameplayTag TagToCheck) const override { return GrantedTags.HasTag(TagToCheck); }
-	FORCEINLINE virtual bool HasAllMatchingGameplayTags(const FGameplayTagContainer& TagContainer) const override { return GrantedTags.HasAll(TagContainer); }
-	FORCEINLINE virtual bool HasAnyMatchingGameplayTags(const FGameplayTagContainer& TagContainer) const override { return GrantedTags.HasAny(TagContainer); }
+	FORCEINLINE virtual void GetOwnedGameplayTags(FGameplayTagContainer& TagContainer) const override { TagContainer.AppendTags(GrantedTags.GetExplicitGameplayTags()); }
+	FORCEINLINE virtual bool HasMatchingGameplayTag(FGameplayTag TagToCheck) const override { return GrantedTags.HasMatchingGameplayTag(TagToCheck); }
+	FORCEINLINE virtual bool HasAllMatchingGameplayTags(const FGameplayTagContainer& TagContainer) const override { return GrantedTags.HasAllMatchingGameplayTags(TagContainer); }
+	FORCEINLINE virtual bool HasAnyMatchingGameplayTags(const FGameplayTagContainer& TagContainer) const override { return GrantedTags.HasAnyMatchingGameplayTags(TagContainer); }
 	// ~ IGameplayTagAssetInterface
 
 #pragma endregion Gameplay Tag Interface

@@ -3,7 +3,7 @@
 
 #include "ActionTemplates/Action_LevelPrimitive.h"
 #include "RadicalMovementComponent.h"
-#include "Actors/LevelPrimitiveActor.h"
+#include "Components/LevelPrimitiveComponent.h"
 #include "Actors/RadicalCharacter.h"
 #include "Components/ActionSystemComponent.h"
 
@@ -19,6 +19,6 @@ void UAction_LevelPrimitive::OnActionEnd_Implementation()
 
 bool UAction_LevelPrimitive::EnterCondition_Implementation()
 {
-	LevelPrimitive = CurrentActorInfo->ActionSystemComponent.Get()->GetActiveLevelPrimitive(PrimitiveTag);
+	//LevelPrimitive = CurrentActorInfo->ActionSystemComponent.Get()->GetActiveLevelPrimitive(PrimitiveTag);
 	return LevelPrimitive != nullptr;
 }

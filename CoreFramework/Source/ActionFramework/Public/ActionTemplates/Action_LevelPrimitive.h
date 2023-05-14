@@ -8,7 +8,7 @@
 #include "Action_LevelPrimitive.generated.h"
 
 /*~~~~~ Forward Declarations ~~~~~*/
-class ALevelPrimitiveActor;
+class ULevelPrimitiveComponent;
 
 UCLASS(Blueprintable, BlueprintType, ClassGroup=ActionManager)
 class ACTIONFRAMEWORK_API UActionData_LevelPrimitive : public UGameplayActionData
@@ -16,6 +16,7 @@ class ACTIONFRAMEWORK_API UActionData_LevelPrimitive : public UGameplayActionDat
 	GENERATED_BODY()
 
 public:
+	UPROPERTY(BlueprintReadWrite)
 	float SomethingElse;
 };
 
@@ -28,14 +29,16 @@ class ACTIONFRAMEWORK_API UAction_LevelPrimitive : public UGameplayAction
 	GENERATED_BODY()
 
 protected:
-
-	DECLARE_ACTION_DATA(UActionData_LevelPrimitive);
+	
+	//UPROPERTY(Category="ActionData", EditDefaultsOnly, BlueprintReadOnly)
+	//UActionData_LevelPrimitive* ActionData;
+	//SETUP_ACTION(UAction_LevelPrimitive, UActionData_LevelPrimitive, true , false, true);
 	
 	UPROPERTY(Category="Level Primitive Info", EditAnywhere, BlueprintReadWrite, meta=(GameplayTagFilter="LP"))
 	FGameplayTag PrimitiveTag;
 	
 	UPROPERTY(Transient)
-	ALevelPrimitiveActor* LevelPrimitive;
+	ULevelPrimitiveComponent* LevelPrimitive;
 
 	// BEGIN UGameplayAction Interface
 	virtual void OnActionActivated_Implementation() override;
@@ -45,4 +48,7 @@ protected:
 	// BEGIN Control Flow
 	virtual bool EnterCondition_Implementation() override;
 	// END Control Flow
+	
+	//UAction_LevelPrimitive() { bRespondToMovementEvents(true); bRespondToRotationEvents(true); }
+	
 };

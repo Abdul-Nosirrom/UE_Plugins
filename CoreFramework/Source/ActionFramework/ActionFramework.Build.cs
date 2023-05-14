@@ -16,7 +16,7 @@ public class ActionFramework : ModuleRules
 		PublicDependencyModuleNames.AddRange(new[]
 			{
 				"Core", "CoreUObject", "Engine", "InputCore", "PhysicsCore", "AIModule", "EnhancedInput", "GameplayTags",
-				"Projects", "SMSystem"
+				"Projects", "SMSystem", "GameplayAbilities"
 			}
 		);
 		

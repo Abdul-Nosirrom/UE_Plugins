@@ -12,7 +12,7 @@ DECLARE_CYCLE_STAT(TEXT("End Action Internal"), STAT_EndActionInternal, STATGROU
 
 UWorld* UGameplayAction::GetWorld() const
 {
-	//Return null if the called from the CDO, or if the outer is being destroyed
+	//Return null if called from the CDO, or if the outer is being destroyed
 	if (!HasAnyFlags(RF_ClassDefaultObject) &&  !GetOuter()->HasAnyFlags(RF_BeginDestroyed) && !GetOuter()->IsUnreachable())
 	{
 		//Try to get the world from the owning actor if we have one
@@ -64,7 +64,9 @@ bool UGameplayAction::CanActivateAction()
 
 bool UGameplayAction::DoesSatisfyTagRequirements() const
 {
-	return true;
+	const bool bIsBlocked =  CurrentActorInfo->ActionSystemComponent->AreActionTagsBlocked(GetActionData()->ActionTags);
+	const bool bHasRequiredTags = CurrentActorInfo->ActionSystemComponent->HasAllMatchingGameplayTags(GetActionData()->OwnerRequiredTags);
+	return !bIsBlocked && bHasRequiredTags;
 }
 
 void UGameplayAction::ActivateAction()
@@ -82,17 +84,14 @@ void UGameplayAction::ActivateAction()
 
 	// Set current info (Not necessary in our use case I believe)
 	
-	// Grant tags to owner
-	CurrentActorInfo->ActionSystemComponent->AddTags(GetActionData()->ActionTags);
-
 	//if (OnActionEndedDelegate) // Pass this in
 	//{
 	//	OnActionEnded.Add(*OnActionEndedDelegate); // we clear the bindings of this when we end so no need to manually unbind
 	//}
 
+	// Tags are added in ASC
 	CurrentActorInfo->ActionSystemComponent->NotifyActionActivated(this);
-	// TODO: more tag stuff
-
+	
 	OnActionActivated();
 }
 
@@ -120,7 +119,7 @@ void UGameplayAction::EndAction(bool bWasCancelled)
 		// Notify action manager
 		if (CurrentActorInfo->ActionSystemComponent.IsValid())
 		{
-			// Remove tags
+			// Tags are removed in ASC
 			CurrentActorInfo->ActionSystemComponent->NotifyActionEnded(this);
 		}
 

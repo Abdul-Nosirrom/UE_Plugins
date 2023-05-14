@@ -6,8 +6,9 @@
 #include "RadicalCharacter.h"
 #include "RadicalMovementComponent.h"
 #include "ActionSystem/GameplayAction.h"
-#include "Actors/LevelPrimitiveActor.h"
+#include "Components/LevelPrimitiveComponent.h"
 #include "Actors/RadicalCharacter.h"
+#include "Components/BoxComponent.h"
 #include "Engine/AssetManager.h"
 #include "Engine/Canvas.h"
 
@@ -93,7 +94,7 @@ void UActionSystemComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 * Level Primitives Interface
 *--------------------------------------------------------------------------------------------------------------*/
 
-void UActionSystemComponent::RegisterLevelPrimitive(ALevelPrimitiveActor* LP)
+void UActionSystemComponent::RegisterLevelPrimitive(ULevelPrimitiveComponent* LP)
 {
 	if (ActiveLevelPrimitives.Contains(LP->GetTag()))
 	{
@@ -104,11 +105,11 @@ void UActionSystemComponent::RegisterLevelPrimitive(ALevelPrimitiveActor* LP)
 		ActiveLevelPrimitives.Add(LP->GetTag(), LP);
 	}
 
-	if (!GrantedTags.HasTag(LP->GetTag()))
+	if (!GrantedTags.HasMatchingGameplayTag(LP->GetTag()))
 		AddTag(LP->GetTag()); 
 }
 
-bool UActionSystemComponent::UnRegisterLevelPrimitive(ALevelPrimitiveActor* LP)
+bool UActionSystemComponent::UnRegisterLevelPrimitive(ULevelPrimitiveComponent* LP)
 {
 	if (ActiveLevelPrimitives.Contains(LP->GetTag()))
 	{
@@ -118,7 +119,7 @@ bool UActionSystemComponent::UnRegisterLevelPrimitive(ALevelPrimitiveActor* LP)
 	return RemoveTag(LP->GetTag());
 }
 
-ALevelPrimitiveActor* UActionSystemComponent::GetActiveLevelPrimitive(FGameplayTag LPTag) const
+ULevelPrimitiveComponent* UActionSystemComponent::GetActiveLevelPrimitive(FGameplayTag LPTag) const
 {
 	return ActiveLevelPrimitives.Contains(LPTag) ? ActiveLevelPrimitives[LPTag] : nullptr;
 }
@@ -274,6 +275,59 @@ bool UActionSystemComponent::InternalTryActivateAction(UGameplayAction* Action)
 	return true;
 }
 
+void UActionSystemComponent::CancelAction(UGameplayActionData* Action)
+{
+	for (auto RunningAction : RunningActions)
+	{
+		if (RunningAction->GetActionData() == Action)
+		{
+			RunningAction->EndAction(true);
+			break;
+		}
+	}
+}
+
+void UActionSystemComponent::CancelActionsWithTags(const FGameplayTagContainer& CancelTags, const UGameplayActionData* Ignore)
+{
+	for (auto RunningAction : RunningActions)
+	{
+		if (RunningAction->GetActionData() == Ignore || !RunningAction->GetActionData()->ActionTags.HasAny(CancelTags))
+		{
+			continue;
+		}
+		RunningAction->EndAction(true);
+	}
+}
+
+void UActionSystemComponent::CancelAllActions(const UGameplayActionData* Ignore)
+{
+	for (auto RunningAction : RunningActions)
+	{
+		if (RunningAction->GetActionData() == Ignore)
+		{
+			continue;
+		}
+		RunningAction->EndAction(true);
+	}
+}
+
+void UActionSystemComponent::ApplyActionBlockAndCancelTags(const UGameplayActionData* InAction, bool bEnabledBlockTags, bool bExecuteCancelTags)
+{
+	if (bEnabledBlockTags)
+	{
+		BlockActionsWithTags(InAction->BlockActionsWithTag);
+	}
+	else
+	{
+		UnBlockActionsWithTags(InAction->BlockActionsWithTag);
+	}
+
+	if (bExecuteCancelTags)
+	{
+		CancelActionsWithTags(InAction->CancelActionsWithTag, InAction);
+	}
+	
+}
 
 
 void UActionSystemComponent::NotifyActionActivated(UGameplayAction* Action)
@@ -294,6 +348,9 @@ void UActionSystemComponent::NotifyActionActivated(UGameplayAction* Action)
 	{
 		RunningUpdateRotationActions.Add(Action);
 	}
+
+	AddTags(Action->GetActionData()->ActionTags);
+	ApplyActionBlockAndCancelTags(Action->GetActionData(), true, true);
 }
 
 void UActionSystemComponent::NotifyActionEnded(UGameplayAction* Action)
@@ -314,6 +371,9 @@ void UActionSystemComponent::NotifyActionEnded(UGameplayAction* Action)
 	{
 		RunningUpdateRotationActions.Remove(Action);
 	}
+
+	RemoveTags(Action->GetActionData()->ActionTags);
+	ApplyActionBlockAndCancelTags(Action->GetActionData(), false, false);
 }
 
 void UActionSystemComponent::CalculateVelocity(URadicalMovementComponent* MovementComponent, float DeltaTime)
@@ -355,13 +415,13 @@ void UActionSystemComponent::PostProcessRMVelocity(URadicalMovementComponent* Mo
 {
 	SCOPE_CYCLE_COUNTER(STAT_CalcVelocity)
 
-if (RunningCalcVelocityActions.Num() > 0)
-{
-	for (const auto Action : RunningCalcVelocityActions)
+	if (RunningCalcVelocityActions.Num() > 0)
 	{
-		Action->PostProcessRMVelocity_Implementation(Velocity, DeltaTime);
+		for (const auto Action : RunningCalcVelocityActions)
+		{
+			Action->PostProcessRMVelocity(Velocity, DeltaTime);
+		}
 	}
-}
 }
 
 void UActionSystemComponent::PostProcessRMRotation(URadicalMovementComponent* MovementComponent, FQuat& Rotation,
