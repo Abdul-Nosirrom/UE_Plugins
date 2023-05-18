@@ -6,7 +6,6 @@
 #include "InputData.h"
 #include "ActionSystem/ActionBlueprint.h"
 #include "ActionSystem/GameplayAction.h"
-#include "AssetCategories/AssetEditorUtilities.h"
 #include "Editor/ActionBlueprintFactory.h"
 #include "Editor/ActionDataFactory.h"
 #include "Editor/ActionDataBlueprintFactory.h"
