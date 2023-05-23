@@ -1996,8 +1996,8 @@ void URadicalMovementComponent::MaintainHorizontalGroundVelocity()
 	const float VelMag = Velocity.Size();
 	const float AccMag = Acceleration.Size();
 
-	Acceleration = UCoreMathLibrary::GetDirectionTangentToSurface(Acceleration, CurrentFloor.HitResult.ImpactNormal) * AccMag; 
-	Velocity = UCoreMathLibrary::GetDirectionTangentToSurface(Velocity, CurrentFloor.HitResult.ImpactNormal) * VelMag;
+	Acceleration = UCoreMathLibrary::GetDirectionTangentToSurface(Acceleration, UpdatedComponent->GetUpVector(), CurrentFloor.HitResult.ImpactNormal) * AccMag; 
+	Velocity = UCoreMathLibrary::GetDirectionTangentToSurface(Velocity, UpdatedComponent->GetUpVector(), CurrentFloor.HitResult.ImpactNormal) * VelMag;
 }
 
 void URadicalMovementComponent::RecalculateVelocityToReflectMove(const FVector& OldLocation, const float DeltaTime)

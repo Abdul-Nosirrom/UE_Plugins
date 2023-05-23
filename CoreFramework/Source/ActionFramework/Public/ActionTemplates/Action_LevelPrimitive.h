@@ -10,14 +10,24 @@
 /*~~~~~ Forward Declarations ~~~~~*/
 class ULevelPrimitiveComponent;
 
+/* Helper Macro */
+#define LP_CONDITION(ComponentCache, ComponentClass, AdditionalCheck) \
+	if (!Super::EnterCondition_Implementation()) return false;		\
+	ComponentCache = Cast<ComponentClass>(LevelPrimitive->GetOwner()->FindComponentByClass(ComponentClass::StaticClass())); \
+	if (!ComponentCache)	\
+	{	\
+		return AdditionalCheck;	\
+	}	\
+	return false;
+
 UCLASS(Blueprintable, BlueprintType, ClassGroup=ActionManager)
 class ACTIONFRAMEWORK_API UActionData_LevelPrimitive : public UGameplayActionData
 {
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(BlueprintReadWrite)
-	float SomethingElse;
+	UPROPERTY(Category="Level Primitive Info", EditAnywhere, BlueprintReadWrite, meta=(GameplayTagFilter="LP"))
+	FGameplayTag PrimitiveTag;
 };
 
 /// @brief	Base class for state machines that attach to a level primitive. Template states handles common enter/exit conditions
@@ -33,9 +43,6 @@ protected:
 	//UPROPERTY(Category="ActionData", EditDefaultsOnly, BlueprintReadOnly)
 	//UActionData_LevelPrimitive* ActionData;
 	//SETUP_ACTION(UAction_LevelPrimitive, UActionData_LevelPrimitive, true , false, true);
-	
-	UPROPERTY(Category="Level Primitive Info", EditAnywhere, BlueprintReadWrite, meta=(GameplayTagFilter="LP"))
-	FGameplayTag PrimitiveTag;
 	
 	UPROPERTY(Transient)
 	ULevelPrimitiveComponent* LevelPrimitive;

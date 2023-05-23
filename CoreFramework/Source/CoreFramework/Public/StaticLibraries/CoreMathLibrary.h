@@ -37,10 +37,10 @@ public:
 	
 	/// @brief  Given some surface normal and a direction, will compute the component of that direction tangent to the surface
 	UFUNCTION(Category="Vector Math", BlueprintPure)
-	static FORCEINLINE FVector GetDirectionTangentToSurface(const FVector& Direction, const FVector& SurfaceNormal)
+	static FORCEINLINE FVector GetDirectionTangentToSurface(const FVector& Direction, const FVector& LocalUp, const FVector& SurfaceNormal)
 	{
 		// Cross with an arbitrary vector
-		const FVector DirectionRight = Direction ^ (FVector(0.2f, 0.1f, 0.8f).GetSafeNormal());
+		const FVector DirectionRight = Direction ^ (LocalUp.GetSafeNormal());
 		return (SurfaceNormal ^ DirectionRight).GetSafeNormal();
 	}
 
