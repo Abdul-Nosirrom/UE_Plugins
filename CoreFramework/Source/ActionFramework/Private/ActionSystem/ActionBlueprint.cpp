@@ -8,11 +8,6 @@ UActionBlueprint::UActionBlueprint(const FObjectInitializer& ObjectInitializer)
 {
 }
 
-UActionDataBlueprint::UActionDataBlueprint(const FObjectInitializer& ObjectInitializer)
-	: Super(ObjectInitializer)
-{
-}
-
 #if WITH_EDITOR
 
 /** Returns the most base gameplay ability blueprint for a given blueprint (if it is inherited from another ability blueprint, returning null if only native / non-ability BP classes are it's parent) */
@@ -24,23 +19,6 @@ UActionBlueprint* UActionBlueprint::FindRootGameplayAbilityBlueprint(UActionBlue
 	for (UClass* ParentClass = DerivedBlueprint->ParentClass; ParentClass != UObject::StaticClass(); ParentClass = ParentClass->GetSuperClass())
 	{
 		if (UActionBlueprint* TestBP = Cast<UActionBlueprint>(ParentClass->ClassGeneratedBy))
-		{
-			ParentBP = TestBP;
-		}
-	}
-
-	return ParentBP;
-}
-
-/** Returns the most base gameplay ability blueprint for a given blueprint (if it is inherited from another ability blueprint, returning null if only native / non-ability BP classes are it's parent) */
-UActionDataBlueprint* UActionDataBlueprint::FindRootGameplayAbilityBlueprint(UActionDataBlueprint* DerivedBlueprint)
-{
-	UActionDataBlueprint* ParentBP = NULL;
-
-	// Determine if there is a gameplay ability blueprint in the ancestry of this class
-	for (UClass* ParentClass = DerivedBlueprint->ParentClass; ParentClass != UObject::StaticClass(); ParentClass = ParentClass->GetSuperClass())
-	{
-		if (UActionDataBlueprint* TestBP = Cast<UActionDataBlueprint>(ParentClass->ClassGeneratedBy))
 		{
 			ParentBP = TestBP;
 		}

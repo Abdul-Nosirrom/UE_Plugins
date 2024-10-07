@@ -3,12 +3,16 @@
 
 #include "AssetCategories/SharedAssetFactory.h"
 
+#include "DataTableEditorModule.h"
 #include "InputData.h"
 #include "ActionSystem/ActionBlueprint.h"
 #include "ActionSystem/GameplayAction.h"
+#include "AttributeSystem/EntityEffect.h"
+#include "AttributeSystem/EntityEffectBlueprint.h"
+#include "Data/TargetingPreset.h"
 #include "Editor/ActionBlueprintFactory.h"
 #include "Editor/ActionDataFactory.h"
-#include "Editor/ActionDataBlueprintFactory.h"
+#include "Editor/EntityEffectBlueprintFactory.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
 
@@ -56,40 +60,6 @@ UFactory* FAssetTypeActions_GameplayActionBlueprint::GetFactoryForBlueprintType(
 // Action Data Categories
 // --------------------------------------------------------------------------------------------------------------------
 
-FText FAssetTypeActions_ActionDataBlueprint::GetName() const
-{ 
-	return NSLOCTEXT("AssetTypeActions", "AssetTypeActions_GameplayActionBlueprint", "Action Data Definition"); 
-}
-
-FColor FAssetTypeActions_ActionDataBlueprint::GetTypeColor() const
-{
-	return FColor(0, 96, 128);
-}
-
-
-bool FAssetTypeActions_ActionDataBlueprint::ShouldUseDataOnlyEditor(const UBlueprint* Blueprint) const
-{
-	return FBlueprintEditorUtils::IsDataOnlyBlueprint(Blueprint)
-		&& !FBlueprintEditorUtils::IsLevelScriptBlueprint(Blueprint)
-		&& !FBlueprintEditorUtils::IsInterfaceBlueprint(Blueprint)
-		&& !Blueprint->bForceFullEditor
-		&& !Blueprint->bIsNewlyCreated;
-}
-
-UClass* FAssetTypeActions_ActionDataBlueprint::GetSupportedClass() const
-{ 
-	return UActionDataBlueprint::StaticClass(); 
-}
-
-UFactory* FAssetTypeActions_ActionDataBlueprint::GetFactoryForBlueprintType(UBlueprint* InBlueprint) const
-{
-	UActionDataBlueprintFactory* GameplayAbilitiesBlueprintFactory = NewObject<UActionDataBlueprintFactory>();
-	GameplayAbilitiesBlueprintFactory->ParentClass = TSubclassOf<UGameplayActionData>(*InBlueprint->GeneratedClass);
-	return GameplayAbilitiesBlueprintFactory;
-}
-
-//#define LOCTEXT_NAMESPACE "ActionData"
-
 FText FATA_ActionData::GetName() const 
 {
 	return NSLOCTEXT("AssetTypeActions", "ATA_ActionData", "Action Data Asset"); 
@@ -105,6 +75,150 @@ UClass* FATA_ActionData::GetSupportedClass() const
 	return UGameplayActionData::StaticClass();//TSubclassOf<UGameplayActionData>();
 }
 
+// --------------------------------------------------------------------------------------------------------------------
+// Entity Effect Category
+// --------------------------------------------------------------------------------------------------------------------
+
+FText FAssetTypeActions_EntityEffectBlueprint::GetName() const
+{ 
+	return NSLOCTEXT("AssetTypeActions", "AssetTypeActions_EntityEffectBlueprint", "Entity Effect"); 
+}
+
+FColor FAssetTypeActions_EntityEffectBlueprint::GetTypeColor() const
+{
+	return FColor(128, 0, 0);
+}
+
+
+bool FAssetTypeActions_EntityEffectBlueprint::ShouldUseDataOnlyEditor(const UBlueprint* Blueprint) const
+{
+	return FBlueprintEditorUtils::IsDataOnlyBlueprint(Blueprint)
+		&& !FBlueprintEditorUtils::IsLevelScriptBlueprint(Blueprint)
+		&& !FBlueprintEditorUtils::IsInterfaceBlueprint(Blueprint)
+		&& !Blueprint->bForceFullEditor
+		&& !Blueprint->bIsNewlyCreated;
+}
+
+UClass* FAssetTypeActions_EntityEffectBlueprint::GetSupportedClass() const
+{ 
+	return UEntityEffectBlueprint::StaticClass(); 
+}
+
+UFactory* FAssetTypeActions_EntityEffectBlueprint::GetFactoryForBlueprintType(UBlueprint* InBlueprint) const
+{
+	UEntityEffectBlueprintFactory* EntityEffectBlueprintFactory = NewObject<UEntityEffectBlueprintFactory>();
+	EntityEffectBlueprintFactory->ParentClass = TSubclassOf<UEntityEffect>(*InBlueprint->GeneratedClass);
+	return EntityEffectBlueprintFactory;
+}
+
+
+FText FATA_AttributeDataTable::GetName() const
+{
+	return NSLOCTEXT("AssetTypeActions", "FATA_AttributeDataTable", "Initial Attribute Data"); 
+}
+
+FText FATA_AttributeDataTable::GetAssetDescription(const FAssetData& AssetData) const
+{
+	return LOCTEXT("AssetTypeActions", "Initial Data To Fill Out An Attribute Set");
+}
+
+UClass* FATA_AttributeDataTable::GetSupportedClass() const
+{
+	return UAttributeInitDataTable::StaticClass();
+}
+
+void FATA_AttributeDataTable::OpenAssetEditor(const TArray<UObject*>& InObjects,
+	TSharedPtr<IToolkitHost> EditWithinLevelEditor)
+{
+	//@TODO: DarenC - This is from FAssetTypeActions_DataTable - but we can't derive to private include.
+	TArray<UDataTable*> DataTablesToOpen;
+	TArray<UDataTable*> InvalidDataTables;
+
+	for (UObject* Obj : InObjects)
+	{
+		UDataTable* Table = Cast<UDataTable>(Obj);
+		if (Table)
+		{
+			if (Table->GetRowStruct())
+			{
+				DataTablesToOpen.Add(Table);
+			}
+			else
+			{
+				InvalidDataTables.Add(Table);
+			}
+		}
+	}
+
+	if (InvalidDataTables.Num() > 0)
+	{
+		FTextBuilder DataTablesListText;
+		DataTablesListText.Indent();
+		for (UDataTable* Table : InvalidDataTables)
+		{
+			const FTopLevelAssetPath ResolvedRowStructName = Table->GetRowStructPathName();
+			DataTablesListText.AppendLineFormat(LOCTEXT("DataTable_MissingRowStructListEntry", "* {0} (Row Structure: {1})"), FText::FromString(Table->GetName()), FText::FromString(ResolvedRowStructName.ToString()));
+		}
+
+		const FText Title = LOCTEXT("DataTable_MissingRowStructTitle", "Continue?");
+		const EAppReturnType::Type DlgResult = FMessageDialog::Open(
+			EAppMsgType::YesNoCancel,
+			FText::Format(LOCTEXT("DataTable_MissingRowStructMsg", "The following Data Tables are missing their row structure and will not be editable.\n\n{0}\n\nDo you want to open these data tables?"), DataTablesListText.ToText()),
+			Title
+		);
+
+		switch (DlgResult)
+		{
+			case EAppReturnType::Yes:
+				DataTablesToOpen.Append(InvalidDataTables);
+			break;
+			case EAppReturnType::Cancel:
+				return;
+			default:
+				break;
+		}
+	}
+
+	FDataTableEditorModule& DataTableEditorModule = FModuleManager::LoadModuleChecked<FDataTableEditorModule>("DataTableEditor");
+	for (UDataTable* Table : DataTablesToOpen)
+	{
+		DataTableEditorModule.CreateDataTableEditor(EToolkitMode::Standalone, EditWithinLevelEditor, Table);
+	}
+}
+
+// --------------------------------------------------------------------------------------------------------------------
+// Combat Asset Category
+// --------------------------------------------------------------------------------------------------------------------
+
+
+UTargetingPresetFactory::UTargetingPresetFactory()
+{
+	bCreateNew = true;
+	bEditAfterNew = true;
+	SupportedClass = UTargetingPreset::StaticClass();
+}
+
+UObject* UTargetingPresetFactory::FactoryCreateNew(UClass* Class, UObject* InParent, FName Name, EObjectFlags Flags,
+	UObject* Context, FFeedbackContext* Warn)
+{
+	check(Class->IsChildOf(UTargetingPreset::StaticClass()));
+	return NewObject<UTargetingPreset>(InParent,Class,Name,Flags|RF_Transactional,Context);
+}
+
+FText FATA_TargetingPreset::GetName() const
+{
+	return NSLOCTEXT("AssetTypeActions", "FATA_TargetingPreset", "Targeting Preset"); 
+}
+
+FText FATA_TargetingPreset::GetAssetDescription(const FAssetData& AssetData) const
+{
+	return NSLOCTEXT("AssetTypeActions", "FATA_TargetingPreset", "Settings For Performing A Targeting Request"); 
+}
+
+UClass* FATA_TargetingPreset::GetSupportedClass() const
+{
+	return UTargetingPreset::StaticClass();
+}
 
 #undef LOCTEXT_NAMESPACE
 

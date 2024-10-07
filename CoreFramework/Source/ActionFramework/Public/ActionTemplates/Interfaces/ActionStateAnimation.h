@@ -50,8 +50,8 @@ protected:
 	
 	// END Util
 
-private:
 	TWeakObjectPtr<UAnimInstance> AnimInstancePtr;
+private:
 	TWeakObjectPtr<UGameplayAction> ActionInstancePtr;
 	int32 MontageInstanceID{0};
 

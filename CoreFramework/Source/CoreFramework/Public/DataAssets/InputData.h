@@ -6,11 +6,10 @@
 #include "InputAction.h"
 #include "InputData.generated.h"
 
+class UInputMappingContext;
 class UMotionMappingContext;
 class UMotionAction;
 
-namespace EvalCache
-{
 #define DOT_PRODUCT_0   (1.f)
 #define DOT_PRODUCT_15  (0.966f)
 #define DOT_PRODUCT_30  (0.866f)
@@ -24,7 +23,25 @@ namespace EvalCache
 #define DOT_PRODUCT_150 (-0.866f)
 #define DOT_PRODUCT_165 (-0.966f)
 #define DOT_PRODUCT_180 (-1.f)
-}
+
+
+UCLASS(ClassGroup="Input Buffer", Category="Input Buffer")
+class COREFRAMEWORK_API UBufferedInputAction : public UInputAction
+{
+	GENERATED_BODY()
+
+	friend class UInputBufferSubsystem;
+
+public:
+
+	FORCEINLINE FGameplayTag GetID() const { return InputTag; }
+	
+protected:
+
+	UPROPERTY(Category="Description", EditDefaultsOnly, BlueprintReadOnly, meta=(GameplayTagFilter="Input"))
+	FGameplayTag InputTag;
+
+};
 
 #pragma region General Definitions
 
@@ -48,19 +65,19 @@ public:
 
 public:
 	void GenerateInputActions();
-	TArray<TObjectPtr<const UInputAction>> GetInputActions() const { return InputActions; }
-	TArray<FName> GetActionIDs();
-	TArray<FName> GetDirectionalIDs();
+	TArray<TObjectPtr<const UBufferedInputAction>> GetInputActions() const { return InputActions; }
+	FGameplayTagContainer GetActionIDs();
+	FGameplayTagContainer GetDirectionalIDs();
 
 private:
 	UPROPERTY(Transient)
-	TArray<FName> ActionIDs;
+	FGameplayTagContainer ActionIDs;
 	
 	UPROPERTY(Transient)
-	TArray<FName> DirectionalIDs;
+	FGameplayTagContainer DirectionalIDs;
 
 	UPROPERTY(Transient)
-	TArray<TObjectPtr<const UInputAction>> InputActions;
+	TArray<TObjectPtr<const UBufferedInputAction>> InputActions;
 };
 
 
@@ -77,9 +94,9 @@ class COREFRAMEWORK_API UMotionMappingContext : public UDataAsset
 public:
 	FORCEINLINE TArray<TObjectPtr<UMotionAction>> GetMappings() { return Mapping; }
 
-	FORCEINLINE FName GetDirectionalActionID() const
+	FORCEINLINE FGameplayTag GetDirectionalActionID() const
 	{
-		return FName(DirectionalAction->ActionDescription.ToString());
+		return DirectionalAction->GetID();
 	}
 	
 public:
@@ -90,7 +107,7 @@ public:
 protected:
 	/// @brief  Axis InputAction you want to use to evaluate directional input
 	UPROPERTY(Category= "Mappings", BlueprintReadOnly, EditAnywhere)
-	TObjectPtr<UInputAction> DirectionalAction;
+	TObjectPtr<UBufferedInputAction> DirectionalAction;
 	
 	/// @brief Holds a collection of motion actions to define the maps motion action map
 	UPROPERTY(Category= "Mappings", BlueprintReadOnly, EditAnywhere)
@@ -130,6 +147,9 @@ class COREFRAMEWORK_API UMotionAction : public UDataAsset
 	
 protected:
 
+	UPROPERTY(Category="Description", EditDefaultsOnly, BlueprintReadOnly, meta=(GameplayTagFilter="Input.Directional"))
+	FGameplayTag InputTag;
+	
 	UPROPERTY(Category="Description", EditDefaultsOnly, BlueprintReadOnly, DisplayName="Action Name")
 	FName ActionName{"None"};
 
@@ -185,7 +205,7 @@ private: // Vars to keep track of current directional input state
 	
 public:
 
-	FName GetID() const { return ActionName; }
+	FGameplayTag GetID() const { return InputTag; }
 
 	// NOTE: We wanna pass in the RAW axis input here. We then dictate which basis to evaluate it against
 	
@@ -281,16 +301,16 @@ struct COREFRAMEWORK_API FInputActionDelegateHandle
 
 	friend class UInputBufferSubsystem;
 
-	FInputActionDelegateHandle() : InputAction(NAME_None), TriggerType(EBufferTriggerEvent::TRIGGER_Press), bAutoConsume(false), Priority(0)
+	FInputActionDelegateHandle() : TriggerType(EBufferTriggerEvent::TRIGGER_Press), bAutoConsume(false), Priority(0)
 	{}
 	
-	FInputActionDelegateHandle(const FName InAction, EBufferTriggerEvent SetTriggerEvent, const bool bSetAutoConsume, const int InPriority)
+	FInputActionDelegateHandle(const FGameplayTag& InAction, EBufferTriggerEvent SetTriggerEvent, const bool bSetAutoConsume, const int InPriority)
 	: InputAction(InAction), TriggerType(SetTriggerEvent), bAutoConsume(bSetAutoConsume), Priority(InPriority)
 	{}
 
 protected:
 	UPROPERTY()
-	FName InputAction;
+	FGameplayTag InputAction;
 	UPROPERTY()
 	TEnumAsByte<EBufferTriggerEvent> TriggerType;
 	UPROPERTY()
@@ -306,18 +326,21 @@ struct COREFRAMEWORK_API FInputActionSequenceDelegateHandle
 
 	friend class UInputBufferSubsystem;
 
-	FInputActionSequenceDelegateHandle() : FirstAction(NAME_None), SecondAction(NAME_None), bButtonOrderMatters(false), bAutoConsume(false), Priority(0)
+	FInputActionSequenceDelegateHandle() : bFirstInputIsHold(false), bButtonOrderMatters(false), bAutoConsume(false), Priority(0)
 	{}
 	
-	FInputActionSequenceDelegateHandle(const FName ActionOne, const FName ActionTwo, bool bSetAutoConsume, bool bSetOrderMatters, const int InPriority)
-	: FirstAction(ActionOne), SecondAction(ActionTwo), bButtonOrderMatters(bSetOrderMatters), bAutoConsume(bSetAutoConsume), Priority(InPriority)
+	FInputActionSequenceDelegateHandle(const FGameplayTag& ActionOne, const FGameplayTag& ActionTwo, bool bSetAutoConsume, bool bSetFirstInputIsHold, bool bSetOrderMatters, const int InPriority)
+	: FirstAction(ActionOne), SecondAction(ActionTwo), bFirstInputIsHold(bSetFirstInputIsHold), bButtonOrderMatters(bSetOrderMatters), bAutoConsume(bSetAutoConsume), Priority(InPriority)
 	{}
 
 protected:
 	UPROPERTY()
-	FName FirstAction;
+	FGameplayTag FirstAction;
 	UPROPERTY()
-	FName SecondAction;
+	FGameplayTag SecondAction;
+	/// @brief	Whether the first Action should be a 'Hold' modifier, meaning event is triggered only if SecondAction is pressed while first is being held. Order automatically does not matter in this case and only second input is consumed
+	UPROPERTY()
+	bool bFirstInputIsHold;
 	UPROPERTY()
 	bool bButtonOrderMatters;
 	UPROPERTY()
@@ -333,15 +356,15 @@ struct COREFRAMEWORK_API FDirectionalActionDelegateHandle
 
 	friend class UInputBufferSubsystem;
 	
-	FDirectionalActionDelegateHandle() : DirectionalAction(NAME_None), bAutoConsume(false), Priority(0) {}
+	FDirectionalActionDelegateHandle() : bAutoConsume(false), Priority(0) {}
 	
-	FDirectionalActionDelegateHandle(const FName Directional, const bool bSetAutoConsume, const int InPriority)
+	FDirectionalActionDelegateHandle(const FGameplayTag& Directional, const bool bSetAutoConsume, const int InPriority)
 	: DirectionalAction(Directional), bAutoConsume(bSetAutoConsume), Priority(InPriority)
 	{}
 
 protected:
 	UPROPERTY()
-	FName DirectionalAction;
+	FGameplayTag DirectionalAction;
 	UPROPERTY()
 	bool bAutoConsume;
 	UPROPERTY()
@@ -355,18 +378,18 @@ struct COREFRAMEWORK_API FDirectionalAndActionDelegateHandle
 
 	friend class UInputBufferSubsystem;
 
-	FDirectionalAndActionDelegateHandle() : InputAction(NAME_None), DirectionalAction(NAME_None), bAutoConsume(false), SequenceOrder(SEQUENCE_None), Priority(0)
+	FDirectionalAndActionDelegateHandle() : bAutoConsume(false), SequenceOrder(SEQUENCE_None), Priority(0)
 	{}
 	
-	FDirectionalAndActionDelegateHandle(const FName Action, const FName Directional, bool bSetAutoConsume, EDirectionalSequenceOrder Sequence, const int InPriority)
+	FDirectionalAndActionDelegateHandle(const FGameplayTag& Action, const FGameplayTag& Directional, bool bSetAutoConsume, EDirectionalSequenceOrder Sequence, const int InPriority)
 	: InputAction(Action), DirectionalAction(Directional), bAutoConsume(bSetAutoConsume), SequenceOrder(Sequence), Priority(InPriority)
 	{}
 
 protected:
 	UPROPERTY()
-	FName InputAction;
+	FGameplayTag InputAction;
 	UPROPERTY()
-	FName DirectionalAction;
+	FGameplayTag DirectionalAction;
 	UPROPERTY()
 	bool bAutoConsume;
 	UPROPERTY()
@@ -374,5 +397,43 @@ protected:
 	UPROPERTY()
 	int Priority;
 };
+
+template<typename DelType>
+struct COREFRAMEWORK_API FInputBufferBinding
+{
+	FInputBufferBinding()
+	{
+		//DelTest = MakeShared<DelType>();
+		//Delegate = DelType();
+		static int32 GlobalHandle = 0;
+		Handle = GlobalHandle++;
+	}
+
+	bool operator==(const FInputBufferBinding& Other) const
+	{
+		return Handle == Other.Handle;
+	}
+
+	bool operator!=(const FInputBufferBinding& Other) const
+	{
+		return Handle != Other.Handle;
+	}
+
+	friend uint32 GetTypeHash(const FInputBufferBinding& InHandle)
+	{
+		return InHandle.Handle;
+	}
+
+	//TSharedPtr<DelType> DelTest;
+	DelType Delegate;
+
+	int32 Handle;
+};
+
+// Typedefs
+typedef FInputBufferBinding<FInputActionEventSignature> FButtonBinding;
+typedef FInputBufferBinding<FInputActionSequenceSignature> FButtonSequenceBinding;
+typedef FInputBufferBinding<FDirectionalActionSignature> FDirectionalBinding;
+typedef FInputBufferBinding<FDirectionalAndActionSequenceSignature> FDirectionalSequenceBinding;
 
 #pragma endregion Buffer Event Signatures

@@ -3,10 +3,14 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "CharacterActionSet.h"
 #include "GameplayActionTypes.h"
+#include "Data/GameplayTagData.h"
+#include "InputData.h"
 #include "Engine/World.h"
 #include "UObject/Object.h"
 #include "GameplayTagContainer.h"
+#include "NativeGameplayTags.h"
 #include "GameplayAction.generated.h"
 
 
@@ -14,47 +18,24 @@
 class ARadicalCharacter;
 class UActionSystemComponent;
 class URadicalMovementComponent;
-class UInputAction;
+class UActionTrigger;
+class UActionCondition;
+class UActionEvent;
 struct FActionActorInfo;
+struct FActionInputRequirement;
 
 /* ~~~~~ Event Definitions ~~~~~ */
-DECLARE_MULTICAST_DELEGATE_TwoParams(FOnGameplayActionEnded, class UGameplayAction*, bool);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCoolDownStarted, float, CoolDown);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnCoolDownEnded);
 
-/* ~~~~~ Helper Macros For Managing ActionDats ~~~~~ */
-#define DECLARE_ACTION_DATA(Class) \
-	virtual FORCEINLINE UGameplayActionData* GetActionData_Implementation() const override { return ActionData; } \
-	virtual FORCEINLINE void SetActionData_Implementation(UGameplayActionData* InActionData) override \
-	{ \
-		checkf(Cast<Class>(InActionData), TEXT("[%s]: Incompatible Action Data Class Given, Require Data Of Type [%s]"), *StaticClass()->GetName(), *Class::StaticClass()->GetName())\
-		ActionData = Cast<Class>(InActionData); \
-	}
+/* ~~~~~ Declare Primary Gameplay Tags ~~~~~ */
+UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Action_Base)
+/// @brief Gameplay tags automatically added to actions who override CalcVelocity
+UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Action_Movement)
 
-#define CALC_VEL_false		virtual void CalcVelocity_Implementation(URadicalMovementComponent* MovementComponent, float DeltaTime) override {}
-#define CALC_VEL_true		virtual void CalcVelocity_Implementation(URadicalMovementComponent* MovementComponent, float DeltaTime) override;
-#define CALC_VEL(Val)		CALC_VEL_ ## Val 
-#define UPDATE_ROT_false	virtual void UpdateRotation_Implementation(URadicalMovementComponent* MovementComponent, float DeltaTime) override {}
-#define UPDATE_ROT_true		virtual void UpdateRotation_Implementation(URadicalMovementComponent* MovementComponent, float DeltaTime) override;
-#define UPDATE_ROT(Val)		UPDATE_ROT_ ## Val
-#define ANIM_ACTION_false \
-	virtual void PostProcessRMVelocity_Implementation(FVector& Velocity, float DeltaTime) {} \
-	virtual void PostProcessRMRotation_Implementation(FVector& Velocity, float DeltaTime) {}
-#define ANIM_ACTION_true \
-	virtual void PostProcessRMVelocity_Implementation(FVector& Velocity, float DeltaTime);\
-	virtual void PostProcessRMRotation_Implementation(FVector& Velocity, float DeltaTime);
-#define ANIM_ACTION(Val)	ANIM_ACTION_ ## Val
+#pragma region Action Data
 
-#define SETUP_ACTION(Class, DataClass, bRequiresCalcVelocity, bRequiresUpdateRot, bPostProcessRootMotion)					\
-	Class() { bRespondToMovementEvents = bRequiresCalcVelocity; bRespondToRotationEvents = bRequiresUpdateRot; }			\
-	virtual void OnActionActivated_Implementation() override;																\
-	virtual void OnActionTick_Implementation(float DeltaTime) override;														\
-	virtual void OnActionEnd_Implementation() override;																		\
-	CALC_VEL(bRequiresCalcVelocity)																							\
-	UPDATE_ROT(bRequiresUpdateRot)																							\
-	ANIM_ACTION(bPostProcessRootMotion)																						\
-	virtual bool EnterCondition_Implementation() override;																	\
-	DECLARE_ACTION_DATA(DataClass);																							\
-
-UCLASS(Abstract, Blueprintable, ClassGroup=Actions, Category="Gameplay Actions", DisplayName="Base Gameplay Action Data")
+UCLASS(Abstract, NotBlueprintable, ClassGroup=Actions, Category="Gameplay Actions", DisplayName="Base Gameplay Action Data")
 class ACTIONFRAMEWORK_API UGameplayActionData : public UDataAsset
 {
 	friend class UGameplayAction;
@@ -63,8 +44,12 @@ class ACTIONFRAMEWORK_API UGameplayActionData : public UDataAsset
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(Category=Definition, BlueprintReadOnly)
-	const TSubclassOf<UGameplayAction> ActionClass;
+	UPROPERTY(Category=Definition, EditDefaultsOnly, Instanced)
+	UGameplayAction* Action;
+
+	void SetActionTag(FGameplayTag Tag) { ActionTags.AddTag(Tag); }
+
+	bool HasTag(FGameplayTag Tag) const { return ActionTags.HasTag(Tag); }
 
 protected:
 	/*--------------------------------------------------------------------------------------------------------------
@@ -77,7 +62,7 @@ protected:
 	UPROPERTY(Category="Activation Rules", EditDefaultsOnly)
 	uint8 bRetriggerAbility			: 1;
 
-protected:
+public:
 	/*--------------------------------------------------------------------------------------------------------------
 	* Tags 
 	*--------------------------------------------------------------------------------------------------------------*/
@@ -95,52 +80,138 @@ protected:
 	/// @brief  The action will cancel any other running action that has any of these tags in ActionTags
 	UPROPERTY(Category=Tags, EditDefaultsOnly, BlueprintReadOnly)
 	FGameplayTagContainer CancelActionsWithTag;
+
+	/*--------------------------------------------------------------------------------------------------------------
+	* Followups Info
+	*--------------------------------------------------------------------------------------------------------------*/
+
+	// NOTE: Maybe split up into PrimaryActionData & AdditiveActionData, only primary has followups and additives?
+
+	virtual TArray<FActionSetEntry> GetFollowups() const { return TArray<FActionSetEntry>(); }
+	virtual TArray<FActionSetEntry> GetAdditives() const { return TArray<FActionSetEntry>(); }
+
 };
 
-UCLASS(Abstract, Blueprintable, ClassGroup=Actions, Category="Gameplay Actions", DisplayName="Base Gameplay Action")
-class ACTIONFRAMEWORK_API UGameplayAction : public UObject
+UCLASS(ClassGroup=Actions, Category="Gameplay Actions", DisplayName="Additive Action Data", Blueprintable)
+class ACTIONFRAMEWORK_API UAdditiveActionData : public UGameplayActionData
 {
-	friend class UActionSystemComponent;
-	friend class UAction_CoreStateInstance;
-	friend class UAction_CoreStateMachineInstance;
-	
+	GENERATED_BODY()
+};
+
+UCLASS(ClassGroup=Actions, Category="Gameplay Actions", DisplayName="Primary Action Data", Blueprintable)
+class ACTIONFRAMEWORK_API UPrimaryActionData : public UGameplayActionData
+{
 	GENERATED_BODY()
 
 public:
+	/// @brief	Actions that we can transition to, starting any of these will auto-cancel us  
+	UPROPERTY(Category=Followups, EditDefaultsOnly, meta=(ShowOnlyInnerProperties))
+	TArray<FActionSetEntry> FollowUps;
+	
+	/// @brief  Akin to followups, except activating these wont end our current action. But the action will auto-end once we end.
+	UPROPERTY(Category=Followups, EditDefaultsOnly, meta=(ShowOnlyInnerProperties))
+	TArray<FActionSetEntry> Additives;
+
+	virtual TArray<FActionSetEntry> GetFollowups() const override { return FollowUps; }
+	virtual TArray<FActionSetEntry> GetAdditives() const override { return Additives; }
+
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override
+	{
+		for (int32 Idx = FollowUps.Num()-1; Idx >= 0; Idx--)
+		{
+			if (FollowUps[Idx].Action && !Cast<UPrimaryActionData>(FollowUps[Idx].Action)) FollowUps[Idx].Action = nullptr;
+		}
+		for (int32 Idx = Additives.Num()-1; Idx >= 0; Idx--)
+		{
+			if (Additives[Idx].Action && !Cast<UAdditiveActionData>(Additives[Idx].Action)) Additives[Idx].Action = nullptr;
+		}
+	}
+#endif 
+};
+
+#pragma endregion
+
+// NOTE: Set this to non-blueprintable, set Primary & Additive to blueprintable
+UCLASS(Abstract, EditInlineNew, DefaultToInstanced, ClassGroup=Actions, Category="Gameplay Actions", DisplayName="Base Gameplay Action")
+class ACTIONFRAMEWORK_API UGameplayAction : public UObject
+{
+	friend class UActionSystemComponent;
+	friend class UActionScript;
+	friend class FActionSetEntryDetails;
+	friend class FGameplayWindow_Actions;
+	
+	GENERATED_BODY()
+
+protected:
+
+	UGameplayAction()
+	{
+		static const FName TickFunction = GET_FUNCTION_NAME_CHECKED(UGameplayAction, OnActionTick);
+		bActionTicks = GetClass()->IsFunctionImplementedInScript(TickFunction);
+	}
+
+	UPROPERTY(VisibleAnywhere)
+	EActionCategory ActionCategory;
+	
+	/// @brief  Essentially the "Name" of this action, e.g Jump has primary action tag [Action.Def.Jump]. Should be set from the constructor. (ScriptReadWrite to allow for default set in AS)
+	UPROPERTY(VisibleAnywhere, ScriptReadWrite)
+	FGameplayTag PrimaryActionTag;
+	
+	/// @brief  How the action would be triggered. If null, we'll constantly check on Tick to try activating the action
+	UPROPERTY(EditDefaultsOnly, Instanced, meta = (DisplayName = "Trigger", TitleProperty = EditorFriendlyName, ShowOnlyInnerProperties))
+	UActionTrigger* ActionTrigger;
+	/// @brief  Conditions that must pass for the action to start. We check these first before checking the actions own EnterCondition
+	UPROPERTY(EditDefaultsOnly, Instanced, meta = (DisplayName = "Conditions", TitleProperty = EditorFriendlyName, ShowOnlyInnerProperties))
+	TArray<UActionCondition*> ActionConditions;
+	/// @brief  Various events that can be invoked on the action. These are bound to specific delegate types on the action.
+	UPROPERTY(EditDefaultsOnly, Instanced, meta = (DisplayName = "Events", TitleProperty = EditorFriendlyName, ShowOnlyInnerProperties))
+	TArray<UActionEvent*> ActionEvents;
+
+public:
+
 	/*--------------------------------------------------------------------------------------------------------------
 	* Available Event Delegates To Bind To
 	*--------------------------------------------------------------------------------------------------------------*/
-	/// @brief  Notification that the action has ended. Set using TryActivateAction. Transitions also bind to this.
-	FOnGameplayActionEnded OnGameplayActionEnded;
+	// NOTE: These could be generic events, we don't need to pass in the action to them so they could just be void
+	/// @brief  Event that the action has been succesfully activated
+	UPROPERTY()
+	FActionScriptEvent OnGameplayActionStarted;
+	/// @brief  Event that the action has ended.
+	UPROPERTY()
+	FActionScriptEvent OnGameplayActionEnded;
+	/// @brief  Event that the cooldown for this action has started, passes along its cooldown length
+	UPROPERTY(Category="Action Events", BlueprintAssignable)
+	FOnCoolDownStarted OnCoolDownStarted;
+	/// @brief  Event that the cooldown for this action has ended
+	UPROPERTY(Category="Action Events", BlueprintAssignable)
+	FOnCoolDownEnded OnCoolDownEnded;
+
+	UPROPERTY(Category="Action Events", BlueprintReadWrite)
+	FActionAnimPayload AnimPayload;
 
 	/*--------------------------------------------------------------------------------------------------------------
 	* UObject Override
 	*--------------------------------------------------------------------------------------------------------------*/
 	virtual UWorld* GetWorld() const override;
 
-	UFUNCTION(Category="Action Data", BlueprintNativeEvent, BlueprintPure)
-	UGameplayActionData* GetActionData() const;
-	virtual FORCEINLINE UGameplayActionData* GetActionData_Implementation() const PURE_VIRTUAL(UGameplayAction::GetActionData, return nullptr; );
-	UFUNCTION(Category="Action Data", BlueprintNativeEvent, BlueprintCallable)
-	void SetActionData(UGameplayActionData* InActionData);
-	virtual FORCEINLINE void SetActionData_Implementation(UGameplayActionData* InActionData) PURE_VIRTUAL(UGameplayAction::SetActionData, );
+	UFUNCTION(Category="Action Data", BlueprintPure)
+	UGameplayActionData* GetActionData() const { return ActionData.Get(); }
+
+	void Cleanup();
+
+//private:
+	TSoftObjectPtr<UGameplayActionData> ActionData;
 
 protected:
 	
 	/*--------------------------------------------------------------------------------------------------------------
 	* Rules and Runtime Data
 	*--------------------------------------------------------------------------------------------------------------*/
-	// NOTE: THE MOVEMENT EVENT FLAGS MUST BE SET IF YOU WANT TO USE THEM
+
+	/// @brief  If true, this action will be ticked. Otherwise, it won't be.
+	uint8 bActionTicks				: 1;
 	
-	/// @brief  If true, this action will receive CalcVelocity callback from the movement component. Otherwise it wont.
-	UPROPERTY(Category=Advanced, EditDefaultsOnly)
-	uint8 bRespondToMovementEvents	: 1;
-	/// @brief  If true, this action will receive UpdateRotation callback from the movement component. Otherwise it wont.
-	UPROPERTY(Category=Advanced, EditDefaultsOnly)
-	uint8 bRespondToRotationEvents	: 1;
-
-	// NOTE: Wanna think through the root motion event some more, should only PP the one started by us here.
-
 	/// @brief  Default set to true. Set via SetCanBeCancelled, allowing the action to be ended outside of itself
 	UPROPERTY()
 	uint8 bIsCancelable				: 1;
@@ -149,6 +220,7 @@ private:
 	/// @brief  True if the action is currently running
 	UPROPERTY(Transient)
 	uint8 bIsActive					: 1;
+
 	UPROPERTY(Transient)
 	float TimeActivated;
 	
@@ -161,29 +233,43 @@ protected:
 	///			once per actor and shared by many abilities owned by said actor.
 	mutable const FActionActorInfo* CurrentActorInfo;
 
+	/// @brief  Cached input requirement field from an input trigger. Could be null/empty
+	//UPROPERTY(Transient)
+	FActionInputRequirement* InputRequirement;
+
+	/// @brief	Excutes a script event - this is mainly needed for actions implemented in AS
+	UFUNCTION(Category="Action | Event", ScriptCallable)
+	void ExecuteEvent(const FActionScriptEvent& Event) { Event.Execute(); }
+
 public:
 	/*--------------------------------------------------------------------------------------------------------------
 	* Accessors
 	*--------------------------------------------------------------------------------------------------------------*/
-
+	
 	/// @brief  Returns owner as a RadicalCharacter
-	UFUNCTION(Category="Action | Info", BlueprintCallable)
+	UFUNCTION(Category="Action | Info", BlueprintPure)
 	ARadicalCharacter* GetRadicalOwner() const { return CurrentActorInfo->CharacterOwner.Get(); }
 
 	/// @brief  Returns movement component of owner
-	UFUNCTION(Category="Action | Info", BlueprintCallable)
+	UFUNCTION(Category="Action | Info", BlueprintPure)
 	URadicalMovementComponent* GetMovementComponent() const { return CurrentActorInfo->MovementComponent.Get(); }
 
 	/// @brief  Returns action manager component of owner
-	UFUNCTION(Category="Action | Info", BlueprintCallable)
+	UFUNCTION(Category="Action | Info", BlueprintPure)
 	UActionSystemComponent* GetActionManager() const { return CurrentActorInfo->ActionSystemComponent.Get(); }
+
+	const UActionTrigger* GetActionTrigger() const { return ActionTrigger; }
+	
+	/// @brief	Returns input requirement from an input trigger. Could be null.
+	//UFUNCTION(Category="Action | Info", BlueprintPure)
+	FActionInputRequirement* GetInputRequirement() const { return InputRequirement; }
 	
 	/// @brief  Returns time since the action was activated
-	UFUNCTION(Category="Action | Info", BlueprintCallable)
+	UFUNCTION(Category="Action | Info", BlueprintPure)
 	float GetTimeInAction() const { return GetWorld() ? GetWorld()->GetTimeSeconds() - TimeActivated : 0.f; }
 
 	/// @brief  True if the action is currently active
-	UFUNCTION(Category="Action | Info", BlueprintCallable)
+	UFUNCTION(Category="Action | Info", BlueprintPure)
 	bool IsActive() const { return bIsActive; }
 	
 protected:
@@ -202,28 +288,6 @@ protected:
 	UFUNCTION(Category="Action | UpdateLoop", BlueprintNativeEvent, DisplayName="OnActionEnd", meta=(ScriptName="OnActionEnd"))
 	void OnActionEnd();
 	virtual void OnActionEnd_Implementation() {};
-
-	/*--------------------------------------------------------------------------------------------------------------
-	* Virtual Functions: Movement Component Events (Called via ActionManagerComp which is what is bound to them)
-	*--------------------------------------------------------------------------------------------------------------*/
-	// NOTE: CPP only for now, PostProcessRM is safe to open to blueprint though (once per tick). Will get back to it later.
-	UFUNCTION(Category="Action | Event Response", BlueprintNativeEvent, DisplayName="CalcVelocity", meta=(ScriptName="CalcVelocity"))
-	void CalcVelocity(URadicalMovementComponent* MovementComponent, float DeltaTime);
-	virtual void CalcVelocity_Implementation(URadicalMovementComponent* MovementComponent, float DeltaTime) {};
-	
-	UFUNCTION(Category="Action | Event Response", BlueprintNativeEvent, DisplayName="UpdateRotation", meta=(ScriptName="UpdateRotation"))
-	void UpdateRotation(URadicalMovementComponent* MovementComponent, float DeltaTime);
-	virtual void UpdateRotation_Implementation(URadicalMovementComponent* MovementComponent, float DeltaTime) {};
-
-	
-	UFUNCTION(Category="Action | Event Response", BlueprintNativeEvent)
-	void PostProcessRMVelocity(FVector& Velocity, float DeltaTime);
-	virtual void PostProcessRMVelocity_Implementation(FVector& Velocity, float DeltaTime) {};
-	
-	UFUNCTION(Category="Action | Event Response", BlueprintNativeEvent)
-	void PostProcessRMRotation(FQuat& RootMotionRotation, float DeltaTime);
-	virtual void PostProcessRMRotation_Implementation(FQuat& RootMotionRotation, float DeltaTime) {};
-	
 	
 	/*--------------------------------------------------------------------------------------------------------------
 	* Virtual Functions: Entry and Exit conditions (Blueprint native is what we want here)
@@ -237,7 +301,7 @@ protected:
 	*--------------------------------------------------------------------------------------------------------------*/
 
 	/// @brief  Called when the action has been granted and instantiated by the ActionManager. Passes its specifier for storage
-	virtual void OnActionGranted(const FActionActorInfo* ActorInfo); // TODO: Set owner stuff
+	virtual void OnActionGranted(const FActionActorInfo* ActorInfo); 
 	UFUNCTION(Category="Action | Event Responses", BlueprintImplementableEvent, DisplayName="OnActionGranted")
 	void K2_OnActionGranted(); // NOTE: no need to pass through other stuff, it'd be readily accessible by now since this is called from OnGrantAction
 
@@ -246,6 +310,9 @@ protected:
 	UFUNCTION(Category="Action | Event Responses", BlueprintImplementableEvent, DisplayName="OnActionRemoved")
 	void K2_OnActionRemoved();
 	// NOTE: Can add a bool for blueprint implementable events to check if they've actually been implemented and not call the function if not. Avoids going through the BP Graph
+
+	/// @brief  Used internally to just setup some runtime data from above
+	virtual void ActionRuntimeSetup() {}
 	
 public: // NOTE: Add Instigator passthrough for Activate and End ability calls
 	/*--------------------------------------------------------------------------------------------------------------
@@ -268,14 +335,6 @@ protected:
 	UFUNCTION(Category="Action | Activation", BlueprintCallable, meta=(HidePin="bWasCancelled"))
 	void EndAction(bool bWasCancelled = false);
 
-//public: Keeping this protected
-	/// @brief  Input that instigated this action, set from wherever relevant (e.g a state)
-	UPROPERTY(Transient)
-	UInputAction* InputInstigator;
-	/// @brief  Auto bound to the Release of the activation input if the activation input was a button
-	UFUNCTION()
-	virtual void ButtonInputReleased(float ElapsedTime) {};
-
 	/*--------------------------------------------------------------------------------------------------------------
 	* Non-Virtual Functions; Cancel Action
 	*--------------------------------------------------------------------------------------------------------------*/
@@ -292,4 +351,98 @@ public:
 	UFUNCTION(Category="Action | Conditions", BlueprintCallable)
 	FORCEINLINE void SetCanBeCanceled(bool bCanBeCanceled) { bIsCancelable = bCanBeCanceled; }
 
+	/*--------------------------------------------------------------------------------------------------------------
+	* Follow Up & Event Setup
+	*--------------------------------------------------------------------------------------------------------------*/
+
+	/// @brief	Cached reference to the action that would have cancelled us (Only relevant for PrimaryActions). Set by the owning ActionSystem
+	///			right before it ends us to start the given action. Will be called/setup right before we call OnActionEnd [in case that info is useful]
+	UFUNCTION(Category="Action | Info", BlueprintPure)
+	FORCEINLINE UGameplayActionData* GetActionThatCancelledUs() const { return ActionThatCancelledUs; }
+	
+private:
+
+	/// @brief	Cached reference to the action that would have cancelled us (Only relevant for PrimaryActions). Set by the owning ActionSystem
+	///			right before it ends us to start the given action. Will be called/setup right before we call OnActionEnd [in case that info is useful]
+	UPROPERTY(Transient)
+	UGameplayActionData* ActionThatCancelledUs;
+	
+	/// @brief  Priority of the action automatically setup during initialization from the action-set or followups
+	uint32 Priority;
+	
+	/// @brief  Calls on followups and additives to setup their triggers. Called when this action starts.
+	void InitializeFollowupsAndAdditives();
+	
+	/// @brief  Calls on followups and additives to cleanup their triggers, while also cancelling active additives. Called when this action ends
+	void DeinitializeFollowupsAndAdditives();
+	
+	/// @brief  Called when our action becomes available (either we're a followup or a base action), used to setup triggers
+	void SetupActionTrigger(uint32 InPriority);
+	
+	/// @brief  Called when our action is no longer available (Primarily when the action we're a followup of ends), used to cleanup triggers
+	void CleanupActionTrigger();
+
+protected:
+#if WITH_EDITORONLY_DATA
+	UPROPERTY(VisibleAnywhere, meta=(DisplayPriority=-1))
+	mutable FText EditorStatusText;
+#endif 
+	
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+	virtual void PostLoad() override;
+	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
+#endif 
+
+};
+
+/*--------------------------------------------------------------------------------------------------------------
+* Action Categories
+*--------------------------------------------------------------------------------------------------------------*/
+
+UCLASS(DisplayName="Primary Action", Blueprintable)
+class ACTIONFRAMEWORK_API UPrimaryAction : public UGameplayAction
+{
+	GENERATED_BODY()
+
+	friend class UActionSystemComponent;
+
+protected:
+
+	UPrimaryAction()
+	{
+		ActionCategory = EActionCategory::Primary;
+		
+		static FName CalcVelFunction = GET_FUNCTION_NAME_CHECKED(UPrimaryAction, CalcVelocity);
+		static FName UpdateRotFunction = GET_FUNCTION_NAME_CHECKED(UPrimaryAction, UpdateRotation);
+		
+		bRespondToMovementEvents = GetClass()->IsFunctionImplementedInScript(CalcVelFunction);
+		bRespondToRotationEvents = GetClass()->IsFunctionImplementedInScript(UpdateRotFunction);
+	}
+	
+	/// @brief  If true, this action will receive CalcVelocity callback from the movement component. Otherwise it wont.
+	uint8 bRespondToMovementEvents	: 1;
+	/// @brief  If true, this action will receive UpdateRotation callback from the movement component. Otherwise it wont.
+	uint8 bRespondToRotationEvents	: 1;
+
+	UFUNCTION(Category="Action | Event Response", BlueprintNativeEvent, DisplayName="CalcVelocity", meta=(ScriptName="CalcVelocity"))
+	void CalcVelocity(URadicalMovementComponent* MovementComponent, float DeltaTime);
+	virtual void CalcVelocity_Implementation(URadicalMovementComponent* MovementComponent, float DeltaTime) {};
+	
+	UFUNCTION(Category="Action | Event Response", BlueprintNativeEvent, DisplayName="UpdateRotation", meta=(ScriptName="UpdateRotation"))
+	void UpdateRotation(URadicalMovementComponent* MovementComponent, float DeltaTime);
+	virtual void UpdateRotation_Implementation(URadicalMovementComponent* MovementComponent, float DeltaTime) {};
+};
+
+UCLASS(DisplayName="Additive Action", Blueprintable)
+class ACTIONFRAMEWORK_API UAdditiveAction : public UGameplayAction
+{
+	GENERATED_BODY()
+
+protected:
+
+	UAdditiveAction()
+	{
+		ActionCategory = EActionCategory::Additive;
+	}
 };

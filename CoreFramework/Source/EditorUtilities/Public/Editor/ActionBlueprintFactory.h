@@ -3,22 +3,17 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/Object.h"
+#include "Factories/BlueprintFactory.h"
 #include "ActionBlueprintFactory.generated.h"
 
+/*--------------------------------------------------------------------------------------------------------------
+* Gameplay Action
+*--------------------------------------------------------------------------------------------------------------*/
 
 UCLASS(HideCategories=Object, MinimalAPI)
-class UActionBlueprintFactory : public UFactory
+class UActionBlueprintFactory : public UBlueprintFactory
 {
 	GENERATED_UCLASS_BODY()
-
-	// The type of blueprint that will be created
-	UPROPERTY(EditAnywhere, Category=GameplayActionsBlueprintFactory)
-	TEnumAsByte<enum EBlueprintType> BlueprintType;
-
-	// The parent class of the created blueprint
-	UPROPERTY(EditAnywhere, Category=GameplayActionsBlueprintFactory)
-	TSubclassOf<class UGameplayAction> ParentClass;
 
 	//~ Begin UFactory Interface
 	virtual bool ConfigureProperties() override;

@@ -3,12 +3,13 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Curves/CurveFloat.h"
 #include "Engine/DataAsset.h"
 #include "MovementData.generated.h"
 
 /*~~~~~ Forward Declarations ~~~~~*/
 class URadicalMovementComponent;
-enum EMovementState;
+enum EMovementState : int;
 
 UENUM(BlueprintType)
 enum ERotationMethod
@@ -21,16 +22,14 @@ enum ERotationMethod
 
 	METHOD_OrientToGroundAndVelocity	UMETA(DisplayName="Orient To Ground And Velocity"),
 
-	METHOD_ControllerDesiredRotation	UMETA(DisplayName="Orient To Controller"),
-
-	METHOD_ThirdRando					UMETA(DisplayName="I swear to god...")
+	METHOD_ControllerDesiredRotation	UMETA(DisplayName="Orient To Controller")
 };
 
 /**
  * 
  */
-UCLASS(BlueprintType)
-class COREFRAMEWORK_API UMovementData : public UDataAsset
+UCLASS(ClassGroup = "Kinematic Movement", BlueprintType, Blueprintable)
+class COREFRAMEWORK_API UMovementData : public UObject
 {
 	GENERATED_BODY()
 
@@ -40,6 +39,10 @@ protected:
 public:
 	UFUNCTION()
 	void CalculateVelocity(URadicalMovementComponent* MovementComponent, float DeltaTime);
+
+	UFUNCTION()
+	void CalculateVelocityCustomAcceleration(URadicalMovementComponent* MovementComponent, const FVector& Acceleration, float DeltaTime);
+	
 	UFUNCTION()
 	void UpdateRotation(URadicalMovementComponent* MovementComponent, float DeltaTime) { PhysicsRotation(MovementComponent, DeltaTime); };
 
@@ -50,7 +53,7 @@ public:
 	/// @param  bChangeDirection		Whether energy conservation should change direction to align with gravity if Speed = 0
 	/// @param  GravityTangentToSurface	Direction of gravity along the surface in question. Could be floor impact normal (2D) or gravity projected onto a spline tangent (1D)
 	UFUNCTION()
-	void ConserveEnergy(URadicalMovementComponent* MovementComponent, const FVector& OldLocation, float UpEffectiveGravity, float DownEffectiveGravity, bool bChangeDirection, const FVector& GravityTangentToSurface = FVector::ZeroVector);
+	void ConserveEnergy(URadicalMovementComponent* MovementComponent, const FVector& OldLocation, float UpEffectiveGravity, float DownEffectiveGravity, bool bChangeDirection, const FVector& GravityTangentToSurface = FVector::ZeroVector, float EnergyMaxSpeed = UE_BIG_NUMBER);
 
 protected:
 	static constexpr float MIN_DELTA_TIME = 1e-6;
@@ -58,21 +61,6 @@ protected:
 
 #pragma region ACCELERATION_METHODS
 public:
-	/// @brief  Gravity Direction. Will be normalized so magnitude does not matter.
-	UPROPERTY(Category="Acceleration Data | Core", EditDefaultsOnly, BlueprintReadWrite)
-	FVector Gravity;
-
-	/// @brief  Scale applied to default physics volume gravity strength
-	UPROPERTY(Category="Acceleration Data | Core", EditDefaultsOnly, BlueprintReadWrite, meta=(ClampMin="0", UIMin="0"))
-	float GravityScale;
-
-	UPROPERTY(Category="Acceleration Data | Core", EditDefaultsOnly, BlueprintReadWrite, meta=(InlineEditConditionToggle))
-	bool bUseSeparateGravityScaleGoingUp;
-	
-	UPROPERTY(Category="Acceleration Data | Core", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="bUseSeparateGravityScaleGoingUp", ClampMin="0", UIMin="0"))
-	float UpGravityScale;
-
-	float GravityZ; // Cache value from movement component as to avoid swapping it around (NOTE: GetWorld() is invalid in a data asset)
 
 	/// @brief  
 	UPROPERTY(Category="Acceleration Data | Core", EditDefaultsOnly, BlueprintReadWrite, meta=(ClampMin="0", UIMin="0", ForceUnits="cm/s^2"))
@@ -82,15 +70,22 @@ public:
 	UPROPERTY(Category="Acceleration Data | Core", EditDefaultsOnly, BlueprintReadWrite, meta=(ClampMin="0", UIMin="0", ForceUnits="cm/s"))
 	float MaxSpeed;
 
+	/// @brief  Top lateral speed, we clamp to this (not decelerate to it)
+	UPROPERTY(Category="Acceleration Data | Core", EditDefaultsOnly, BlueprintReadWrite, meta=(ClampMin="0", UIMin="0", ForceUnits="cm/s"))
+	float TopSpeed = 2200.f;
+	
+	/// @brief	If we go over top speed somehow, we wanna interpolate top speed back to what it originally was. This controls that
+	UPROPERTY(Category="Acceleration Data | Core", EditDefaultsOnly, BlueprintReadWrite, meta=(ClampMin="0", UIMin="0"))
+	float TopSpeedInterpSpeed = 0.f;
+	float InstanceTopSpeed;
+	
+	/// @brief  Maximum lateral speed
+	UPROPERTY(Category="Acceleration Data | Core", BlueprintReadWrite, meta=(ClampMin="0", UIMin="0"))
+	float MaxSpeedMultiplier;
+
 	/// @brief  Speed we should accelerate up to when walking at minimum analog stick tilt
 	UPROPERTY(Category="Acceleration Data | Core", EditDefaultsOnly, BlueprintReadWrite, meta=(ClampMin="0", UIMin="0", ForceUnits="cm/s"))
 	float MinAnalogSpeed;
-	
-	UFUNCTION(Category="Shared Movement Data", BlueprintCallable)
-	FORCEINLINE FVector GetGravityDir() const { return Gravity.GetSafeNormal(); }
-
-	UFUNCTION(Category="Shared Movement Data", BlueprintCallable)
-	FORCEINLINE FVector GetGravity() const { return Gravity.GetSafeNormal() * GravityZ; }
 
 public:
 
@@ -106,40 +101,36 @@ public:
 	UPROPERTY(Category="Acceleration Data | Aerial", EditDefaultsOnly, BlueprintReadWrite)
 	float AerialLateralFriction;
 
-	/// @brief  If true, BrakingFriction will be used to slow a character to a stop (when there's no Acceleration).
-	///			If false, braking uses the same friction passed to CalcVelocity (GroundFriction or AerialLateralFriction), multiplied
-	///			by BrakingFrictionFactor. @see BrakingFriction
-	UPROPERTY(Category="Acceleration Data | Shared", EditDefaultsOnly, BlueprintReadWrite)
-	uint8 bUseSeparateBrakingFriction	: 1;
-
 	/// @brief  If True, we don't use friction calculations for turns, instead, we rotate the full velocity vector by some fixed rotation rate
 	UPROPERTY(Category="Acceleration Data | Shared", EditDefaultsOnly, BlueprintReadWrite, meta=(InlineEditConditionToggle))
-	uint8 bAccelerationRotates			: 1;
-
-	/// @brief  Velocity rotation rate. Higher values means much tighter turns.
-	UPROPERTY(Category="Acceleration Data | Shared", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="bAccelerationRotates", ClampMin="0", UIMin="0"))
-	float AccelerationRotationRate;
-
-	/// @brief  Factor used to multiply the actual value of friction when braking. Applies to any friction value currently used.
-	///			@note This is 2 by default, a value of 1 gives the true drag equation
+	bool bAccelerationRotates;
+	
+	/// @brief  Whether to use the same value of BrakingFrictionFactor when applied in an ExceedingMaxVel scenario and a
+	///			NoInput scenario. If both are true (No Input & Exceeding Max Vel), will use the ExceedingMaxVel value
 	UPROPERTY(Category="Acceleration Data | Shared", EditDefaultsOnly, BlueprintReadWrite)
-	float BrakingFrictionFactor;
+	uint8 bSeparateMaxVelAndInputBrakingDeceleration	: 1;
 
-	/// @brief  Friction coefficient applied when braking (Acceleration = 0 or character is exceeding max speed). Actual value used is this multiplied by BrakingFrictionFactor.
-	///			When braking, this allows you to control how much friction is applied when moving, applying an opposing force that scales with current velocity (Linearly).
-	///			Braking is composed of Friction (velocity-dependent drag) and a constant deceleration.
-	///			@note Only used if bUseSeparateBrakingFriction is true. Otherwise, current friction (ground or aerial) is used.
-	UPROPERTY(Category="Acceleration Data | Shared", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="bUseSeparateBrakingFriction"))
-	float BrakingFriction;
-
+	/// @brief  Deceleration applied when exceeding max speed, applied until speed is restored to MaxSpeed.
+	UPROPERTY(Category="Acceleration Data | Shared", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="bSeparateMaxVelAndInputBraking", EditConditionHides, ClampMin="0", UIMin="0", ForceUnits="1/s"))
+	float MaxVelBrakingDecelerationGrounded;
+	/// @brief  Deceleration applied when exceeding max speed, applied until speed is restored to MaxSpeed.
+	UPROPERTY(Category="Acceleration Data | Shared", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="bSeparateMaxVelAndInputBraking", EditConditionHides, ClampMin="0", UIMin="0", ForceUnits="1/s"))
+	float MaxVelBrakingDecelerationAerial;
+	
 	/// @brief  Deceleration when on ground and not applying acceleration. @see MaxAcceleration
-	UPROPERTY(Category="Acceleration Data | Grounded", EditDefaultsOnly, BlueprintReadWrite, meta=(ClampMin="0", UIMin="0", ForceUnits="cm/s^2"))
+	UPROPERTY(Category="Acceleration Data | Grounded", EditDefaultsOnly, BlueprintReadWrite, meta=(ClampMin="0", UIMin="0", ForceUnits="1/s"))
 	float BrakingDecelerationGrounded;
-
+	/// @brief  Braking friction when on ground and not applying acceleration. @see MaxAcceleration
+	UPROPERTY(Category="Acceleration Data | Grounded", EditDefaultsOnly, BlueprintReadWrite, meta=(ClampMin="0", UIMin="0", ForceUnits="1/s"))
+	float BrakingFrictionGrounded;
+	
 	/// @brief  Deceleration when in air and not applying acceleration. @see MaxAcceleration
-	UPROPERTY(Category="Acceleration Data | Aerial", EditDefaultsOnly, BlueprintReadWrite, meta=(ClampMin="0", UIMin="0", ForceUnits="cm/s^2"))
+	UPROPERTY(Category="Acceleration Data | Aerial", EditDefaultsOnly, BlueprintReadWrite, meta=(ClampMin="0", UIMin="0", ForceUnits="1/s"))
 	float BrakingDecelerationAerial;
-
+	/// @brief  Braking friction when on ground and not applying acceleration. @see MaxAcceleration
+	UPROPERTY(Category="Acceleration Data | Aerial", EditDefaultsOnly, BlueprintReadWrite, meta=(ClampMin="0", UIMin="0", ForceUnits="1/s"))
+	float BrakingFrictionAerial;
+	
 	/// @brief  When in air, amount of lateral movement control available to the character.
 	///			0 = no control, 1 = full control at max speed of MaxSpeed.
 	UPROPERTY(Category="Acceleration Data | Aerial", EditDefaultsOnly, BlueprintReadWrite, meta=(ClampMin="0", ClampMax="1", UIMin="0", UIMax="1"))
@@ -156,16 +147,23 @@ public:
 	float AirControlBoostVelocityThreshold;
 
 
+	UPROPERTY(Category="Acceleration Data | Curves", EditDefaultsOnly, BlueprintReadWrite, meta=(InlineEditConditionToggle))
+	bool bUseAccelerationCurve;
+	
 	/// @brief  If true, curve is sampled for Ground Friction
 	UPROPERTY(Category="Acceleration Data | Curves", EditDefaultsOnly, BlueprintReadWrite, meta=(InlineEditConditionToggle))
-	uint8 bUseForwardFrictionCurve	: 1;
+	bool bUseForwardFrictionCurve;
 
 	UPROPERTY(Category="Acceleration Data | Curves", EditDefaultsOnly, BlueprintReadWrite, meta=(InlineEditConditionToggle))
-	uint8 bUseTurnFrictionCurve		: 1;
+	bool bUseTurnFrictionCurve;
 
 	UPROPERTY(Category="Acceleration Data | Curves", EditDefaultsOnly, BlueprintReadWrite, meta=(InlineEditConditionToggle))
-	uint8 bUseBrakingFrictionCurve	: 1;
+	bool bUseBrakingDecelerationCurve;
 
+	/// @brief	Normalized curve to sample values [0, GroundFriction] parametrized by normalized max speed
+	UPROPERTY(Category="Acceleration Data | Curves", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="bUseAccelerationCurve"))
+	UCurveFloat* AccelerationCurve;
+	
 	/// @brief	Normalized curve to sample values [0, GroundFriction] parametrized by normalized max speed
 	UPROPERTY(Category="Acceleration Data | Curves", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="bUseForwardFrictionCurve"))
 	UCurveFloat* ForwardFrictionCurve;
@@ -174,12 +172,12 @@ public:
 	UPROPERTY(Category="Acceleration Data | Curves", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="bUseTurnFrictionCurve"))
 	UCurveFloat* TurnFrictionCurve;
 	
-	UPROPERTY(Category="Acceleration Data | Curves", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="bUseBrakingFrictionCurve"))
-	UCurveFloat* BrakingFrictionCurve;
+	UPROPERTY(Category="Acceleration Data | Curves", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="bUseBrakingDecelerationCurve"))
+	UCurveFloat* BrakingDecelerationCurve;
 
 	FORCEINLINE float SampleCurve(const UCurveFloat* Curve, const FVector& Velocity, bool bSampleStatus = false) const
 	{
-		return (bSampleStatus && Curve) ? Curve->GetFloatValue(Velocity.Length() / (MaxSpeed)) : 1.f;
+		return (bSampleStatus && Curve) ? Curve->GetFloatValue(Velocity.Length() / (MaxSpeed * MaxSpeedMultiplier)) : 1.f;
 	}
 	
 public:
@@ -193,28 +191,31 @@ public:
 	
 	FVector ComputeInputAcceleration(URadicalMovementComponent* MovementComponent) const;
 	
-	void ApplyGravity(FVector& Velocity, float TerminalLimit, float DeltaTime) const;
+	void ApplyGravity(const URadicalMovementComponent* MovementComponent, FVector& Velocity, float TerminalLimit, float DeltaTime) const;
 
-protected:
+//protected:
 	virtual void CalculateInputVelocity(URadicalMovementComponent* MovementComponent, FVector& Velocity, FVector& Acceleration, float Friction, float BrakingDeceleration, float DeltaTime) const;
-	
+	virtual void CalculateArcadeyInputVelocity(URadicalMovementComponent* MovementComponent, FVector& Velocity, FVector& Acceleration, float Friction, float BrakingDeceleration, float DeltaTime) const;
 #pragma endregion ACCELERATION_METHODS
 
 
 #pragma region ROTATION_METHODS
 public:
 	UPROPERTY(Category="Rotation Data", EditDefaultsOnly, BlueprintReadWrite)
-	TEnumAsByte<ERotationMethod> RotationMethod;
+	TEnumAsByte<ERotationMethod> GroundRotationMethod;
+	
+	UPROPERTY(Category="Rotation Data", EditDefaultsOnly, BlueprintReadWrite)
+	TEnumAsByte<ERotationMethod> AirRotationMethod;
 
-	/// @brief  Rotation rate values should be within [0,360]
+	/// @brief  [X] Is Forward RotationRate, [Y] Is Up RotationRate
 	UPROPERTY(Category="Rotation Data", EditDefaultsOnly, BlueprintReadWrite)
 	float RotationRate;
 
+	UPROPERTY(Category="Rotation Data", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition=bRevertToGlobalUpWhenFalling))
+	float RevertingUpRotationRate;
+	
 	UPROPERTY(Category="Rotation Data", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="RotationMethod==ERotationMethod::METHOD_OrientToGroundAndInput || RotationMethod==ERotationMethod::METHOD_OrientToGroundAndVelocity", EditConditionHides))
 	bool bRevertToGlobalUpWhenFalling;
-
-	UPROPERTY(Category="Rotation Data", EditDefaultsOnly, BlueprintReadWrite, meta=(EditCondition="RotationMethod==ERotationMethod::METHOD_OrientToGroundAndInput || RotationMethod==ERotationMethod::METHOD_OrientToGroundAndVelocity", EditConditionHides))
-	bool bInputOnlyRotatesWhenFalling;
 
 protected:
 	

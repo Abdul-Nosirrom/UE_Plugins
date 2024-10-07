@@ -4,13 +4,14 @@ public class EditorUtilities : ModuleRules
 {
     public EditorUtilities(ReadOnlyTargetRules Target) : base(Target)
     {
-        DefaultBuildSettings = BuildSettingsVersion.V2;
+        DefaultBuildSettings = BuildSettingsVersion.Latest;
+        CppStandard = CppStandardVersion.Latest;
         PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
         PublicDependencyModuleNames.AddRange(
             new string[]
             {
-                "Core", "CoreFramework", "ActionFramework", "Engine"
+                "Core", "CoreFramework", "ActionFramework", "DialogueFramework", "CombatFramework", "InteractionFramework", "Engine"
             }
         );
 
@@ -18,7 +19,8 @@ public class EditorUtilities : ModuleRules
         {
             PrivateDependencyModuleNames.AddRange(new string[]
             {
-                "UnrealEd"
+                "UnrealEd",
+                "ComponentVisualizers"
             });
         }
 
@@ -39,6 +41,7 @@ public class EditorUtilities : ModuleRules
                 "ToolWidgets",
                 "AssetTools",
                 "GameplayTags",
+                "GameplayTagsEditor",
 
                 "WorkspaceMenuStructure",
                 "DetailCustomizations",
@@ -54,7 +57,7 @@ public class EditorUtilities : ModuleRules
 
                 "ApplicationCore",
                 "AppFramework",
-                "MainFrame"
+                "MainFrame", "DataTableEditor"
             }
         );
     }

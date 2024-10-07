@@ -11,14 +11,16 @@
 /* Profiling */
 DECLARE_STATS_GROUP(TEXT("RadicalMovementComponent_Game"), STATGROUP_RadicalMovementComp, STATCAT_Advanced)
 DECLARE_LOG_CATEGORY_EXTERN(LogRMCMovement, Log, All);
+DECLARE_LOG_CATEGORY_EXTERN(VLogRMCMovement, Log, All);
 /* ~~~~~~~~ */
 
-/* Events */
-DECLARE_DYNAMIC_DELEGATE_TwoParams(FCalculateVelocitySignature, URadicalMovementComponent*, MovementComponent, float, DeltaTime);
-DECLARE_DYNAMIC_DELEGATE_TwoParams(FUpdateRotationSignature, URadicalMovementComponent*, MovementComponent, float, DeltaTime);
+/* Events (Params: MovementComponent, DeltaTime) */
+DECLARE_DELEGATE_TwoParams(FCalculateVelocitySignature, URadicalMovementComponent*, float);
+DECLARE_DELEGATE_TwoParams(FUpdateRotationSignature, URadicalMovementComponent*, float);
 
-DECLARE_DYNAMIC_DELEGATE_ThreeParams(FPostProcessRootMotionVelocitySignature, URadicalMovementComponent*, MovementComponent, FVector&, RootMotionVelocity, float, DeltaTime);
-DECLARE_DYNAMIC_DELEGATE_ThreeParams(FPostProcessRootMotionRotationSignature, URadicalMovementComponent*, MovementComponent, FQuat&, RootMotionRotation, float, DeltaTime);
+/* (Params: MovementComponent, Velocity/Rotation From RM, DeltaTime) */
+DECLARE_DELEGATE_ThreeParams(FPostProcessRootMotionVelocitySignature, URadicalMovementComponent*, FVector&, float);
+DECLARE_DELEGATE_ThreeParams(FPostProcessRootMotionRotationSignature, URadicalMovementComponent*, FQuat&, float);
 /* ~~~~~~ */
 
 /* Forward Declarations */
@@ -118,6 +120,7 @@ struct COREFRAMEWORK_API FGroundingStatus
 	float LineDist;
 
 	/// @brief  Hit result of the test that found a floor. Includes more specific data about the point of impact and surface normal at that point
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = CharacterFloor)
 	FHitResult HitResult;
 
 public:
@@ -275,7 +278,8 @@ public:
 	FORCEINLINE virtual bool IsMovingOnGround() const override { return PhysicsState == STATE_Grounded; }
 	FORCEINLINE virtual bool IsFalling() const override { return PhysicsState == STATE_Falling; }
 	FORCEINLINE virtual bool IsFlying() const override { return PhysicsState == STATE_General; }
-	FORCEINLINE virtual float GetGravityZ() const override { return MovementData ? MovementData->GravityScale * Super::GetGravityZ() : Super::GetGravityZ(); };
+	FORCEINLINE virtual float GetGravityZ() const override { return GravityScale * Super::GetGravityZ(); };
+	virtual bool IsCrouching() const override;
 	virtual void AddRadialForce(const FVector& Origin, float Radius, float Strength, ERadialImpulseFalloff Falloff) override;
 	virtual void AddRadialImpulse(const FVector& Origin, float Radius, float Strength, ERadialImpulseFalloff Falloff, bool bVelChange) override;
 	virtual void StopActiveMovement() override;			// Check CMC
@@ -293,23 +297,46 @@ public:
 protected:
 
 	/* Physics State Parameters */
-	UPROPERTY(Category="Motor | Physics State", BlueprintReadOnly)
+	UPROPERTY(Category="(Radical Movement): Physics State", BlueprintReadOnly)
 	TEnumAsByte<EMovementState> PhysicsState;
-
-	UPROPERTY(Category="Motor | Physics State", EditAnywhere, BlueprintReadWrite)
+	
+	UPROPERTY(Category="(Radical Movement): Physics State", EditAnywhere)
+	TSubclassOf<UMovementData> MovementDataClass;
+	UPROPERTY(Category="(Radical Movement): Physics State", BlueprintReadWrite)
 	TObjectPtr<UMovementData> MovementData;
-
-	UPROPERTY(Category="Motor | Physics State", EditDefaultsOnly, AdvancedDisplay)
+	
+	UPROPERTY(Category="(Radical Movement): Physics State", EditDefaultsOnly, AdvancedDisplay)
 	bool bAlwaysOrientToGravity; // TODO: Temp for debug
+
+	/// @brief Cache the time we left ground in case we wanna access it, useful for Coyote time
+	UPROPERTY(Category="(Radical Movement): Physics State", BlueprintReadOnly, BlueprintGetter=GetTimeSinceLeftGround)
+	float TimeLeftGround;
+
+public:
+	// Making these public so we can do the whole TGuardValue ref mapping
+	UPROPERTY(Category="(Radical Movement): Physics State", EditAnywhere, BlueprintReadWrite)
+	FVector GravityDir;
+	
+	UPROPERTY(Category="(Radical Movement): Physics State", EditAnywhere, BlueprintReadWrite)
+	float GravityScale;
+
+protected:
 	
 	UPROPERTY(Transient)
-	FVector Acceleration;
+	FVector InputAcceleration;
+	UPROPERTY(Transient)
+	FVector PhysicalAcceleration;
 	UPROPERTY(Transient)
 	FQuat LastUpdateRotation;
 	UPROPERTY(Transient)
 	FVector LastUpdateLocation;
 	UPROPERTY(Transient)
 	FVector LastUpdateVelocity;
+
+	// NOTE: look into this later, important for when getting to RecalculateVelocityToReflectMove
+	/// @brief  Accumulation of move deltas to ignore when recalculating velocity. Accumulated from StepUp and AdjustHeight for example
+	//UPROPERTY(Transient)
+	//FVector MoveDeltaToIgnore;
 	
 	// NOTE: None of these are really valid outside of a movement tick. They'd correspond to the current ones.
 	/** Returns the location at the end of the last tick. */
@@ -344,6 +371,13 @@ protected:
 	/* ~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 	
 public:
+
+	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
+	FORCEINLINE FVector GetGravityDir() const { return GravityDir.GetSafeNormal(); }
+	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
+	FORCEINLINE float GetGravityScale() const { return GravityScale; }
+	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
+	FORCEINLINE FVector GetGravity() const { return GravityDir.GetSafeNormal() * FMath::Abs(GetGravityZ()); }
 	
 	/*~~~~~ Orientation, scale all that jazz ~~~~~*/
 
@@ -351,15 +385,15 @@ public:
 	///	(1) Player Up Vector (Stuff where its in terms of their orientation 
 	///	(2) Negative Gravity (So a constant value regardless of surface normal or player orientation, likely used in air) 
 	///	(3) Ground normal
-	FORCEINLINE FVector GetUpOrientation(EOrientationMode OrientationMode) const /* Perhaps having a fallback be a parameter? */
+	virtual FORCEINLINE FVector GetUpOrientation(EOrientationMode OrientationMode) const /* Perhaps having a fallback be a parameter? */
 	{
-		if (bAlwaysOrientToGravity) return -MovementData->GetGravityDir();
+		if (bAlwaysOrientToGravity) return -GetGravityDir();
 		switch (OrientationMode)
 		{
 			case MODE_PawnUp:
 				return UpdatedComponent->GetUpVector();
 			case MODE_Gravity:
-				return MovementData->GetGravityDir().IsZero() ? UpdatedComponent->GetUpVector() : -MovementData->GetGravityDir();
+				return GetGravityDir().IsZero() ? UpdatedComponent->GetUpVector() : -GetGravityDir();
 			default:
 				return UpdatedComponent->GetUpVector();
 		}
@@ -374,9 +408,18 @@ public:
 	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
 	virtual void SetMovementState(EMovementState NewMovementState);
 
-	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
+	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintPure)
 	EMovementState GetMovementState() const { return PhysicsState; }
-		
+
+	/// @brief  Returns the delta time since we entered falling. If we're not in falling, returns 0
+	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintPure)
+	float GetTimeSinceLeftGround() const
+	{
+		if (PhysicsState != EMovementState::STATE_Falling) return 0.f;
+
+		return GetWorld()->GetTimeSeconds() - TimeLeftGround;
+	}
+	
 	virtual void OnMovementStateChanged(EMovementState PreviousMovementState);
 
 	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
@@ -392,11 +435,11 @@ public:
 	FORCEINLINE void SetVelocity(const FVector TargetVelocity) { Velocity = TargetVelocity; }
 
 	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
-	FORCEINLINE FVector GetAcceleration() const { return Acceleration; }
+	FORCEINLINE FVector GetInputAcceleration() const { return InputAcceleration; }
 
 	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
-	FORCEINLINE void SetAcceleration(const FVector TargetAcceleration) { Acceleration = TargetAcceleration; }
-
+	FORCEINLINE FVector GetPhysicalAcceleration() const { return PhysicalAcceleration; }
+	
 	UFUNCTION(Category="(Radical Movement): Physics State", BlueprintCallable)
 	FORCEINLINE bool IsStableOnGround() const { return IsMovingOnGround(); }
 
@@ -429,18 +472,58 @@ public:
 
 #pragma region Events
 
-	// TODO: Review these...
-	UPROPERTY()
-	FCalculateVelocitySignature CalculateVelocityDelegate;
+#define PhysicsBinding(Delegate, Name)\
+	protected:\
+	FPhysicsBinding<Delegate> Name##Bindings;\
+	public:\
+	Delegate& RequestPriority##Name##Binding() { return Name##Bindings.PriorityBinding; } \
+	Delegate& RequestSecondary##Name##Binding() { return Name##Bindings.SecondaryBinding; }\
+	bool UnbindPriority##Name(UObject* Object)\
+	{\
+		if (!Name##Bindings.PriorityBinding.IsBoundToObject(Object)) return false;\
+		Name##Bindings.PriorityBinding.Unbind();\
+		return true;\
+	}\
+	bool UnbindSecondary##Name(UObject* Object)\
+	{\
+		if (!Name##Bindings.SecondaryBinding.IsBoundToObject(Object)) return false;\
+		Name##Bindings.SecondaryBinding.Unbind();\
+		return true;\
+	}
+
+protected:
+
+	template<typename D>
+	struct FPhysicsBinding
+	{
+		/// @brief  Main binding thats used, you'd wanna bind this once and this will be your core binding. Should strive to be constant
+		D PriorityBinding;
+		/// @brief  If anything needs access to these events, bind to this if its not your core binding. Can be frequently overwritten
+		D SecondaryBinding;
+		
+		bool Execute(URadicalMovementComponent* MovementComponent, float DeltaTime)
+		{
+			if (!SecondaryBinding.ExecuteIfBound(MovementComponent, DeltaTime))
+			{
+				return PriorityBinding.ExecuteIfBound(MovementComponent, DeltaTime);
+			}
+			return true;
+		}
+	};
+
+	PhysicsBinding(FCalculateVelocitySignature, Velocity)
+	PhysicsBinding(FUpdateRotationSignature, Rotation)
+
+protected:
 	
-	UPROPERTY()
-	FUpdateRotationSignature UpdateRotationDelegate;
-
-	UPROPERTY()
 	FPostProcessRootMotionVelocitySignature PostProcessRMVelocityDelegate;
-
-	UPROPERTY()
 	FPostProcessRootMotionRotationSignature PostProcessRMRotationDelegate;
+	
+	/// @brief  Wrapper to handle invoking CalcVelocity events w/ movement data fallback
+	virtual void CalculateVelocity(float DeltaTime);
+	
+	/// @brief  Wrapper to handle invoking UpdateRot events w/ movement data fallback
+	virtual void UpdateRotation(float DeltaTime);
 
 
 #pragma endregion Events
@@ -516,10 +599,10 @@ protected:
 
 
 	/// @brief  
-	void GroundMovementTick(float DeltaTime, uint32 Iterations);
+	virtual void GroundMovementTick(float DeltaTime, uint32 Iterations);
 
 	/// @brief  
-	void AirMovementTick(float DeltaTime, uint32 Iterations);
+	virtual void AirMovementTick(float DeltaTime, uint32 Iterations);
 
 	/// @brief  
 	void GeneralMovementTick(float DeltaTime, uint32 Iterations);
@@ -580,27 +663,27 @@ public:
 	FGroundingStatus CurrentFloor = FGroundingStatus();
 	
 	UPROPERTY(Category="(Radical Movement): Ground Status", VisibleInstanceOnly, BlueprintReadOnly)
-	FGroundingStatus LastGroundingStatus = FGroundingStatus();
+	FGroundingStatus PreviousFloor = FGroundingStatus();
 
-protected:
 	/// @brief  Determines if the pawn can be considered stable on a given slope normal.
 	/// @param  Hit Given collision hit result
 	/// @return True if the pawn can be considered stable on a given slope normal
-	bool IsFloorStable(const FHitResult& Hit) const;
+	virtual bool IsFloorStable(const FHitResult& Hit) const;
+protected:
 
 	bool CheckFall(const FGroundingStatus& OldFloor, const FHitResult& Hit, const FVector& Delta, const FVector& OldLocation, float RemainingTime, float IterTick, uint32 Iterations, bool bMustUnground);
 	
 	void UpdateFloorFromAdjustment();
-	void AdjustFloorHeight();
+	virtual void AdjustFloorHeight();
 	bool IsWithinEdgeTolerance(const FVector& CapsuleLocation, const FVector& TestImpactPoint, const float CapsuleRadius) const;
 	void ComputeFloorDist(const FVector& CapsuleLocation, float LineDistance, float SweepDistance, FGroundingStatus& OutFloorResult, float SweepRadius, const FHitResult* DownwardSweepResult = nullptr) const;
-	void FindFloor(const FVector& CapsuleLocation, FGroundingStatus& OutFloorResult, bool bCanUseCachedLocation, const FHitResult* DownwardSweepResult = nullptr) const;
+	virtual void FindFloor(const FVector& CapsuleLocation, FGroundingStatus& OutFloorResult, bool bCanUseCachedLocation, const FHitResult* DownwardSweepResult = nullptr) const;
 	bool FloorSweepTest(FHitResult& OutHit, const FVector& Start, const FVector& End, ECollisionChannel TraceChannel, const struct FCollisionShape& CollisionShape, const struct FCollisionQueryParams& Params, const struct FCollisionResponseParams& ResponseParams) const;
 
-	bool IsValidLandingSpot(const FVector& CapsuleLocation, const FHitResult& Hit) const;
-	bool ShouldCheckForValidLandingSpot(const FHitResult& Hit) const;
+	virtual bool IsValidLandingSpot(const FVector& CapsuleLocation, const FHitResult& Hit) const;
+	virtual bool ShouldCheckForValidLandingSpot(const FHitResult& Hit) const;
 
-	void MaintainHorizontalGroundVelocity();
+	virtual void MaintainHorizontalGroundVelocity();
 
 	void RecalculateVelocityToReflectMove(const FVector& OldLocation, const float DeltaTime);
 
@@ -613,9 +696,9 @@ protected:
 	UPROPERTY(Category= "(Radical Movement): Step Settings", EditDefaultsOnly, BlueprintReadWrite)
 	float MaxStepHeight = 50.f;
 
-	bool CanStepUp(const FHitResult& StepHit) const;
+	virtual bool CanStepUp(const FHitResult& StepHit) const;
 	
-	bool StepUp(const FVector& Orientation, const FHitResult& StepHit, const FVector& Delta, FStepDownFloorResult* OutStepDownResult = nullptr);
+	virtual bool StepUp(const FVector& Orientation, const FHitResult& StepHit, const FVector& Delta, FStepDownFloorResult* OutStepDownResult = nullptr);
 
 #pragma endregion Step Handling
 
@@ -666,21 +749,53 @@ protected:
 	UFUNCTION(Category= "(Radical Movement): Ledge Settings", BlueprintGetter)
 	float GetValidPerchRadius() const;
 
-	bool ShouldCatchAir(const FGroundingStatus& OldFloor, const FGroundingStatus& NewFloor) const;
+	virtual bool ShouldCatchAir(const FGroundingStatus& OldFloor, const FGroundingStatus& NewFloor) const;
 	
 	bool ShouldComputePerchResult(const FHitResult& InHit, bool bCheckRadius = true) const;
 	
 	bool ComputePerchResult(const float TestRadius, const FHitResult& InHit, const float InMaxFloorDist, FGroundingStatus& OutPerchFloorResult) const;
 	
-	FORCEINLINE virtual bool CanWalkOffLedge() const { return bCanWalkOffLedges; }
+	FORCEINLINE virtual bool CanWalkOffLedge() const { return bCanWalkOffLedges && (bCanWalkOffLedgesWhenCrouched || !IsCrouching()); }
 
-	virtual bool CheckLedgeDirection(const FVector& OldLocation, const FVector& SideStep, const FVector& GravDir);
+	virtual bool CheckLedgeDirection(const FVector& OldLocation, const FVector& SideStep);
 
-	virtual FVector GetLedgeMove(const FVector& OldLocation, const FVector& Delta, const FVector& GravityDir);
+	virtual FVector GetLedgeMove(const FVector& OldLocation, const FVector& Delta);
 
-	void HandleWalkingOffLedge(const FVector& PreviousFloorImpactNormal, const FVector& PreviousFloorContactNormal, const FVector& PreviousLocation, float TimeDelta);
+	virtual void HandleWalkingOffLedge(const FVector& PreviousFloorImpactNormal, const FVector& PreviousFloorContactNormal, const FVector& PreviousLocation, float TimeDelta);
 
 #pragma endregion Ledge Handling
+
+/* */
+#pragma region Crouching
+
+protected:
+	UPROPERTY(Category="(Radical Movement): Crouch Settings", EditAnywhere, BlueprintReadOnly, BlueprintGetter=GetCrouchedHalfHeight, meta=(ClampMin="0", UIMin="0", ForceUnits=cm))
+	float CrouchedHalfHeight;
+	/// @brief	If false, we won't be able to walk off ledges while crashed
+	UPROPERTY(Category="(Radical Movement): Crouch Settings", EditAnywhere, BlueprintReadWrite)
+	uint8 bCanWalkOffLedgesWhenCrouched	: 1;
+
+	virtual bool ShouldCrouchMaintainBaseLocation() const { return IsMovingOnGround(); }
+	
+public:
+	/// @brief	If true, try to crouch (or keep crouching) on next update. If false, try to stop crouching on next update.
+	UPROPERTY(Category="(Radical Movement): Crouch Settings", VisibleInstanceOnly, BlueprintReadOnly)
+	uint8 bWantsToCrouch				: 1;
+
+	/// @brief	Virtual function to determine when we are allowed or not allowed to crouch.
+	virtual bool CanCrouchInCurrentState() const;
+	
+	/// @brief	Checks if new capsule size fits (no encroachment), and calls CharacterOwner->OnStartCrouch if successful. In general, should set bWantsToCrouch for proper behavior.
+	virtual void Crouch();
+	/// @brief	Checks if new capsule size fits (no encroachment), and calls CharacterOwner->OnEndCrouch if successful. In general, should set bWantsToCrouch for proper behavior.
+	virtual void UnCrouch();
+
+	UFUNCTION(Category="(Radical Movement): Crouch Settings", BlueprintPure)
+	FORCEINLINE float GetCrouchedHalfHeight() const { return CrouchedHalfHeight; }
+	UFUNCTION(Category="(Radical Movement): Crouch Settings", BlueprintCallable)
+	FORCEINLINE void SetCrouchedHalfHeight(const float NewValue) { CrouchedHalfHeight = NewValue; };
+	
+#pragma endregion Crouching
 	
 /* Methods to evaluate the stability of a given hit or overlap */
 #pragma region Stability Evaluations
@@ -1013,6 +1128,10 @@ protected:
 /* Math shit or whatever helpers */
 #pragma region Utility
 
+	FVector GetCapsuleExtent(const enum EShrinkCapsuleExtent ShrinkMode, const float CustomShrinkAmount = 0.f) const;
+
+	FCollisionShape GetCapsuleCollisionShape(const enum EShrinkCapsuleExtent ShrinkMode, const float CustomShrinkAmount = 0.f);
+	
 	/// @brief  Used to draw movement trajectories between capsule movement and mesh movement via rmc.VisualizeTrajectories.
 	///			Mesh trajectory tracking this bone. Used for debug purposes only.
 	UPROPERTY(Category="(Radical Movement): Animation", EditDefaultsOnly, AdvancedDisplay)

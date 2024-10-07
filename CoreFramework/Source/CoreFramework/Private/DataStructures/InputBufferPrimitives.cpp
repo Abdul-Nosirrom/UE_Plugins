@@ -9,28 +9,28 @@
 
 /* ~~~~~ Buffer Frame ~~~~~ */
 
-void FBufferFrame::InitializeFrame()
+void FBufferFrame::InitializeFrame(const FGameplayTagContainer& CachedActionIDs)
 {
 	InputsFrameState.Empty();
 	
-	for (auto ID : UInputBufferSubsystem::CachedActionIDs)
+	for (auto ID : CachedActionIDs)
 	{
 		FInputFrameState NewFS = FInputFrameState(ID);
 		InputsFrameState.Add(ID, NewFS);
 	}
 }
 
-void FBufferFrame::UpdateFrameState()
+void FBufferFrame::UpdateFrameState(const TMap<FGameplayTag, FRawInputValue>& RawValueContainer)
 {
 	for (auto FrameState : InputsFrameState)
 	{
-		InputsFrameState[FrameState.Key].ResolveCommand();
+		InputsFrameState[FrameState.Key].ResolveCommand(RawValueContainer);
 	}
 }
 
-void FBufferFrame::CopyFrameState(FBufferFrame& FrameState)
+void FBufferFrame::CopyFrameState(const FGameplayTagContainer& CachedActionIDs, FBufferFrame& FrameState)
 {
-	for (auto ID : UInputBufferSubsystem::CachedActionIDs)
+	for (auto ID : CachedActionIDs)
 	{
 		InputsFrameState[ID].Value = FrameState.InputsFrameState[ID].Value;
 		InputsFrameState[ID].HoldTime = FrameState.InputsFrameState[ID].HoldTime;
@@ -41,18 +41,18 @@ void FBufferFrame::CopyFrameState(FBufferFrame& FrameState)
 
 /* ~~~~~ Input State ~~~~~ */
 
-void FInputFrameState::ResolveCommand()
+void FInputFrameState::ResolveCommand(const TMap<FGameplayTag, FRawInputValue>& RawValueContainer)
 {
-	if (UInputBufferSubsystem::RawValueContainer.Contains(ID))
+	if (RawValueContainer.Contains(ID))
 	{
-		if (UInputBufferSubsystem::RawValueContainer[ID].IsThereInput())
+		if (RawValueContainer[ID].IsThereInput())
 		{
-			HoldUp(UInputBufferSubsystem::RawValueContainer[ID].GetValue());
+			HoldUp(RawValueContainer[ID].GetValue());
 		}
 		else
 		{
 			//bUsed = false; // NOTE: Let bUsed carry over from previous frames (to invoke valid Holds), it's reset when the input is released (if never consumed that carries over so its fine)
-			ReleaseHold(UInputBufferSubsystem::RawValueContainer[ID].GetValue());
+			ReleaseHold(RawValueContainer[ID].GetValue());
 		}
 	}
 }
@@ -64,12 +64,12 @@ bool FInputFrameState::CanInvokePress() const
 
 bool FInputFrameState::CanInvokeHold() const
 {
-	return (HoldTime > 1 && bUsed); 
+	return (HoldTime > 1);// && bUsed); 
 }
 
 bool FInputFrameState::CanInvokeRelease() const
 {
-	return (HoldTime == -1 && bUsed);
+	return (HoldTime < 0);// && bUsed);
 }
 
 
@@ -91,7 +91,7 @@ void FInputFrameState::ReleaseHold(const FInputActionValue InValue)
 	
 	if (HoldTime > 0)
 	{
-		HoldTime = -1;
+		HoldTime = -HoldTime;
 	}
 	else
 	{

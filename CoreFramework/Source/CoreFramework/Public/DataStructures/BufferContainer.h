@@ -111,9 +111,9 @@ public:
 
 	FORCEINLINE bool IsFull() const { return Size == Capacity; }
 
-	FElementType Front() { return Buffer[Start]; }
+	FElementType Front() const { return Buffer[Start]; }
 
-	FElementType Back() { return Buffer[(End != 0 ? End : Capacity) - 1]; }
+	FElementType Back() const { return Buffer[(End != 0 ? End : Capacity) - 1]; }
 
 protected:
 

@@ -7,7 +7,7 @@ public class ActionFramework : ModuleRules
 {
 	public ActionFramework(ReadOnlyTargetRules Target) : base(Target)
 	{
-		CppStandard = CppStandardVersion.Cpp17;
+		CppStandard = CppStandardVersion.Latest;
 
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
@@ -16,15 +16,25 @@ public class ActionFramework : ModuleRules
 		PublicDependencyModuleNames.AddRange(new[]
 			{
 				"Core", "CoreUObject", "Engine", "InputCore", "PhysicsCore", "AIModule", "EnhancedInput", "GameplayTags",
-				"Projects", "SMSystem", "GameplayAbilities"
+				"Projects", "UMG"
 			}
 		);
 		
 		PrivateDependencyModuleNames.AddRange(new []
 		{
-			"CoreFramework", "SMSystem", "CameraFramework"
+			"CoreFramework", "DeveloperSettings", "Niagara"
 		}
 		);
+
+		if (Target.Type == TargetType.Editor)
+		{
+			PrivateDependencyModuleNames.AddRange(new string[]
+			{
+				"UnrealEd",
+				"ComponentVisualizers",
+				"DataValidation"
+			});
+		}
 		
 		// Public include directories.
 		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public"));

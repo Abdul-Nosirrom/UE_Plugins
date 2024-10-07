@@ -6,7 +6,7 @@
 #include "AI/Navigation/NavigationDataInterface.h"
 #include "AI/Navigation/NavigationTypes.h"
 #include "AI/RVOAvoidanceInterface.h"
-#include "AIModule/Classes/AIController.h"
+#include "AIController.h"
 
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -15,6 +15,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/InputComponent.h"
 #include "Components/ArrowComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 
 #include "CoreMinimal.h"
 
@@ -34,6 +35,8 @@
 #include "Engine/ScopedMovementUpdate.h"
 #include "Engine/Canvas.h"
 #include "Engine/LocalPlayer.h"
+
+#include "Curves/CurveFloat.h"
 
 #include "GameFramework/Actor.h"
 #include "GameFramework/Controller.h"

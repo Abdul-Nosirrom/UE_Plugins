@@ -14,7 +14,7 @@ class URootMotionTasksComponent;
 class UArrowComponent;
 class URootMotionTask_Base;
 class UInputBufferSubsystem;
-enum EMovementState;
+enum EMovementState : int;
 
 /* Delegate Declarations */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FMovementStateChangedSignature, class ARadicalCharacter*, Character, EMovementState, PrevMovementState);
@@ -23,6 +23,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FLostFloorStabilitySignature, const 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FWalkedOffLedge, const FVector&, PreviousFloorImpactNormal, const FVector&, PreviousFloorContactNormal, const FVector&, PreviousLocation, float, DeltaTime);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FMoveBlockedBySignature, const FHitResult&, Hit);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FStuckInGeometrySignature, const FHitResult&, Hit);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCrouchIndicatorSignature, float, HalfHeightAdjustment, float, ScaledHalfHeightAdjustment);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FReachedJumpApex);
 
 UCLASS()
@@ -118,6 +119,7 @@ public:
 	virtual void PostInitializeComponents() override;
 	virtual UPawnMovementComponent* GetMovementComponent() const override;
 	virtual UPrimitiveComponent* GetMovementBase() const override final;
+	virtual FVector GetGravityDirection() const override;
 	virtual float GetDefaultHalfHeight() const override;
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 	virtual void DisplayDebug(class UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL, float& YPos) override;
@@ -132,6 +134,9 @@ public:
 	UFUNCTION(Category="Character", BlueprintCallable)
 	virtual void LaunchCharacter(FVector LaunchVelocity, bool bPlanarOverride, bool bVerticalOverride);
 
+	UFUNCTION(Category="Character", BlueprintCallable)
+	virtual void SetHitStop(float Duration = 0.1f);
+	
 #pragma endregion Gameplay Interface
 
 #pragma region Events
@@ -155,30 +160,44 @@ public:
 	FStuckInGeometrySignature StuckInGeometryDelegate;
 
 	UPROPERTY(Category="Character", BlueprintAssignable)
+	FCrouchIndicatorSignature CrouchStartedDelegate;
+
+	UPROPERTY(Category="Character", BlueprintAssignable)
+	FCrouchIndicatorSignature CrouchEndedDelegate;
+	
+	UPROPERTY(Category="Character", BlueprintAssignable)
 	FReachedJumpApex ReachedJumpApexDelegate;
 
 public:
 	UFUNCTION(Category="Character", BlueprintImplementableEvent)
 	void OnLanded(const FHitResult& Hit);
-	void Landed(const FHitResult& Hit);
+	virtual void Landed(const FHitResult& Hit);
 
 	UFUNCTION(Category="Character", BlueprintImplementableEvent)
 	void OnMovementStateChanged(enum EMovementState PrevMovementState);
-	void MovementStateChanged(enum EMovementState PrevMovementState);
+	virtual void MovementStateChanged(enum EMovementState PrevMovementState);
 
 	UFUNCTION(Category="Character", BlueprintImplementableEvent)
 	void OnWalkingOffLedge(const FVector& PreviousFloorImpactNormal, const FVector& PreviousFloorContactNormal, const FVector& PreviousLocation, float DeltaTime);
-	void WalkingOffLedge(const FVector& PreviousFloorImpactNormal, const FVector& PreviousFloorContactNormal, const FVector& PreviousLocation, float DeltaTime);
+	virtual void WalkingOffLedge(const FVector& PreviousFloorImpactNormal, const FVector& PreviousFloorContactNormal, const FVector& PreviousLocation, float DeltaTime);
 
 	UFUNCTION(Category="Character", BlueprintImplementableEvent)
 	void OnReachedJumpApex();
-	void ReachedJumpApex();
+	virtual void ReachedJumpApex();
 	
 	UFUNCTION(Category="Character", BlueprintImplementableEvent)
 	void OnMoveBlocked(const FHitResult& Hit);
-	void MoveBlockedBy(const FHitResult& Hit);
+	virtual void MoveBlockedBy(const FHitResult& Hit);
 
 	void OnStuckInGeometry(const FHitResult& Hit);
+
+	UFUNCTION(Category="Character", BlueprintImplementableEvent, meta=(DisplayName="OnStartCrouch"))
+	void K2_OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust);
+	virtual void OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust);
+
+	UFUNCTION(Category="Character", BlueprintImplementableEvent, meta=(DisplayName="OnEndCrouch"))
+	void K2_OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust);
+	virtual void OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust);
 
 	UFUNCTION(BlueprintImplementableEvent)
 	void BaseChange();
@@ -188,6 +207,32 @@ public:
 
 #pragma endregion Events
 
+#pragma region Crouching
+
+public:
+	
+	/// @brief	Set by character movement to specify that this character is currently crouched.
+	UPROPERTY(Category="Character", BlueprintReadOnly)
+	uint8 bIsCrouched	: 1;
+
+	/// @brief	Requests the movement component to start crouching. Sets bWantsToCrouch to true, notified when OnStartCrouch is called.
+	UFUNCTION(Category="Character", BlueprintCallable)
+	virtual void Crouch();
+
+	/// @brief	Requests the movement component to stop crouching. Sets bWantsToCrouch to false, notified when OnEndCrouch is called.
+	UFUNCTION(Category="Character", BlueprintCallable)
+	virtual void UnCrouch();
+
+	/// @brief	True if the character is currently not crouched, but is able to if crouch is requested.
+	UFUNCTION(Category="Character", BlueprintPure)
+	virtual bool CanCrouch();
+
+	/// @brief	True if the character is currently crouching
+	UFUNCTION(Category="Character", BlueprintPure)
+	virtual bool IsCrouching();
+	
+#pragma endregion Crouching
+	
 #pragma region Based Movement
 
 protected:
@@ -223,9 +268,28 @@ public:
 
 #pragma region Animation Interface
 	
-	/** Scale to apply to root motion translation on this Character */
+	/// @brief	Scale to apply to root motion translation on this Character 
 	UPROPERTY()
 	float AnimRootMotionTranslationScale;
+
+	/// @brief	Saved translation offset of mesh. (Primarily used for crouch)
+	UPROPERTY()
+	FVector BaseMeshTranslationOffset;
+
+	/// @brief	Saved rotation offset of mesh. 
+	UPROPERTY()
+	FQuat BaseMeshRotationOffset;
+	
+	/// @brief	Get the saved translation offset of mesh. This is how much extra offset is applied from the center of the capsule. 
+	UFUNCTION(Category=Animation, BlueprintPure)
+	FVector GetBaseMeshTranslationOffset() const { return BaseMeshTranslationOffset; }
+
+	/// @brief	Get the saved rotation offset of mesh. This is how much extra rotation is applied from the capsule rotation. */
+	virtual FQuat GetBaseMeshRotationOffset() const { return BaseMeshRotationOffset; }
+
+	/// @brief	Get the saved rotation offset of mesh. This is how much extra rotation is applied from the capsule rotation. */
+	UFUNCTION(Category=Animation, BlueprintPure, meta=(DisplayName="Get Base Mesh Rotation Offset", ScriptName="GetBaseMeshRotationOffset"))
+	FRotator GetBaseMeshRotationOffsetRotator() const { return GetBaseMeshRotationOffset().Rotator(); }
 
 	UFUNCTION(Category=Animation, BlueprintCallable)
 	void SetAnimRootMotionTranslationScale(float InAnimRootMotionTranslationScale = 1.f);

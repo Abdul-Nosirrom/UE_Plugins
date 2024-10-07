@@ -3,11 +3,10 @@
 
 #include "Editor/ActionDataFactory.h"
 
+#include "ClassViewerFilter.h"
 #include "SlateOptMacros.h"
 #include "ActionSystem/GameplayAction.h"
-#include "ClassViewer/Private/UnloadedBlueprintData.h"
 #include "Kismet2/BlueprintEditorUtils.h"
-#include "Kismet2/KismetEditorUtilities.h"
 #include "Widgets/Layout/SUniformGridPanel.h"
 
 #define LOCTEXT_NAMESPACE "UActionDataFactory"

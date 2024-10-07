@@ -7,19 +7,16 @@
 #include "BufferContainer.h"
 #include "InputData.h"
 #include "InputBufferPrimitives.h"
-#include "InputAction.h"
 #include "InputBufferSubsystem.generated.h"
 
 /* Profiling & Log Groups */
 DECLARE_STATS_GROUP(TEXT("InputBuffer_Game"), STATGROUP_InputBuffer, STATCAT_Advanced);
-DECLARE_CYCLE_STAT(TEXT("Action Bindings"), STAT_ActionBindings, STATGROUP_InputBuffer)
+DECLARE_CYCLE_STAT(TEXT("Action Bindings"), STAT_ActionBindings, STATGROUP_InputBuffer);
 DECLARE_LOG_CATEGORY_EXTERN(LogInputBuffer, Log, All);
 /* ~~~~~~~~~~~~~~~~ */
 
-
 /* FORWARD DECLARATIONS */
-struct FBufferFrame;
-struct FRawInputValue;
+class UEnhancedInputComponent;
 /*~~~~~~~~~~~~~~~~~~~~~*/
 
 UCLASS()
@@ -34,6 +31,7 @@ class COREFRAMEWORK_API UInputBufferSubsystem : public ULocalPlayerSubsystem, pu
  // BEGIN USubsystem Interface
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
+	virtual void PlayerControllerChanged(APlayerController* NewPlayerController) override;
  // END USubsystem Interface
 
 // BEGIN FTickableGameObject Interface
@@ -52,25 +50,46 @@ public:
 	void AddMappingContext(UInputBufferMap* TargetInputMap, UEnhancedInputComponent* InputComponent);
 
 	/// @brief Registers an input in the buffer as used, setting its current state to (-1) which is maintained until it's released
-	/// @param Input Data asset corresponding to input to be consumed
 	/// @return True if the input is consumed
-	UFUNCTION(BlueprintCallable)
-	bool ConsumeButtonInput(const UInputAction* Input);
-	bool ConsumeButtonInput(const FName InputID, bool bConsumeNewer = false);
+	UFUNCTION(Category="InputBuffer", BlueprintCallable, meta=(GameplayTagFilter="Input"))
+	bool ConsumeInput(const FGameplayTag& InputTag, bool bConsumeNewer = false);
+	
+	/// @brief  Returns the state of the most recent register of a given input in the buffer
+	UFUNCTION(Category="InputBuffer", BlueprintPure, meta=(GameplayTagFilter="Input"))
+	bool IsConsumedInputHeld(const FGameplayTag& InputTag) const;
 
-	/// @brief Registers an input in the buffer as used, setting its current state to (-1) which is maintained until it's released
-	/// @param Input Data asset corresponding to input to be consumed
-	/// @return True if the input is consumed
-	UFUNCTION(BlueprintCallable)
-	bool ConsumeDirectionalInput(const UMotionAction* Input);
-	bool ConsumeDirectionalInput(const FName InputID);
+	/// @brief	Returns the time an inputs been held in seconds, regardless of whether its been consumed or not. < 0 if not held.
+	UFUNCTION(Category="InputBuffer", BlueprintPure, meta=(GameplayTagFilter="Input"))
+	float GetTimeInputHeld(const FGameplayTag& InputTag) const;
+
+	/// @brief	Returns true if an input is firing off the press event and can be consumed
+	UFUNCTION(Category="InputBuffer", BlueprintPure, meta=(GameplayTagFilter="Input"))
+	bool CanPressInput(const FGameplayTag& InputTag);
+
+	/// @brief	Get an input action from the tag to avoid needing asset references in your code
+	UFUNCTION(Category="InputBuffer", BlueprintPure, meta=(GameplayTagFilter="Input"))
+	const UBufferedInputAction* GetInputAction(const FGameplayTag& InputTag) const
+	{
+		auto AllActions = InputMap->GetInputActions();
+		for (const auto& action : AllActions)
+		{
+			if (action->InputTag.MatchesTag(InputTag)) return action;
+		}
+		return nullptr;
+	}
+
+	
+	void DisableInput() { bInputDisabled = true; }
+	void EnableInput() { bInputDisabled = false; }
+
+	const TBufferContainer<FBufferFrame>& GetInputBufferData() const { return InputBuffer; }
 
 protected:
 	/// @brief  True if the specified input has already been consumed
-	bool IsInputConsumed(const FName InputID, bool bCheckNewer = false);
+	bool IsInputConsumed(const FGameplayTag& InputID, bool bCheckNewer = false);
 	
 	/// @brief  If an input is consumed, propagate the consume state up the buffer to most recent register of said input
-	void PropagateConsume(const FName InputID, const uint8 FromFrame);
+	void PropagateConsume(const FGameplayTag& InputID, const uint8 FromFrame);
 
 	/// @brief  Updates the buffer with input received from EIC [Fixed Tick Interval]
 	void UpdateBuffer();
@@ -87,12 +106,10 @@ protected:
 	void InitializeInputBufferData();
 
 	/// @brief Event triggered for an input once its been and continues to be triggered
-	/// @param InputName FName descriptor of action used to index into Input Maps
-	void TriggerInput(const FInputActionInstance& ActionInstance, const FName InputName);
+	void TriggerInput(const FInputActionInstance& ActionInstance, const FGameplayTag InputID);
 
 	/// @brief Event triggered for an input once its no longer considered held
-	/// @param InputName FName descriptor of action used to index into Input Maps
-	void CompleteInput(const FInputActionInstance& ActionInstance, const FName InputName);
+	void CompleteInput(const FInputActionInstance& ActionInstance, const FGameplayTag InputID);
 	/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 
 	void ProcessDirectionVector(const FVector2D& DirectionInputVector, FVector& ProcessedInputVector, FVector& OutPlayerForward, FVector& OutPlayerRight) const;
@@ -102,12 +119,13 @@ public:
 	
 protected:
 	/* References */
+	UPROPERTY(Transient)
 	TObjectPtr<UInputBufferMap> InputMap;
 
-	/* CONSTANT BUFFER SETTINGS */
-	static constexpr uint8 BUTTON_BUFFER_SIZE	= 12;
-	static constexpr uint8 BUFFER_SIZE			= 40;
-	static constexpr float TICK_INTERVAL		= 0.0167;
+	/* CONSTANT BUFFER SETTINGS (Filled during OnInitialize from project settings) */
+	uint8 BUTTON_BUFFER_SIZE;
+	uint8 BUFFER_SIZE;
+	float TICK_INTERVAL;
 	uint32 LastFrameNumberWeTicked = INDEX_NONE;
 	
 	/* ~~~~~ Initialization & Update Tracking ~~~~~ */
@@ -115,11 +133,14 @@ protected:
 	bool bInitialized;
 
 	UPROPERTY(Transient)
+	bool bInputDisabled;
+
+	UPROPERTY(Transient)
 	double ElapsedTime;
 
-	// NOTE: Static so buffer primitives can access it without having to go through a Subsystem getter (also in our case we're only ever gonna have 1 LocalPlayer)
-	static TArray<FName> CachedActionIDs; // BUG: These being static will result in crashes in PIE when making a change
-	static TMap<FName, FRawInputValue> RawValueContainer;
+	FGameplayTagContainer CachedActionIDs;
+	FGameplayTagContainer CachedDirectionalActionIDs;
+	TMap<FGameplayTag, FRawInputValue> RawValueContainer;
 
 	/* ~~~~~ Managed Data ~~~~~ */
 	/// @brief	The rows of the input buffer, each containing a column corresponding to each input type
@@ -131,35 +152,37 @@ protected:
 	///			meaning its not been registered, or been held for a while such that its no longer valid. Oldest frame to more
 	///			easily check chorded actions/input sequence (We hold 2 to account for a button sequence of the same input type)
 	UPROPERTY(Transient)
-	TMap<FName, FBufferStateTuple> ButtonInputValidFrame;
+	TMap<FGameplayTag, FBufferStateTuple> ButtonInputValidFrame;
 
 	/// @brief	Holds the oldest frame of which a directional input was registered valid. (-1) corresponds to no input that can be used,
 	///			meaning its not been registered (DI have no concept of "held"). Frame held is the oldest frame in the buffer in which the input
 	///			was valid.
 	UPROPERTY(Transient)
-	TMap<FName, int8> DirectionalInputValidFrame;
+	TMap<FGameplayTag, int8> DirectionalInputValidFrame;
 
 #pragma region EVENTS
 
 protected:
 
-	UPROPERTY(Transient)
-	TMap<FInputActionEventSignature,FInputActionDelegateHandle> ActionDelegates;
-	UPROPERTY(Transient)
-	TMap<FInputActionSequenceSignature, FInputActionSequenceDelegateHandle> ActionSeqDelegates;
-	UPROPERTY(Transient)
-	TMap<FDirectionalActionSignature, FDirectionalActionDelegateHandle> DirectionalDelegates;
-	UPROPERTY(Transient)
-	TMap<FDirectionalAndActionSequenceSignature, FDirectionalAndActionDelegateHandle> DirectionAndActionDelegates;
+	TMap<FButtonBinding, FInputActionDelegateHandle> ActionDelegates;
+	TMap<FButtonSequenceBinding, FInputActionSequenceDelegateHandle> ActionSeqDelegates;
+	TMap<FDirectionalBinding, FDirectionalActionDelegateHandle> DirectionalDelegates;
+	TMap<FDirectionalSequenceBinding, FDirectionalAndActionDelegateHandle> DirectionAndActionDelegates;
 	
 public:
 	
-	UFUNCTION(BlueprintCallable)
-	void BindAction(FInputActionEventSignature Event, UInputAction* Action, EBufferTriggerEvent Trigger, bool bAutoConsume, int Priority = 0)
+	void BindAction(const FButtonBinding& Event, const FGameplayTag& InputTag, EBufferTriggerEvent Trigger, bool bAutoConsume, int Priority = 0)
 	{
 		SCOPE_CYCLE_COUNTER(STAT_ActionBindings);
-		if (!Action) return;
-		ActionDelegates.Add(Event, FInputActionDelegateHandle(FName(Action->ActionDescription.ToString()), Trigger, bAutoConsume, Priority));
+		if (!CachedActionIDs.HasTagExact(InputTag))
+		{
+			UE_LOG(LogInputBuffer, Warning, TEXT("FAILED Bind Action: [%s] Input does not exist"), *InputTag.ToString());
+			return;
+		}
+		
+		int32 NumBindings = ActionDelegates.Num();
+		
+		ActionDelegates.Add(Event, FInputActionDelegateHandle(InputTag, Trigger, bAutoConsume, Priority));
 
 		// Sort by Priority When New Action Is bound
 		const auto SortByPriority = [](const FInputActionDelegateHandle& Handle1, const FInputActionDelegateHandle& Handle2) -> bool
@@ -168,17 +191,36 @@ public:
 		};
 
 		ActionDelegates.ValueSort(SortByPriority);
+
+		UE_LOG(LogInputBuffer, Warning, TEXT("<----- BIND ----->"))
+		if (NumBindings < ActionDelegates.Num())
+		{
+			UE_LOG(LogInputBuffer, Warning, TEXT("Bound Input Buffer Action (%s) To Delegate (%s)"), *InputTag.ToString(), *Event.Delegate.GetUObject()->GetName());
+		}
+		else
+		{
+			UE_LOG(LogInputBuffer, Warning, TEXT("FAILED to bind Action to delegate (%s)"), *Event.Delegate.GetUObject()->GetName());
+		}
+		UE_LOG(LogInputBuffer, Warning, TEXT("<------------------>"))
 	}
 
 
-	UFUNCTION(BlueprintCallable)
-	void BindActionSequence(FInputActionSequenceSignature Event, const UInputAction* FirstAction, const UInputAction* SecondAction, bool bAutoConsume, bool bConsiderOrder, int Priority = 0)
+	void BindActionSequence(const FButtonSequenceBinding& Event, const FGameplayTag& FirstAction, const FGameplayTag& SecondAction, bool bAutoConsume, bool bFirstInputIsHold, bool bConsiderOrder, int Priority = 0)
 	{
 		SCOPE_CYCLE_COUNTER(STAT_ActionBindings);
-		if (!FirstAction || !SecondAction) return;
-		const FName ID1 = FName(FirstAction->ActionDescription.ToString());
-		const FName ID2 = FName(SecondAction->ActionDescription.ToString());
-		ActionSeqDelegates.Add(Event, FInputActionSequenceDelegateHandle(ID1, ID2, bAutoConsume, bConsiderOrder, Priority));
+		if (!(CachedActionIDs.HasTagExact(FirstAction) || CachedActionIDs.HasTagExact(SecondAction)))
+		{
+			UE_LOG(LogInputBuffer, Warning, TEXT("FAILED Bind Action Sequence: [%s | %s] Both inputs do not exist"), *FirstAction.ToString(), *SecondAction.ToString());
+			return;
+		}
+		
+		if (bFirstInputIsHold && (FirstAction == SecondAction))
+		{
+			UE_LOG(LogInputBuffer, Warning, TEXT("FAILED BindActionSequence: Asked to treat first input as hold but both inputs supplied are the same [%s]"), *FirstAction.ToString());
+			return;
+		}
+		
+		ActionSeqDelegates.Add(Event, FInputActionSequenceDelegateHandle(FirstAction, SecondAction, bAutoConsume, bFirstInputIsHold, bConsiderOrder, Priority));
 
 		// Sort by Priority When New Action Is bound
 		const auto SortByPriority = [](const FInputActionSequenceDelegateHandle& Handle1, const FInputActionSequenceDelegateHandle& Handle2) -> bool
@@ -189,12 +231,15 @@ public:
 		ActionSeqDelegates.ValueSort(SortByPriority);
 	}
 
-	UFUNCTION(BlueprintCallable)
-	void BindDirectionalAction(FDirectionalActionSignature Event, const UMotionAction* DirectionalAction, bool bAutoConsume, int Priority = 0)
+	void BindDirectionalAction(const FDirectionalBinding& Event, const FGameplayTag& DirectionalAction, bool bAutoConsume, int Priority = 0)
 	{
 		SCOPE_CYCLE_COUNTER(STAT_ActionBindings);
-		if (!DirectionalAction) return;
-		DirectionalDelegates.Add(Event, FDirectionalActionDelegateHandle(DirectionalAction->GetID(), bAutoConsume, Priority));
+		if (!CachedDirectionalActionIDs.HasTagExact(DirectionalAction))
+		{
+			UE_LOG(LogInputBuffer, Warning, TEXT("FAILED BindDirectionalAction: [%s] Input does not exist"), *DirectionalAction.ToString());
+			return;
+		}
+		DirectionalDelegates.Add(Event, FDirectionalActionDelegateHandle(DirectionalAction, bAutoConsume, Priority));
 
 		// Sort by Priority When New Action Is bound
 		const auto SortByPriority = [](const FDirectionalActionDelegateHandle& Handle1, const FDirectionalActionDelegateHandle& Handle2) -> bool
@@ -205,12 +250,14 @@ public:
 		DirectionalDelegates.ValueSort(SortByPriority);
 	}
 
-	UFUNCTION(BlueprintCallable)
-	void BindDirectionalActionSequence(FDirectionalAndActionSequenceSignature Event, const UInputAction* InputAction, const UMotionAction* DirectionalAction, EDirectionalSequenceOrder SequenceOrder, bool bAutoConsume, int Priority = 0)
+	void BindDirectionalActionSequence(const FDirectionalSequenceBinding& Event, const FGameplayTag& InputAction, const FGameplayTag& DirectionalAction, EDirectionalSequenceOrder SequenceOrder, bool bAutoConsume, int Priority = 0)
 	{
 		SCOPE_CYCLE_COUNTER(STAT_ActionBindings);
-		if (!InputAction) return;
-		DirectionAndActionDelegates.Add(Event, FDirectionalAndActionDelegateHandle(FName(InputAction->ActionDescription.ToString()), DirectionalAction->GetID(), bAutoConsume, SequenceOrder, Priority));
+		if (!CachedActionIDs.HasTagExact(InputAction) && !CachedDirectionalActionIDs.HasTagExact(DirectionalAction))
+		{
+			return;
+		}
+		DirectionAndActionDelegates.Add(Event, FDirectionalAndActionDelegateHandle(InputAction, DirectionalAction, bAutoConsume, SequenceOrder, Priority));
 
 		// Sort by Priority When New Action Is bound
 		const auto SortByPriority = [](const FDirectionalAndActionDelegateHandle& Handle1, const FDirectionalAndActionDelegateHandle& Handle2) -> bool
@@ -222,51 +269,49 @@ public:
 	}
 
 	// Can't delete them directly because apparently C++ and BP don't run in sequence. Calling this in BP can happen while EvaluateEvents is running causing an ensure fail when an element is removed during the loop
-	TArray<FInputActionEventSignature> ActionsMarkedForDelete;
-	UFUNCTION(BlueprintCallable)
-	void UnbindAction(FInputActionEventSignature Event)
+	void UnbindAction(const FButtonBinding& Event)
 	{
-		if (ActionDelegates.Contains(Event))
+		UE_LOG(LogInputBuffer, Warning, TEXT("<----- UNBIND ----->"))
+		//if (ActionDelegates.Contains(Event))
 		{
 			//if (Event.IsBound()) Event.Unbind();
-			//ActionDelegates.Remove(Event);
-			ActionsMarkedForDelete.Add(Event);
+			if (ActionDelegates.Contains(Event) && ActionDelegates.Remove(Event))
+			{
+				const FString ObjName = Event.Delegate.GetUObject() ? Event.Delegate.GetUObject()->GetName() : Event.Delegate.GetFunctionName().ToString();
+				UE_LOG(LogInputBuffer, Warning, TEXT("Attempting To Unbind: %s"), *ObjName)
+			}
+			else
+			{
+				UE_LOG(LogInputBuffer, Error, TEXT("[%s] FAILED To Unbind: %s"), (ActionDelegates.Contains(Event) ? *FString("TRUE") : *FString("FALSE") ),*Event.Delegate.GetUObject()->GetName())
+			}
 		}
+		UE_LOG(LogInputBuffer, Warning, TEXT("<----------------->"))
 	}
 
-	TArray<FInputActionSequenceSignature> ActionSeqMarkedForDelete;
-	UFUNCTION(BlueprintCallable)
-	void UnbindActionSequence(FInputActionSequenceSignature Event)
+	void UnbindActionSequence(const FButtonSequenceBinding& Event)
 	{
 		if (ActionSeqDelegates.Contains(Event))
 		{
 			//if (Event.IsBound()) Event.Unbind();
-			//ActionSeqDelegates.Remove(Event);
-			ActionSeqMarkedForDelete.Add(Event);
+			ActionSeqDelegates.Remove(Event);
 		}
 	}
 
-	TArray<FDirectionalActionSignature> DirActionsMarkedForDelete;
-	UFUNCTION(BlueprintCallable)
-	void UnbindDirectionalAction(FDirectionalActionSignature Event)
+	void UnbindDirectionalAction(const FDirectionalBinding& Event)
 	{
 		if (DirectionalDelegates.Contains(Event))
 		{
 			//if (Event.IsBound()) Event.Unbind();
-			//DirectionalDelegates.Remove(Event);
-			DirActionsMarkedForDelete.Add(Event);
+			DirectionalDelegates.Remove(Event);
 		}
 	}
 
-	TArray<FDirectionalAndActionSequenceSignature> DirActionSeqMarkedForDelete;
-	UFUNCTION(BlueprintCallable)
-	void UnbindDirectionalActionSequence(FDirectionalAndActionSequenceSignature Event)
+	void UnbindDirectionalActionSequence(const FDirectionalSequenceBinding& Event)
 	{
 		if (DirectionAndActionDelegates.Contains(Event))
 		{
 			//if (Event.IsBound()) Event.Unbind();
-			//DirectionAndActionDelegates.Remove(Event);
-			DirActionSeqMarkedForDelete.Add(Event);
+			DirectionAndActionDelegates.Remove(Event);
 		}
 	}
 

@@ -45,8 +45,8 @@ public:
 	bool IsConsumed() const { return bPressInstanceConsumed; }
 	
 	bool IsPress() const { return FrameVal >= 0 && HoldTime == 0 && bPressInstanceConsumed == false; }
-	bool IsHold() const { return FrameVal >= 0 && HoldTime > 0 && bPressInstanceConsumed == true; }
-	bool IsRelease() const { return FrameVal >= 0 && HoldTime == 0 && bPressInstanceConsumed == true; }
+	bool IsHold() const { return FrameVal >= 0 && HoldTime > 0; }// && bPressInstanceConsumed == true; }
+	bool IsRelease() const { return FrameVal >= 0 && HoldTime < 0; } // && bPressInstanceConsumed == true; }
 };
 
 /* Wrapper for incoming input values to later be processed by FInputFrameState */
@@ -118,12 +118,12 @@ struct COREFRAMEWORK_API FInputFrameState
 
 public:
 	/// @brief	Input Action ID Associated With This Object
-	FName ID;
+	FGameplayTag ID;
 	
 	/// @brief  Register the raw input action value from EIC into this frame state
 	FInputActionValue Value;
 	
-	/// @brief	Input state value. (0) if no input, (-1) if the input was released the last frame, and time in which
+	/// @brief	Input state value. (0) if no input, (<0) if the input was released the last frame, and time in which
 	///			input has been held otherwise.
 	int HoldTime{0};
 	
@@ -136,10 +136,10 @@ public:
 	float DebugTime{0};
 public:
 	FInputFrameState() {};
-	explicit FInputFrameState(const FName InputID) : ID(InputID) {};
+	explicit FInputFrameState(const FGameplayTag& InputID) : ID(InputID) {};
 	
 	/// @brief Checks the assigned input and resolves its state (Held, Released, Axis, etc...)
-	void ResolveCommand();
+	void ResolveCommand(const TMap<FGameplayTag, FRawInputValue>& RawValueContainer);
 
 	/// @brief Called when the input is being held
 	/// @param InValue Current value of the input in seconds
@@ -152,7 +152,7 @@ public:
 	///			(e.g HoldTime == 1)
 	bool CanInvokePress() const;
 
-	/// @brief  Returns true if the initial press was used, but this input has now been released (HoldTime == -1)
+	/// @brief  Returns true if the initial press was used, but this input has now been released (HoldTime < 0)
 	bool CanInvokeRelease() const;
 
 	/// @brief  Returns true if the initial press was used, and this input has continued to be held (HoldTime > 1)
@@ -170,16 +170,17 @@ public:
 	FBufferFrame() {};
 	
 	/// @brief Initializes a row of the input buffer
-	void InitializeFrame();
+	void InitializeFrame(const FGameplayTagContainer& CachedActionIDs);
 
 	/// @brief Update the state of all inputs in the current frame, resolving any open commands 
-	void UpdateFrameState();
+	void UpdateFrameState(const TMap<FGameplayTag, FRawInputValue>& RawValueContainer);
 
 	/// @brief Copies over the frame state into here
+	/// @param CachedActionIDs
 	/// @param FrameState Frame state to copy
-	void CopyFrameState(FBufferFrame& FrameState);
+	void CopyFrameState(const FGameplayTagContainer& CachedActionIDs, FBufferFrame& FrameState);
 	
 public:
 	/// @brief State of each input on a given frame
-	TMap<FName, FInputFrameState> InputsFrameState;
+	TMap<FGameplayTag, FInputFrameState> InputsFrameState;
 };

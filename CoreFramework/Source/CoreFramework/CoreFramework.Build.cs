@@ -7,17 +7,22 @@ public class CoreFramework : ModuleRules
 {
 	public CoreFramework(ReadOnlyTargetRules Target) : base(Target)
 	{
-	    CppStandard = CppStandardVersion.Cpp17;
-
+		DefaultBuildSettings = BuildSettingsVersion.Latest;
+		CppStandard = CppStandardVersion.Latest;
 	    PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
 	    PrivatePCHHeaderFile = "Private/CFW_PCH.h";
 
 	    PublicDependencyModuleNames.AddRange(new[]
 		    {
-			    "Core", "CoreUObject", "Engine", "InputCore", "PhysicsCore", "AIModule", "EnhancedInput", "GameplayTags"
+			    "Core", "CoreUObject", "Engine", "InputCore", "PhysicsCore", "AIModule", "EnhancedInput", "GameplayTags", "ImGui", "ImGuiWindow"
 		    }
 	    );
+
+	    PrivateDependencyModuleNames.AddRange(new []
+	    {
+		    "DeveloperSettings"
+	    });
 
 	    // Public include directories.
 	    PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public"));

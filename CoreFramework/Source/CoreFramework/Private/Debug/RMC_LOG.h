@@ -48,7 +48,35 @@
 
 #endif
 
+#define VLOG_HIT(DBGHit, Format, ...)\
+	if (RMCCVars::EnableVLog > 0)\
+	{\
+		UE_VLOG_LOCATION(CharacterOwner, VLogRMCMovement, Log, DBGHit.ImpactPoint, 10.f, FColor::Purple, TEXT(Format), ##__VA_ARGS__);\
+		UE_VLOG_ARROW(CharacterOwner, VLogRMCMovement, Log, DBGHit.ImpactPoint, DBGHit.ImpactPoint + 50.f * DBGHit.ImpactNormal, FColor::Red, TEXT(""));\
+	}
 
+#define VLOG_STATE\
+	if (RMCCVars::EnableVLog > 0)\
+	{\
+		FColor DBGDrawColor = PhysicsState == STATE_Grounded ? FColor::Green : (PhysicsState == STATE_Falling ? FColor::Red : FColor::Yellow);\
+		float DBGRadius, DBGHeight;\
+		CharacterOwner->GetCapsuleComponent()->GetScaledCapsuleSize(DBGRadius, DBGHeight);\
+		const FVector DBGLocation = UpdatedComponent->GetComponentLocation() - UpdatedComponent->GetUpVector() * DBGHeight;\
+		UE_VLOG_CAPSULE(CharacterOwner, VLogRMCMovement, Log, DBGLocation, DBGHeight, DBGRadius, UpdatedComponent->GetComponentQuat(), DBGDrawColor, TEXT(""));\
+		UE_VLOG_ARROW(CharacterOwner, VLogRMCMovement, Log, UpdatedComponent->GetComponentLocation(), UpdatedComponent->GetComponentLocation() + UpdatedComponent->GetForwardVector() * 50.f, FColor::Silver, TEXT(""));\
+		if (PhysicsState == STATE_Grounded)\
+		{\
+			VLOG_HIT(CurrentFloor.HitResult, "[GROUND]")\
+		}\
+	}
+
+#define VLOG_MOVE(Delta, Format, ...)\
+	if (RMCCVars::EnableVLog > 0)\
+	{\
+		UE_VLOG_LOCATION(CharacterOwner, VLogRMCMovement, Log, UpdatedComponent->GetComponentLocation(), 5.f, FColor::Red, TEXT(Format), ##__VA_ARGS__);\
+		UE_VLOG_SEGMENT(CharacterOwner, VLogRMCMovement, Log, UpdatedComponent->GetComponentLocation(), UpdatedComponent->GetComponentLocation() + Delta, FColor::Black, TEXT(""));\
+		UE_VLOG_LOCATION(CharacterOwner, VLogRMCMovement, Log, UpdatedComponent->GetComponentLocation() + Delta, 5.f, FColor::Green, TEXT(""));\
+	}\
 
 #define LOG_HIT(InHit, Duration)\
 	{\
@@ -76,5 +104,9 @@
 #define RMC_CLOG(Condition, Verbosity, Format, ...)
 #define RMC_FLog(Verbosity, Format, ...)
 #define RMC_CLOG(Condition, Verbosity, Format, ...)
+
+#define VLOG_HIT(DBGHit, Format, ...)
+#define VLOG_STATE
+#define VLOG_MOVE(Delta, Format, ...)
 
 #endif

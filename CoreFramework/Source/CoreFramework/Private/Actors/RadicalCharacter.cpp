@@ -198,6 +198,10 @@ void ARadicalCharacter::PostInitializeComponents()
 		if (Mesh)
 		{
 			//CacheInitialMeshOffset(Mesh->GetRelativeLocation(), Mesh->GetRelativeRotation());
+			{
+				BaseMeshTranslationOffset = Mesh->GetRelativeLocation();
+				BaseMeshRotationOffset = Mesh->GetRelativeRotation().Quaternion();
+			}
 
 			// force animation tick after movement component updates
 			if (Mesh->PrimaryComponentTick.bCanEverTick && MovementComponent)
@@ -222,6 +226,11 @@ UPawnMovementComponent* ARadicalCharacter::GetMovementComponent() const
 UPrimitiveComponent* ARadicalCharacter::GetMovementBase() const
 {
 	return GetBasedMovement().MovementBase;
+}
+
+FVector ARadicalCharacter::GetGravityDirection() const
+{
+	return MovementComponent->GetGravityDir();
 }
 
 
@@ -290,7 +299,7 @@ void ARadicalCharacter::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& D
 		*/
 	}
 
-	if (DebugDisplay.IsDisplayOn(TEXT("INPUTBUFFER")))
+	if (DebugDisplay.IsDisplayOn(FName(TEXT("INPUTBUFFER"))))
 	{
 		GetInputBuffer()->DisplayDebug(Canvas, DebugDisplay, YL, YPos);
 	}
@@ -337,6 +346,21 @@ void ARadicalCharacter::LaunchCharacter(FVector LaunchVelocity, bool bPlanarOver
 	}
 }
 
+void ARadicalCharacter::SetHitStop(float Duration)
+{
+	CustomTimeDilation = 0.f;
+
+	FTimerDelegate TimerDelegate;
+	FTimerHandle TimerHandle;
+
+	TimerDelegate.BindLambda([this]
+	{
+		CustomTimeDilation = 1.f;
+	});
+
+	GetWorld()->GetTimerManager().SetTimer(TimerHandle, TimerDelegate, Duration, false);
+}
+
 
 #pragma endregion Gameplay Interface
 
@@ -377,8 +401,81 @@ void ARadicalCharacter::OnStuckInGeometry(const FHitResult& Hit)
 	StuckInGeometryDelegate.Broadcast(Hit);
 }
 
+void ARadicalCharacter::OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust)
+{
+	const ARadicalCharacter* DefaultChar = GetDefault<ARadicalCharacter>(GetClass());
+	if (Mesh && DefaultChar->GetMesh())
+	{
+		FVector& MeshRelativeLocation = Mesh->GetRelativeLocation_DirectMutable();
+		MeshRelativeLocation.Z = DefaultChar->GetMesh()->GetRelativeLocation().Z + HalfHeightAdjust;
+		BaseMeshTranslationOffset.Z = MeshRelativeLocation.Z;
+	}
+	else
+	{
+		BaseMeshTranslationOffset.Z = DefaultChar->GetBaseMeshTranslationOffset().Z + HalfHeightAdjust;
+	}
+
+	Mesh->SetRelativeLocation(GetBaseMeshTranslationOffset());
+
+	K2_OnStartCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust);
+}
+
+void ARadicalCharacter::OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust)
+{
+	RecalculateBaseEyeHeight();
+
+	const ARadicalCharacter* DefaultChar = GetDefault<ARadicalCharacter>(GetClass());
+	if (Mesh && DefaultChar->GetMesh())
+	{
+		FVector& MeshRelativeLocation = Mesh->GetRelativeLocation_DirectMutable();
+		MeshRelativeLocation.Z = DefaultChar->GetMesh()->GetRelativeLocation().Z;
+		BaseMeshTranslationOffset.Z = MeshRelativeLocation.Z;
+	}
+	else
+	{
+		BaseMeshTranslationOffset.Z = DefaultChar->GetBaseMeshTranslationOffset().Z;
+	}
+
+	Mesh->SetRelativeLocation(GetBaseMeshTranslationOffset());
+
+	K2_OnEndCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust);
+}
+
 
 #pragma endregion Events
+
+#pragma region Crouching
+
+void ARadicalCharacter::Crouch()
+{
+	if (MovementComponent)
+	{
+		if (CanCrouch())
+		{
+			MovementComponent->bWantsToCrouch = true;
+		}
+	}
+}
+
+void ARadicalCharacter::UnCrouch()
+{
+	if (MovementComponent)
+	{
+		MovementComponent->bWantsToCrouch = false;
+	}
+}
+
+bool ARadicalCharacter::CanCrouch()
+{
+	return !bIsCrouched && MovementComponent && MovementComponent->CanEverCrouch() && GetRootComponent() && !GetRootComponent()->IsSimulatingPhysics();
+}
+
+bool ARadicalCharacter::IsCrouching()
+{
+	return bIsCrouched;
+}
+
+#pragma endregion Crouching
 
 #pragma region Based Movement
 

@@ -3,6 +3,7 @@
 
 #include "InputData.h"
 
+#include "IB_LOG.h"
 #include "Debug/CFW_Log.h"
 #include "Subsystems/InputBufferSubsystem.h"
 
@@ -14,13 +15,15 @@ void UInputBufferMap::GenerateInputActions()
 	{
 		if (!InputActions.Contains(AMap.Action))
 		{
-			InputActions.Add(AMap.Action);
+			const auto BufferedInput = Cast<UBufferedInputAction>(AMap.Action);
+			if (ensureMsgf(BufferedInput, TEXT("Provided input [%s] is not a BufferedInputAction"), *AMap.Action->ActionDescription.ToString()))
+				InputActions.Add(BufferedInput);
 		}
 	}
 }
 
 
-TArray<FName> UInputBufferMap::GetActionIDs()
+FGameplayTagContainer UInputBufferMap::GetActionIDs()
 {
 	// Check cached value, if not there then we regenerate the IDs
 	if (!ActionIDs.IsEmpty() && ActionIDs.Num() == InputActions.Num())
@@ -29,34 +32,40 @@ TArray<FName> UInputBufferMap::GetActionIDs()
 	}
 
 	// Regenerate
-	ActionIDs.Empty();
+	ActionIDs = FGameplayTagContainer();
 
 	// Safety check
 	if (InputActions.IsEmpty()) GenerateInputActions();
 	
 	for (auto Action : InputActions)
 	{
-		if (ActionIDs.Contains(FName(Action->ActionDescription.ToString()))) continue;
-		ActionIDs.Add(FName(Action->ActionDescription.ToString()));
+		ensureMsgf(!ActionIDs.HasTag(Action->GetID()), TEXT("INPUT BUFFER INITIALIZATION ERROR! Tag exists in multiple input actions [%s]"), *Action->GetID().ToString());
+		ensureMsgf(Action->GetID().MatchesTag(TAG_Input_Axis) || Action->GetID().MatchesTag(TAG_Input_Button), TEXT("INPUT BUFFER INITIALIZATION ERROR! Action Input Tag has wrong parent specification [%s]"), *Action->GetID().ToString());
+		ActionIDs.AddTag(Action->GetID());
 	}
 
 	return ActionIDs;
 }
 
-TArray<FName> UInputBufferMap::GetDirectionalIDs()
+FGameplayTagContainer UInputBufferMap::GetDirectionalIDs()
 {
-	// Check cached value, if not there then we regenerate the IDs
-	if (!DirectionalIDs.IsEmpty() && DirectionalIDs.Num() == DirectionalActionMap->GetMappings().Num())
+	if (DirectionalActionMap)
 	{
-		return DirectionalIDs;
-	}
+		// Check cached value, if not there then we regenerate the IDs
+		if (!DirectionalIDs.IsEmpty() && DirectionalIDs.Num() == DirectionalActionMap->GetMappings().Num())
+		{
+			return DirectionalIDs;
+		}
 
-	// Regenerate
-	DirectionalIDs.Empty();
-	
-	for (auto DMap : DirectionalActionMap->GetMappings())
-	{
-		DirectionalIDs.Add(DMap->GetID());
+		// Regenerate
+		DirectionalIDs = FGameplayTagContainer();
+		
+		for (auto DMap : DirectionalActionMap->GetMappings())
+		{
+			ensureMsgf(!DirectionalIDs.HasTag(DMap->GetID()), TEXT("INPUT BUFFER INITIALIZATION ERROR! Tag exists in multiple directional actions [%s]"), *DMap->GetID().ToString());
+			ensureMsgf(DMap->GetID().MatchesTag(TAG_Input_Directional), TEXT("INPUT BUFFER INITIALIZATION ERROR! Action Input Tag has wrong parent specification [%s]"), *DMap->GetID().ToString());
+			DirectionalIDs.AddTag(DMap->GetID());
+		}
 	}
 
 	return DirectionalIDs;

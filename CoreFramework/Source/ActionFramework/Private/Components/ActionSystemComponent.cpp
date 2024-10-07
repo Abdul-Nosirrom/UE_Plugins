@@ -3,25 +3,37 @@
 
 #include "Components/ActionSystemComponent.h"
 
+#include "DrawDebugHelpers.h"
+#include "Debug/ActionSystemLog.h"
 #include "RadicalCharacter.h"
 #include "RadicalMovementComponent.h"
 #include "ActionSystem/GameplayAction.h"
 #include "Components/LevelPrimitiveComponent.h"
-#include "Actors/RadicalCharacter.h"
-#include "Components/BoxComponent.h"
-#include "Engine/AssetManager.h"
 #include "Engine/Canvas.h"
 
-DECLARE_CYCLE_STAT(TEXT("Tick Actions"), STAT_TickStateMachine, STATGROUP_ActionSystemComp)
-DECLARE_CYCLE_STAT(TEXT("Activate Action"), STAT_ActivateAction, STATGROUP_ActionSystemComp)
-DECLARE_CYCLE_STAT(TEXT("Calculate Action Velocity"), STAT_CalcVelocity, STATGROUP_ActionSystemComp)
-DECLARE_CYCLE_STAT(TEXT("Update Action Rotation"), STAT_UpdateRot, STATGROUP_ActionSystemComp)
+namespace ActionSystemCVars
+{
+#if ALLOW_CONSOLE && !NO_LOGGING
+	int32 DisplayActions = 0;
+	FAutoConsoleVariableRef CVarShowActionsState
+	(
+		TEXT("actions.Display"),
+		DisplayActions,
+		TEXT("Display Actions. 0: Disable, 1: Enable"),
+		ECVF_Default
+	);
+#endif 
+}
+
+DECLARE_CYCLE_STAT(TEXT("Tick Actions"), STAT_TickActionSystem, STATGROUP_ActionSystem)
+DECLARE_CYCLE_STAT(TEXT("Activate Action"), STAT_ActivateAction, STATGROUP_ActionSystem)
+DECLARE_CYCLE_STAT(TEXT("Calculate Action Velocity"), STAT_CalcVelocity, STATGROUP_ActionSystem)
+DECLARE_CYCLE_STAT(TEXT("Update Action Rotation"), STAT_UpdateRot, STATGROUP_ActionSystem)
 
 // Sets default values for this component's properties
 UActionSystemComponent::UActionSystemComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
-	A_Instance = nullptr;
 }
 
 void UActionSystemComponent::InitializeComponent()
@@ -35,58 +47,83 @@ void UActionSystemComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	/* Create Instance Of SM Class And Assign It */
-	if (StateMachineClass && !A_Instance)
-	{
-		A_Instance = NewObject<UGameplayStateMachine_Base>(GetOuter(), StateMachineClass, NAME_None, RF_NoFlags);
-		A_Instance->RadicalOwner = CharacterOwner;
-		A_Instance->Component = this;
-	}
-	
-	/* Initialize the state machine and bind to events */
-	if (!A_Instance->IsInitialized())
-	{
-		A_Instance->InitializeActions(CharacterOwner, this);
-	}
-	
-	A_Instance->SetRegisterTick(A_Instance->CanEverTick());
-	
-	A_Instance->Start();
-}
-
-void UActionSystemComponent::PostLoad()
-{
-	Super::PostLoad();
-
-	// DEBUG: Make sure this reference is valid
 	/* Bind to movement component events */
 	CharacterOwner = Cast<ARadicalCharacter>(GetOwner());
-	CharacterOwner->GetCharacterMovement()->CalculateVelocityDelegate.BindDynamic(this, &UActionSystemComponent::CalculateVelocity);
-	CharacterOwner->GetCharacterMovement()->UpdateRotationDelegate.BindDynamic(this, &UActionSystemComponent::UpdateRotation);
-	CharacterOwner->GetCharacterMovement()->PostProcessRMVelocityDelegate.BindDynamic(this, &UActionSystemComponent::PostProcessRMVelocity);
-	CharacterOwner->GetCharacterMovement()->PostProcessRMRotationDelegate.BindDynamic(this, &UActionSystemComponent::PostProcessRMRotation);
+	CharacterOwner->GetCharacterMovement()->RequestPriorityVelocityBinding().BindUObject(this, &UActionSystemComponent::CalculateVelocity);
+	CharacterOwner->GetCharacterMovement()->RequestPriorityRotationBinding().BindUObject(this, &UActionSystemComponent::UpdateRotation);
 
 	/* Initialize Actor Info*/
 	ActionActorInfo.InitFromCharacter(CharacterOwner, this);
-}
 
+	
+	/* Create actions part of our character action set */
+	InitializeCharacterActionSet();
+
+	TimeLastPrimaryActivated = 0.f;
+}
 
 void UActionSystemComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	SCOPED_NAMED_EVENT(UActionSystemComponent_TickComponent, FColor::Yellow)
-	SCOPE_CYCLE_COUNTER(STAT_TickStateMachine)
+	SCOPE_CYCLE_COUNTER(STAT_TickActionSystem)
 	
 	/* Tick the active actions */
-	if (RunningActions.Num() > 0)
+	if (PrimaryActionRunning && PrimaryActionRunning->bActionTicks) PrimaryActionRunning->OnActionTick(DeltaTime);
+	
+	if (RunningAdditiveActions.Num() > 0)
 	{
-		for (int i = RunningActions.Num() - 1; i >= 0; i--)
+		for (int i = RunningAdditiveActions.Num() - 1; i >= 0; i--)
 		{
-			RunningActions[i]->OnActionTick(DeltaTime);
+			if (RunningAdditiveActions[i]->bActionTicks)
+				RunningAdditiveActions[i]->OnActionTick(DeltaTime);
 		}
 	}
 
+	/* Tick Condition Evaluation For Possible Actions In Our ActionSet or Followups*/
+	UpdateActionSelection();
 	
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+#if ALLOW_CONSOLE && !NO_LOGGING
+	if (ActionSystemCVars::DisplayActions > 0)
+	{
+		FString PrimaryActionName = "Invalid";
+		FColor DisplayColor = FColor::Red;
+		float TimeActive = 0.f;
+		if (PrimaryActionRunning)
+		{
+			PrimaryActionName = PrimaryActionRunning->GetName();
+			if (PrimaryActionRunning->CanBeCanceled()) DisplayColor = FColor::Green;
+			TimeActive = PrimaryActionRunning->GetTimeInAction();
+		}
+
+		FVector DrawLoc = CharacterOwner->GetActorLocation() + 90.f * FVector::UpVector;
+		DrawDebugString(GetWorld(), DrawLoc, FString::Printf(TEXT("[%.2f] PRIMARY: %s"), TimeActive, *PrimaryActionName), 0, DisplayColor, 0.f, true);
+	}
+#endif 
+}
+
+void UActionSystemComponent::OnUnregister()
+{
+	Super::OnUnregister();
+
+	// NOTE: MarkAsGarbage scope causes crash when using the TakeRecorder to record gameplay for sequencer and opening up the recorded sequence.
+
+	// Cancel and clear running actions. Ending them will auto remove them from the lists
+	CancelAllActions();
+	
+	// Mark running actions as garbage so they can be deleted
+	for (auto AvailableAction : ActivatableActions)
+	{
+		// Let actions perform custom cleanups
+		AvailableAction.Value->Cleanup();
+		// Unbind input events
+		AvailableAction.Value->CleanupActionTrigger();
+		// Mark it as garbage
+		AvailableAction.Value->MarkAsGarbage();
+	}
+
+	ActivatableActions.Empty();
 }
 
 
@@ -94,37 +131,39 @@ void UActionSystemComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 * Level Primitives Interface
 *--------------------------------------------------------------------------------------------------------------*/
 
-void UActionSystemComponent::RegisterLevelPrimitive(ULevelPrimitiveComponent* LP)
+void UActionSystemComponent::RegisterLevelPrimitive(ULevelPrimitiveComponent* LP, FGameplayTag PrimitiveTag)
 {
-	if (ActiveLevelPrimitives.Contains(LP->GetTag()))
+	if (ActiveLevelPrimitives.Contains(PrimitiveTag))
 	{
-		ActiveLevelPrimitives[LP->GetTag()] = LP;
+		ActiveLevelPrimitives[PrimitiveTag] = LP;
 	}
 	else
 	{
-		ActiveLevelPrimitives.Add(LP->GetTag(), LP);
+		ActiveLevelPrimitives.Add(PrimitiveTag, LP);
 	}
 
-	if (!GrantedTags.HasMatchingGameplayTag(LP->GetTag()))
-		AddTag(LP->GetTag()); 
+	if (!GrantedTags.HasMatchingGameplayTag(PrimitiveTag))
+		AddTag(PrimitiveTag);
+
+	OnLevelPrimitiveRegisteredDelegate.Broadcast(PrimitiveTag);
 }
 
-bool UActionSystemComponent::UnRegisterLevelPrimitive(ULevelPrimitiveComponent* LP)
+bool UActionSystemComponent::UnRegisterLevelPrimitive(ULevelPrimitiveComponent* LP, FGameplayTag PrimitiveTag)
 {
-	if (ActiveLevelPrimitives.Contains(LP->GetTag()))
+	if (ActiveLevelPrimitives.Contains(PrimitiveTag))
 	{
-		ActiveLevelPrimitives[LP->GetTag()] = nullptr;
+		ActiveLevelPrimitives[PrimitiveTag] = nullptr;
 	}
+
+	OnLevelPrimitiveUnRegisteredDelegate.Broadcast(PrimitiveTag);
 	
-	return RemoveTag(LP->GetTag());
+	return RemoveTag(PrimitiveTag);
 }
 
 ULevelPrimitiveComponent* UActionSystemComponent::GetActiveLevelPrimitive(FGameplayTag LPTag) const
 {
 	return ActiveLevelPrimitives.Contains(LPTag) ? ActiveLevelPrimitives[LPTag] : nullptr;
 }
-
-
 
 /*--------------------------------------------------------------------------------------------------------------
 * Actions Interface
@@ -141,9 +180,10 @@ UGameplayAction* UActionSystemComponent::FindActionInstanceFromClass(UGameplayAc
 
 UGameplayAction* UActionSystemComponent::GiveAction(UGameplayActionData* InActionData)
 {
-	if (!IsValid(InActionData) || !IsValid(InActionData->ActionClass))
+	if (!IsValid(InActionData) || !IsValid(InActionData->Action))
 	{
 		// Log error, class not valid
+		ACTIONSYSTEM_VLOG(CharacterOwner, Error, "Attempted granting an invalid/null action")
 		return nullptr;
 	}
 
@@ -157,6 +197,7 @@ UGameplayAction* UActionSystemComponent::GiveAction(UGameplayActionData* InActio
 	
 	// Can also notify an action if it has been granted
 	InstancedAction->OnActionGranted(&ActionActorInfo);
+	OnActionGrantedDelegate.Broadcast(InActionData);
 	
 	return InstancedAction;
 }
@@ -164,12 +205,12 @@ UGameplayAction* UActionSystemComponent::GiveAction(UGameplayActionData* InActio
 UGameplayAction* UActionSystemComponent::GiveActionAndActivateOnce(UGameplayActionData* InActionData)
 {
 	if (!InActionData) return nullptr; // Not a valid data asset
-
+	
 	auto Instance = GiveAction(InActionData);
 
 	if (InternalTryActivateAction(Instance))
 	{
-		// Succesfully activated, be sure to delete ater ends
+		// Succesfully activated, be sure to delete after ends
 		return Instance;
 	}
 
@@ -193,8 +234,8 @@ bool UActionSystemComponent::RemoveAction(UGameplayActionData* InActionData)
 
 	Action->MarkAsGarbage(); // This should be done after EndAction has finished if its Async
 
-	Action->OnActionRemoved(&ActionActorInfo); // Call on CDO maybe
-
+	Action->OnActionRemoved(&ActionActorInfo);
+	
 	return true;
 }
 
@@ -205,24 +246,17 @@ UGameplayAction* UActionSystemComponent::CreateNewInstanceOfAbility(UGameplayAct
 
 	AActor* Owner = GetOwner();
 	check(Owner);
-
-	UAssetManager* Manager = UAssetManager::GetIfValid();
-
-	if (Manager)
-	{
-		//Manager->load
-	}
 	
-	UGameplayAction* ActionInstance = NewObject<UGameplayAction>(Owner, InActionData->ActionClass);
+	UGameplayAction* ActionInstance = DuplicateObject(InActionData->Action, Owner, InActionData->GetFName());
 	check(ActionInstance);
 
 	// Set ActionData on initial creation only
-	ActionInstance->SetActionData(InActionData);
-	
+	ActionInstance->ActionData = InActionData;
+	// NOTE: We could just place this in Granted since that's called at the same time as on creation, wait no but granted doesnt take in the data we need nvm
 	return ActionInstance;
 }
 
-bool UActionSystemComponent::TryActivateAbilityByClass(UGameplayActionData* InActionData)
+bool UActionSystemComponent::TryActivateAbilityByClass(UGameplayActionData* InActionData, bool bQueryOnly)
 {
 	SCOPE_CYCLE_COUNTER(STAT_ActivateAction)
 	
@@ -232,53 +266,70 @@ bool UActionSystemComponent::TryActivateAbilityByClass(UGameplayActionData* InAc
 	{
 		if (!InActionData->bGrantOnActivation)
 		{
-			// Log, no available action of this class (unless bGrant on activate, if so we create it here)
+			ACTIONSYSTEM_VLOG(CharacterOwner, Warning, "[%s] Tried activating action that's not been granted yet and is not set to auto-grant on activation", *InActionData->GetName());
 			return false;
 		}
 		Action = GiveAction(InActionData);
 	}
-
-	return InternalTryActivateAction(Action);
+	
+	return InternalTryActivateAction(Action, bQueryOnly);
 }
 
-bool UActionSystemComponent::InternalTryActivateAction(UGameplayAction* Action)
+bool UActionSystemComponent::InternalTryActivateAction(UGameplayAction* Action, bool bQueryOnly)
 {
-	// Make a FGameplayActionActorInfo struct that's held by us here. This also lets us use this independently I think
-
 	if (!Action)
 	{
-		// Log Error
+		ACTIONSYSTEM_VLOG(CharacterOwner, Warning, "(ACTIVATION FAILED) Action attempting to activate was null")
 		return false;
 	}
 
-	// Check action condition
-	if (!Action->CanActivateAction())
+	// Is action explicitly blocked
+	if (BlockedActions.Contains(Action->GetActionData()))
 	{
+		ACTIONSYSTEM_VLOG(CharacterOwner.Get(), Log, "(ACTIVATION FAILED) %s Is speficially blocked", *Action->GetActionData()->GetName());
 		return false;
 	}
 
-	// If action is already active, check to see if we have to restart it
-	if (Action->IsActive()) // Action is already active, we restart it
+	// Is the action thats trying to activate a primary action? If so can we cancel out of our current primary action?
+	if (Action->ActionCategory == EActionCategory::Primary && PrimaryActionRunning)
 	{
-		if (Action->GetActionData()->bRetriggerAbility)
-			Action->EndAction(true);
-		else
+		if (!PrimaryActionRunning->CanBeCanceled())
 		{
-			// Log that action is already active
+			ACTIONSYSTEM_VLOG(CharacterOwner, Log, "(ACTIVATION FAILED) Tried activating primary action [%s], but current primary action can't be cancelled yet [%s]", *Action->GetActionData()->GetName(), *PrimaryActionRunning->GetActionData()->GetName())
 			return false;
 		}
 	}
 
-	// Setup activation info for the actionspec
-	Action->ActivateAction();
+	// Check action condition. This will check if we can retrigger as well in case the action is currently active
+	if (!Action->CanActivateAction())
+	{
+		return false;
+	}
+	
+	// Activate, and if current action was cancelled, set up info about the cancellation
+	if (!bQueryOnly) 
+	{
+		// We're now guaranteed to start this action, so if its primary, lets be sure to end the current running primary
+		if (Action->ActionCategory == EActionCategory::Primary && PrimaryActionRunning)
+		{
+			PrimaryActionRunning->ActionThatCancelledUs = Action->GetActionData();
+			PrimaryActionRunning->EndAction(true); 
+		}
 
+		// Everything confirmed, activate the action. If its a retrigger, the action will end the current iteration itself and restart
+		Action->ActivateAction();
+	}
+	
 	return true;
 }
 
 void UActionSystemComponent::CancelAction(UGameplayActionData* Action)
 {
-	for (auto RunningAction : RunningActions)
+	if (PrimaryActionRunning && PrimaryActionRunning->GetActionData() == Action) PrimaryActionRunning->EndAction(true);
+	
+	for (auto RunningActionIndex = RunningAdditiveActions.Num()-1; RunningActionIndex >= 0; RunningActionIndex--)
 	{
+		auto RunningAction = RunningAdditiveActions[RunningActionIndex];
 		if (RunningAction->GetActionData() == Action)
 		{
 			RunningAction->EndAction(true);
@@ -289,9 +340,27 @@ void UActionSystemComponent::CancelAction(UGameplayActionData* Action)
 
 void UActionSystemComponent::CancelActionsWithTags(const FGameplayTagContainer& CancelTags, const UGameplayActionData* Ignore)
 {
-	for (auto RunningAction : RunningActions)
+	if (PrimaryActionRunning && PrimaryActionRunning->GetActionData()->ActionTags.HasAny(CancelTags)) PrimaryActionRunning->EndAction(true);
+
+	for (auto RunningActionIndex = RunningAdditiveActions.Num()-1; RunningActionIndex >= 0; RunningActionIndex--)
 	{
+		auto RunningAction = RunningAdditiveActions[RunningActionIndex];
 		if (RunningAction->GetActionData() == Ignore || !RunningAction->GetActionData()->ActionTags.HasAny(CancelTags))
+		{
+			continue;
+		}
+		RunningAction->EndAction(true);
+	}
+}
+
+void UActionSystemComponent::CancelActionsWithTagRequirement(const FGameplayTagContainer& CancelTags)
+{
+	if (PrimaryActionRunning && PrimaryActionRunning->GetActionData()->OwnerRequiredTags.HasAny(CancelTags)) PrimaryActionRunning->EndAction(true);
+
+	for (auto RunningActionIndex = RunningAdditiveActions.Num()-1; RunningActionIndex >= 0; RunningActionIndex--)
+	{
+		auto RunningAction = RunningAdditiveActions[RunningActionIndex];
+		if (!RunningAction->GetActionData()->OwnerRequiredTags.HasAny(CancelTags))
 		{
 			continue;
 		}
@@ -301,8 +370,12 @@ void UActionSystemComponent::CancelActionsWithTags(const FGameplayTagContainer& 
 
 void UActionSystemComponent::CancelAllActions(const UGameplayActionData* Ignore)
 {
-	for (auto RunningAction : RunningActions)
+	// Primary action will cancel all running additive actions when it ends
+	if (PrimaryActionRunning && PrimaryActionRunning->GetActionData() != Ignore) PrimaryActionRunning->EndAction(true);
+	
+	for (auto RunningActionIndex = RunningAdditiveActions.Num()-1; RunningActionIndex >= 0; RunningActionIndex--)
 	{
+		auto RunningAction = RunningAdditiveActions[RunningActionIndex];
 		if (RunningAction->GetActionData() == Ignore)
 		{
 			continue;
@@ -334,58 +407,56 @@ void UActionSystemComponent::NotifyActionActivated(UGameplayAction* Action)
 {
 	check(Action);
 	
-	// Action is already registered as active
-	if (RunningActions.Contains(Action)) return; 
-
-	RunningActions.Add(Action);
-
-	if (Action->bRespondToMovementEvents)
+	// Action is already registered as active NOTE: More to do here, e.g checking if the primary action is active and ending it if so
+	if (Action->ActionCategory == EActionCategory::Primary)
 	{
-		RunningCalcVelocityActions.Add(Action);
+		TimeLastPrimaryActivated = GetWorld()->GetTimeSeconds();
+		PrimaryActionRunning = Cast<UPrimaryAction>(Action);
+	}
+	else
+	{
+		if (RunningAdditiveActions.Contains(Action)) return;
+		RunningAdditiveActions.Add(Cast<UAdditiveAction>(Action));
 	}
 
-	if (Action->bRespondToRotationEvents)
-	{
-		RunningUpdateRotationActions.Add(Action);
-	}
 
 	AddTags(Action->GetActionData()->ActionTags);
 	ApplyActionBlockAndCancelTags(Action->GetActionData(), true, true);
+	OnActionActivatedDelegate.Broadcast(Action->GetActionData());
 }
 
 void UActionSystemComponent::NotifyActionEnded(UGameplayAction* Action)
 {
 	check(Action);
-
-	// Action was not registered, we have nothing to remove
-	if (!RunningActions.Contains(Action)) return;
-
-	RunningActions.Remove(Action);
 	
-	if (Action->bRespondToMovementEvents)
+	// Action was not registered, we have nothing to remove
+	if (Action->ActionCategory == EActionCategory::Primary && Action == PrimaryActionRunning)
 	{
-		RunningCalcVelocityActions.Remove(Action);
+		PreviousPrimaryAction = PrimaryActionRunning;
+		PrimaryActionRunning = nullptr;
 	}
-
-	if (Action->bRespondToRotationEvents)
+	else
 	{
-		RunningUpdateRotationActions.Remove(Action);
+		if (!RunningAdditiveActions.Contains(Action)) return; // we already got rid of it
+		RunningAdditiveActions.Remove(Cast<UAdditiveAction>(Action));
 	}
 
 	RemoveTags(Action->GetActionData()->ActionTags);
 	ApplyActionBlockAndCancelTags(Action->GetActionData(), false, false);
+	OnActionEndedDelegate.Broadcast(Action->GetActionData());
+
+	// Only cache prev actions info/tags if it was a primary action
+	if (Action->ActionCategory == EActionCategory::Primary)
+		PrevAction = Action->GetActionData()->ActionTags;
 }
 
 void UActionSystemComponent::CalculateVelocity(URadicalMovementComponent* MovementComponent, float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_CalcVelocity)
 
-	if (RunningCalcVelocityActions.Num() > 0)
+	if (PrimaryActionRunning && PrimaryActionRunning->bRespondToMovementEvents)
 	{
-		for (const auto Action : RunningCalcVelocityActions)
-		{
-			Action->CalcVelocity(MovementComponent, DeltaTime);
-		}
+		PrimaryActionRunning->CalcVelocity(MovementComponent, DeltaTime);
 	}
 	else
 	{
@@ -397,12 +468,9 @@ void UActionSystemComponent::UpdateRotation(URadicalMovementComponent* MovementC
 {
 	SCOPE_CYCLE_COUNTER(STAT_UpdateRot)
 
-	if (RunningUpdateRotationActions.Num() > 0)
+	if (PrimaryActionRunning && PrimaryActionRunning->bRespondToRotationEvents)
 	{
-		for (const auto Action : RunningUpdateRotationActions)
-		{
-			Action->UpdateRotation(MovementComponent, DeltaTime);
-		}
+		PrimaryActionRunning->UpdateRotation(MovementComponent, DeltaTime);
 	}
 	else
 	{
@@ -410,116 +478,101 @@ void UActionSystemComponent::UpdateRotation(URadicalMovementComponent* MovementC
 	}
 }
 
-void UActionSystemComponent::PostProcessRMVelocity(URadicalMovementComponent* MovementComponent, FVector& Velocity,
-	float DeltaTime)
-{
-	SCOPE_CYCLE_COUNTER(STAT_CalcVelocity)
-
-	if (RunningCalcVelocityActions.Num() > 0)
-	{
-		for (const auto Action : RunningCalcVelocityActions)
-		{
-			Action->PostProcessRMVelocity(Velocity, DeltaTime);
-		}
-	}
-}
-
-void UActionSystemComponent::PostProcessRMRotation(URadicalMovementComponent* MovementComponent, FQuat& Rotation,
-	float DeltaTime)
-{
-	SCOPE_CYCLE_COUNTER(STAT_UpdateRot)
-
-	if (RunningUpdateRotationActions.Num() > 0)
-	{
-		for (const auto Action : RunningUpdateRotationActions)
-		{
-			Action->PostProcessRMRotation(Rotation, DeltaTime);
-		}
-	}
-}
-
-
 /*--------------------------------------------------------------------------------------------------------------
 * Debug
 *--------------------------------------------------------------------------------------------------------------*/
 
+#define DisplayDebugString(Text, XOffset, Font, Color) DisplayDebugManager.SetDrawColor(Color); DisplayDebugManager.SetFont(Font); DisplayDebugManager.DrawString(Text, XOffset); 
+
 void UActionSystemComponent::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL,
 										   float& YPos)
 {
+#if WITH_EDITOR
 	auto DisplayDebugManager = Canvas->DisplayDebugManager;
-	
-	DisplayDebugManager.SetDrawColor(FColor::Red);
-	DisplayDebugManager.SetFont(GEngine->GetLargeFont());
-	DisplayDebugManager.DrawString("[ ACTIONS ]");
-	DisplayDebugManager.SetFont(GEngine->GetMediumFont());
-	DisplayDebugManager.SetDrawColor(FColor::Yellow);
 
-	float CachedYPos = DisplayDebugManager.GetYPos();
-	
-	FString T = "Granted Actions: ";
-	int Len = T.Len();
-	DisplayDebugManager.DrawString(T);
+	// Primary Actions Display
+	FString PrimaryActionName = PrimaryActionRunning ? PrimaryActionRunning->GetName() : "NONE";
+	float RowYPos = DisplayDebugManager.GetYPos();
+	DisplayDebugString("[ PRIMARY ACTION ]", 0.f, GEngine->GetLargeFont(), FColor::Red)
+	DisplayDebugManager.SetYPos(RowYPos);
+	DisplayDebugString(PrimaryActionName, 140.f, GEngine->GetMediumFont(), FColor::White);
 
-	/* Draw Activatable Actions*/
-	DisplayDebugManager.SetDrawColor(FColor::White);
-	float XOffset = 0.75f * DisplayDebugManager.GetMaxCharHeight() * Len;
-	DisplayDebugManager.SetYPos(CachedYPos);
-	T = "";
-	for (auto Action : ActivatableActions)
+	// Additive Actions Display
+	DisplayDebugString("________________________________", 0.f, GEngine->GetLargeFont(), FColor::Black);
+	DisplayDebugString("[ ADDITIVE ACTIONS ]", 0.f, GEngine->GetLargeFont(), FColor::Red);
+	FString AdditiveActionNames = "";
+	for (auto Action : RunningAdditiveActions)
 	{
-		T += Action.Value->GetName();
-		T += ", ";
+		if (!Action) continue;
+		AdditiveActionNames.Append(Action->GetName());
+		AdditiveActionNames.Append(", ");
 	}
-	DisplayDebugManager.DrawString(T, XOffset);
+	DisplayDebugString(AdditiveActionNames, 30.f, GEngine->GetMediumFont(), FColor::White);
 
-	/* Draw Running Actions */
-	CachedYPos = DisplayDebugManager.GetYPos();
-	T = "Running Actions: ";
-	Len = T.Len();
-	XOffset = 0.75f * DisplayDebugManager.GetMaxCharHeight() * Len;
-	DisplayDebugManager.SetDrawColor(FColor::Yellow);
-	DisplayDebugManager.DrawString(T);
-	T = "";
-	DisplayDebugManager.SetDrawColor(FColor::White);
-	for (auto Action : RunningActions)
+	// Registered Actions (Awaiting Activation)
+	DisplayDebugString("________________________________", 0.f, GEngine->GetLargeFont(), FColor::Black);
+	DisplayDebugString("[ AWAITING ACTIVATION ]", 0.f, GEngine->GetLargeFont(), FColor::Red);
+	FString AwaitingActivationNames = "";
+	for (auto Action : ActionsAwaitingActivation)
 	{
-		DisplayDebugManager.SetYPos(CachedYPos);
-		DisplayDebugManager.SetDrawColor(Action->CanBeCanceled() ? FColor::Green : FColor::Red);
-		DisplayDebugManager.DrawString(Action->GetName() + ", ", XOffset);
-		
-		Len += Action->GetName().Len();
-		XOffset = 0.75f * DisplayDebugManager.GetMaxCharHeight() * Len;
+		if (!Action) continue;
+		AwaitingActivationNames.Append(Action->GetName());
+		AwaitingActivationNames.Append(", ");
 	}
-
-	//float XOffset = 0.75f * DisplayDebugManager.GetMaxCharHeight() * Len;
-
-	/*
-	DisplayDebugManager.SetDrawColor(FColor::White);
-	T = A_Instance->GetSingleActiveState()->GetNodeName();
-	DisplayDebugManager.DrawString(T, XOffset);
-	T = A_Instance->GetSingleNestedActiveState()->GetNodeName();
-	DisplayDebugManager.DrawString(T, XOffset);
-	*/
+	DisplayDebugString(AwaitingActivationNames, 30.f, GEngine->GetMediumFont(), FColor::White);
 	
-	/* Level primitives */
-		DisplayDebugManager.SetYPos(DisplayDebugManager.GetYPos() + 50.f);
-		DisplayDebugManager.SetDrawColor(FColor::Red);
-    	DisplayDebugManager.SetFont(GEngine->GetLargeFont());
-    	DisplayDebugManager.DrawString("[ PRIMITIVES ]");
-    	DisplayDebugManager.SetFont(GEngine->GetMediumFont());
-    	DisplayDebugManager.SetDrawColor(FColor::Yellow);
+	// Seperator
+	DisplayDebugString("________________________________", 0.f, GEngine->GetLargeFont(), FColor::Black);
 	
-	for (auto Prims : ActiveLevelPrimitives)
+	// All Tags Display
+	auto Tags = GrantedTags.GetExplicitGameplayTags().GetGameplayTagArray();
+	FString TagStrings = "";
+	uint32 rowCount = 0;
+	for (auto Tag : Tags)
 	{
-		YPos = DisplayDebugManager.GetYPos();
-		T = Prims.Key.ToString();
-		XOffset = 0.75 * DisplayDebugManager.GetMaxCharHeight() * T.Len();
-		DisplayDebugManager.SetDrawColor(FColor::Yellow);
-		DisplayDebugManager.DrawString(T);
-
-		DisplayDebugManager.SetYPos(YPos);
-		DisplayDebugManager.SetDrawColor(Prims.Value ? FColor::White : FColor::Red);
-		T = Prims.Value ? Prims.Value->GetName() : "Null";
-		DisplayDebugManager.DrawString(T, XOffset);
+		TagStrings.Append(Tag.ToString());
+		TagStrings.Append(", ");
+		rowCount++;
+		if (rowCount % 6 == 0) TagStrings.Append("\n");
 	}
+	DisplayDebugString("[ GRANTED TAGS ]", 0.f, GEngine->GetLargeFont(), FColor::Red);
+	DisplayDebugString(TagStrings, 30.f, GEngine->GetMediumFont(), FColor::White);
+	
+	// Block Tags Display
+	Tags = BlockedTags.GetExplicitGameplayTags().GetGameplayTagArray();
+	TagStrings = "";
+	rowCount = 0;
+	for (auto Tag : Tags)
+	{
+		TagStrings.Append(Tag.ToString());
+		TagStrings.Append(", ");
+		rowCount++;
+		if (rowCount % 6 == 0) TagStrings.Append("\n");
+	}
+	DisplayDebugString("[ BLOCK TAGS ]", 0.f, GEngine->GetLargeFont(), FColor::Red);
+	DisplayDebugString(TagStrings, 30.f, GEngine->GetMediumFont(), FColor::White);
+
+	// Seperator
+	DisplayDebugString("________________________________", 0.f, GEngine->GetLargeFont(), FColor::Black);
+
+	// Specific blocked actions
+	TagStrings = "";
+	rowCount = 0;
+	for (auto BlockedAction : BlockedActions)
+	{
+		if (!BlockedAction) continue;
+		TagStrings.Append(BlockedAction->GetName());
+		TagStrings.Append(", ");
+		rowCount++;
+		if (rowCount % 6 == 0) TagStrings.Append("\n");
+	}
+	DisplayDebugString("[ EXPLICIT BLOCKED ACTIONS ]", 0.f, GEngine->GetLargeFont(), FColor::Red);
+	DisplayDebugString(TagStrings, 30.f, GEngine->GetMediumFont(), FColor::White);
+
+	// Seperator
+	DisplayDebugString("________________________________", 0.f, GEngine->GetLargeFont(), FColor::Black);
+
+	// Primitive Display
+	
+#endif
 }
